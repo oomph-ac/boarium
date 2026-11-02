@@ -633,7 +633,7 @@ public final class BlockTableGenerator {
     }
 
     // FNV-1a 32 of the little-endian NBT compound {name, states}, with the states sorted by key: the ID a client uses when StartGame asks for hashed block IDs.
-    private static int networkHash(String name, Map<?, ?> states) {
+    static int networkHash(String name, Map<?, ?> states) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         out.write(10);
         writeLeString(out, "");

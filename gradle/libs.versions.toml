@@ -12,6 +12,8 @@ gson = "2.3.1"
 jackson = "2.15.2"
 junit = "5.13.4"
 snakeyaml = "2.3"
+# Same NBT library the protocol library pulls in.
+nbt = "3.0.5.Final"
 # The slf4j API the protocol library pulls in is 1.7.
 slf4j = "1.7.36"
 
@@ -21,6 +23,7 @@ boar = { module = "ac.boar:common", version.ref = "boar" }
 boar-api = { module = "ac.boar:api", version.ref = "boar" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+nbt = { module = "org.cloudburstmc:nbt", version.ref = "nbt" }
 jackson-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
 aircompressor = { module = "io.airlift:aircompressor", version.ref = "aircompressor" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
