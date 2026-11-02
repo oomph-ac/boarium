@@ -1,11 +1,3 @@
-plugins {
-    application
-}
-
-application {
-    mainClass = "ac.oomph.boarium.Boarium"
-}
-
 dependencies {
     api(libs.protocol)
     implementation(libs.aircompressor)

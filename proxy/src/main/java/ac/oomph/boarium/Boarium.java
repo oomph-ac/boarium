@@ -3,6 +3,7 @@ package ac.oomph.boarium;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.Session;
 import ac.oomph.boarium.session.SessionSettings;
 import ac.oomph.boarium.transport.Addresses;
@@ -18,7 +19,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -29,6 +29,7 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 
 /**
  * The proxy: it takes players on its listen address and runs a {@link Session} for each, as spectrum-internal's Spectrum does.
@@ -52,11 +53,11 @@ public final class Boarium implements AutoCloseable {
     private final ScheduledFuture<?> pongs;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private Boarium(BoariumConfig config, EventLoopGroup group) throws InterruptedException {
+    private Boarium(BoariumConfig config, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException {
         this.config = config;
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
-        SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), SessionSettings.DEFAULT.processors());
+        SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), processors);
         this.listener = ClientListener.bind(group, listenAddress(config.listen()), CODEC, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT,
                 login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
@@ -64,11 +65,13 @@ public final class Boarium implements AutoCloseable {
 
     /**
      * Starts listening for players with {@code config}.
+     *
+     * @param processors gives each player's session its processor
      */
-    public static Boarium start(BoariumConfig config) throws InterruptedException {
+    public static Boarium start(BoariumConfig config, Function<ClientLogin, Processor> processors) throws InterruptedException {
         EventLoopGroup group = new NioEventLoopGroup();
         try {
-            return new Boarium(config, group);
+            return new Boarium(config, processors, group);
         } catch (Throwable t) {
             // Netty also throws checked exceptions it does not declare, such as a BindException; the event loops would otherwise keep the JVM running.
             group.shutdownGracefully();
@@ -155,25 +158,6 @@ public final class Boarium implements AutoCloseable {
         }
         this.listener.close().syncUninterruptibly();
         this.group.shutdownGracefully(0, 5, TimeUnit.SECONDS).syncUninterruptibly();
-    }
-
-    public static void main(String[] args) {
-        Path path = Path.of(args.length > 0 ? args[0] : "config.yml");
-        Boarium boarium;
-        try {
-            boarium = start(BoariumConfig.load(path));
-        } catch (Exception e) {
-            // Netty also throws checked exceptions it does not declare, such as a BindException.
-            LOG.error("could not start: {}", e.toString());
-            System.exit(1);
-            return;
-        }
-        LOG.info("listening on {}, sending players to {}", boarium.listener.address(), boarium.config.server());
-        // The event loops keep the JVM running until the shutdown hook below closes them.
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LOG.info("shutting down");
-            boarium.close();
-        }));
     }
 
     /**

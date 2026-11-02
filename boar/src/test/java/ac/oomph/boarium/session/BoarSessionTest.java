@@ -204,6 +204,8 @@ class BoarSessionTest {
         assertTrue(RECORDER.sent.contains(StartGamePacket.class));
         // Boar's movement checks skip a player in a loading screen.
         assertFalse(player.inLoadingScreen);
+        // TestBoar starts Boar with mitigations off.
+        assertTrue(player.disableMitigations());
 
         this.client.session.get().disconnect();
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);

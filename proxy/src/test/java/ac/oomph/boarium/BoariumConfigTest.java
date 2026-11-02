@@ -21,7 +21,7 @@ class BoariumConfigTest {
         BoariumConfig config = BoariumConfig.load(path);
 
         assertTrue(Files.exists(path));
-        assertEquals(new BoariumConfig(":19132", "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed."), config);
+        assertEquals(new BoariumConfig(":19132", "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed.", true, false), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -38,9 +38,11 @@ class BoariumConfigTest {
                 max_players: 5
                 latency_interval: 1000
                 shutdown_message: bye
+                boar_enabled: false
+                boar_mitigations: true
                 """));
 
-        assertEquals(new BoariumConfig("127.0.0.1:19000", "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye"), config);
+        assertEquals(new BoariumConfig("127.0.0.1:19000", "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye", false, true), config);
     }
 
     @Test
@@ -61,6 +63,9 @@ class BoariumConfigTest {
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("listen: 19132")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("latency_interval: 0")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("- a list")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: 1")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\"")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_mitigations: sometimes")));
         assertNull(BoariumConfig.parse(new StringReader("fallback_server: \"\"")).fallbackServer());
     }
 }

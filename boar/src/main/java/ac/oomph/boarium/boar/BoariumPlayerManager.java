@@ -51,6 +51,11 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     // The block mapping of each player being added, which Boar asks for while it makes the player.
     private final Map<Session, BlockMappingInfo> adding = new ConcurrentHashMap<>();
+    private final boolean mitigations;
+
+    BoariumPlayerManager(boolean mitigations) {
+        this.mitigations = mitigations;
+    }
 
     // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs.
     BoarPlayer add(Session session, StartGamePacket startGame) {
@@ -149,10 +154,10 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         player.setPacketInjector(session::sendToServer);
     }
 
-    // Boar must not change what players do until its mitigations are tested on boarium.
+    // boarium's boar_mitigations decides, in place of disable-mitigations in Boar's own config.
     @Override
     protected boolean shouldDisableMitigations(Session session) {
-        return true;
+        return !this.mitigations;
     }
 
     // The client data's DeviceOS, or 0 when it has none.

@@ -9,6 +9,7 @@ dependencies {
         version { strictly(libs.versions.boar.get()) }
     }
     implementation(libs.slf4j.api)
+    implementation(libs.jackson.yaml)
     runtimeOnly(libs.guava)
     runtimeOnly(libs.gson)
 

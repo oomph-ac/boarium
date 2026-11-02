@@ -14,10 +14,10 @@ import java.time.Duration;
 import java.util.Map;
 
 /**
- * The proxy's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
+ * boarium's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
  */
 public record BoariumConfig(String listen, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
-                            String shutdownMessage) {
+                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations) {
 
     static final String DEFAULT_FILE = """
             # Where players connect to boarium. An empty host means every address of this machine; put an IPv6 address in quotes.
@@ -36,6 +36,11 @@ public record BoariumConfig(String listen, String server, String fallbackServer,
             latency_interval: 3000
             # What players see when boarium shuts down.
             shutdown_message: boarium closed.
+            # Whether the Boar anticheat checks players. Boar keeps its own config in boar/config.yml, next to this file.
+            boar_enabled: true
+            # Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them.
+            # Leave it off until Boar has been tested on a real network.
+            boar_mitigations: false
             """;
 
     /**
@@ -73,7 +78,9 @@ public record BoariumConfig(String listen, String server, String fallbackServer,
                 get(values, "sub_motd", String.class, "boarium"),
                 integer(values, "max_players", 100, 0),
                 Duration.ofMillis(integer(values, "latency_interval", 3000, 1)),
-                get(values, "shutdown_message", String.class, "boarium closed."));
+                get(values, "shutdown_message", String.class, "boarium closed."),
+                get(values, "boar_enabled", Boolean.class, true),
+                get(values, "boar_mitigations", Boolean.class, false));
     }
 
     // A host:port, checked now so that a bad one fails at start and not at each join.

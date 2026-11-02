@@ -8,6 +8,8 @@ boar = "dev2-20261026.014535-50"
 # Boar compiles against these without bringing them, so they are Boar's versions.
 guava = "33.6.0-jre"
 gson = "2.3.1"
+# Boar reads its config with this, so it is Boar's version; the protocol library's Jackson BOM raises it to 2.18.0 at runtime.
+jackson = "2.15.2"
 junit = "5.13.4"
 snakeyaml = "2.3"
 # The slf4j API the protocol library pulls in is 1.7.
@@ -19,6 +21,7 @@ boar = { module = "ac.boar:common", version.ref = "boar" }
 boar-api = { module = "ac.boar:api", version.ref = "boar" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }
 gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+jackson-yaml = { module = "com.fasterxml.jackson.dataformat:jackson-dataformat-yaml", version.ref = "jackson" }
 aircompressor = { module = "io.airlift:aircompressor", version.ref = "aircompressor" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }

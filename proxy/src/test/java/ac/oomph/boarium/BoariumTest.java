@@ -2,6 +2,7 @@ package ac.oomph.boarium;
 
 import ac.oomph.boarium.client.TestClient;
 import ac.oomph.boarium.session.FakeSpectrumServer;
+import ac.oomph.boarium.session.SessionSettings;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
@@ -24,7 +25,8 @@ class BoariumTest {
     void sendsPlayersToTheServerAndDisconnectsThemOnClose() throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
         FakeSpectrumServer server = new FakeSpectrumServer(group, Boarium.CODEC);
-        Boarium boarium = Boarium.start(new BoariumConfig("127.0.0.1:0", server.address(), null, false, "boarium", "test", 10, Duration.ofSeconds(3), "bye"));
+        Boarium boarium = Boarium.start(new BoariumConfig("127.0.0.1:0", server.address(), null, false, "boarium", "test", 10, Duration.ofSeconds(3), "bye", false, false),
+                SessionSettings.DEFAULT.processors());
         try {
             TestClient client = new TestClient("Tester", Boarium.CODEC, Boarium.CODEC.getProtocolVersion());
             client.connect(group, boarium.address());

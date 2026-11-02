@@ -27,7 +27,7 @@ public final class TestBoar {
 
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {
         if (processors == null) {
-            processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"));
+            processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false);
             Boar.getConfig().setStaticSeatIdentifiers(List.of(STATIC_SEAT));
         }
         return processors;
