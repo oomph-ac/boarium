@@ -64,6 +64,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         BoarPlayer player = super.add(session);
         // The compensated world is made with the player, after its world accessor.
         ((CompensatedWorldAccessor) player.getWorldAccessor()).player = player;
+        ((PlayerEntity) player.getEntity()).player = player;
         return player;
     }
 
@@ -79,7 +80,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected Entity getPlayerEntity(Session session) {
-        return Placeholders.playerEntity();
+        return new PlayerEntity();
     }
 
     @Override
@@ -98,7 +99,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected EntityAccessor createEntityAccessor(Session session) {
-        return Placeholders.ENTITIES;
+        return new EntityTracker(session.client().identity().displayName());
     }
 
     @Override
@@ -139,7 +140,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         player.setPacketInjector(session::sendToServer);
     }
 
-    // Boar must not change what players do while some of its block, item and entity data are placeholders.
+    // Boar must not change what players do while some of its item and inventory data are placeholders.
     @Override
     protected boolean shouldDisableMitigations(Session session) {
         return true;

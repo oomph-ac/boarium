@@ -25,7 +25,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.file.Path;
 
 /**
- * What Boar needs from boarium to start. Block data comes from the block table; the item and entity data are {@link Placeholders} for now.
+ * What Boar needs from boarium to start. Block data comes from the block table and entity data from {@link BedrockEntities}; the item data are {@link Placeholders} for now.
  *
  * @param dataFolder where Boar keeps its config
  */
@@ -104,6 +104,6 @@ record BoariumPlatform(Path dataFolder, BoarPlayerManager<?> playerManager) impl
 
     @Override
     public void finalizeEntityMappings(ReferencePopulator<EntityType> typePopulator, ReferencePopulator<EntityDefinition> definitionPopulator) {
-        Placeholders.populateEntities(typePopulator, definitionPopulator);
+        BedrockEntities.populate(typePopulator, definitionPopulator);
     }
 }

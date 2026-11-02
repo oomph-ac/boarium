@@ -2,14 +2,18 @@ package ac.oomph.boarium.session;
 
 import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.compensated.CompensatedInventory;
+import ac.boar.anticheat.compensated.cache.entity.EntityCache;
 import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.data.effect.Effect;
 import ac.boar.anticheat.data.enchantment.Enchantment;
 import ac.boar.anticheat.data.vanilla.StatusEffect;
 import ac.boar.anticheat.player.BoarPlayer;
+import ac.boar.anticheat.player.data.VehicleType;
 import ac.boar.anticheat.util.math.Box;
 import ac.boar.mappings.block.Blocks;
+import ac.boar.mappings.entity.Entity;
 import ac.boar.mappings.entity.EntityDefinitions;
+import ac.boar.mappings.entity.EntityTypes;
 import ac.boar.mappings.item.Items;
 import ac.boar.protocol.PacketEvents;
 import ac.boar.protocol.api.CloudburstPacketEvent;
@@ -37,11 +41,15 @@ import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
+import org.cloudburstmc.protocol.bedrock.data.GameType;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
+import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
+import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
+import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
@@ -52,7 +60,9 @@ import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
+import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
@@ -71,6 +81,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
@@ -85,6 +96,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // In the session package to reach the fake server's own sends.
@@ -96,6 +108,10 @@ class BoarSessionTest {
     private static final int AIR_RUNTIME_ID = 13094;
     private static final int STONE_RUNTIME_ID = 2706;
     private static final int FENCE_Z = 8;
+    private static final long BOAT_RUNTIME_ID = 20;
+    private static final long BOAT_UNIQUE_ID = -20;
+    private static final long HORSE_RUNTIME_ID = 21;
+    private static final long HORSE_UNIQUE_ID = -21;
 
     private static Function<ClientLogin, Processor> processors;
 
@@ -135,7 +151,7 @@ class BoarSessionTest {
     }
 
     @Test
-    void startsWithEveryReferenceFilled() {
+    void startsWithTheReferencesFilled() {
         assertTrue(Blocks.AIR.find().isPresent());
         assertTrue(Items.BOW.find().isPresent());
         assertEquals(1.8F, EntityDefinitions.PLAYER.find().orElseThrow().height());
@@ -353,6 +369,220 @@ class BoarSessionTest {
         ItemData read = onLoop(session, () -> player.compensatedInventory.armorContainer.get(3).getData());
         assertEquals(Map.of(Enchantment.DEPTH_STRIDER, 3), CompensatedInventory.getEnchantments(read));
         this.assertNothingFailed();
+    }
+
+    @Test
+    void tracksAnEntityTheServerAddsUntilItIsRemoved() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.server.send(addEntity(BOAT_RUNTIME_ID, BOAT_UNIQUE_ID, "minecraft:boat"));
+        this.server.send(addEntity(HORSE_RUNTIME_ID, HORSE_UNIQUE_ID, "minecraft:horse"));
+        this.server.send(new Flush());
+
+        this.answerLatencyAfter(AddEntityPacket.class);
+        awaitOnLoop(session, () -> player.compensatedWorld.getEntity(BOAT_RUNTIME_ID) != null && player.compensatedWorld.getEntity(HORSE_RUNTIME_ID) != null);
+        EntityCache boat = onLoop(session, () -> player.compensatedWorld.getEntity(BOAT_RUNTIME_ID));
+        assertEquals("minecraft:boat", boat.getDefinition().identifier());
+        assertEquals(VehicleType.BOAT, boat.getVehicleType());
+        // Without size metadata, Boar gives a boat Geyser's size itself.
+        assertEquals(1.6F, boat.getDimensions().width());
+        assertEquals(0.575F, boat.getDimensions().height());
+        EntityCache horse = onLoop(session, () -> player.compensatedWorld.getEntity(HORSE_RUNTIME_ID));
+        assertEquals(VehicleType.HORSE, horse.getVehicleType());
+        assertEquals(1.3965F, horse.getDimensions().width());
+        assertEquals(1.6F, horse.getDimensions().height());
+
+        RemoveEntityPacket remove = new RemoveEntityPacket();
+        remove.setUniqueEntityId(BOAT_UNIQUE_ID);
+        this.server.send(remove);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(RemoveEntityPacket.class);
+        awaitOnLoop(session, () -> player.compensatedWorld.getTrackedEntity(BOAT_RUNTIME_ID) == null);
+        assertNull(onLoop(session, () -> player.compensatedWorld.getTrackedEntity(BOAT_RUNTIME_ID)));
+        assertNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(BOAT_RUNTIME_ID)));
+        assertNotNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(HORSE_RUNTIME_ID)));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void ridesTheBoatThePlayerIsLinkedTo() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.server.send(addEntity(BOAT_RUNTIME_ID, BOAT_UNIQUE_ID, "minecraft:boat"));
+        this.server.send(link(BOAT_UNIQUE_ID, EntityLinkData.Type.RIDER));
+        this.server.send(new Flush());
+        this.client.await(SetEntityLinkPacket.class);
+        Entity vehicle = onLoop(session, () -> player.getEntity().vehicle());
+        assertNotNull(vehicle);
+        assertEquals("minecraft:boat", vehicle.definition().identifier());
+
+        this.server.send(link(BOAT_UNIQUE_ID, EntityLinkData.Type.REMOVE));
+        this.server.send(new Flush());
+        this.client.await(SetEntityLinkPacket.class);
+        assertNull(onLoop(session, () -> player.getEntity().vehicle()));
+
+        // A link to another entity is not the player's ride.
+        long otherBoatUniqueId = -40;
+        long otherRiderUniqueId = -41;
+        AddEntityPacket boatWithAnotherRider = addEntity(40, otherBoatUniqueId, "minecraft:boat");
+        boatWithAnotherRider.getEntityLinks().add(new EntityLinkData(otherBoatUniqueId, otherRiderUniqueId, EntityLinkData.Type.RIDER, false, false));
+        this.server.send(boatWithAnotherRider);
+        this.server.send(new Flush());
+        this.client.await(AddEntityPacket.class);
+        assertNull(onLoop(session, () -> player.getEntity().vehicle()));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void endsTheRideWhenTheServerRemovesTheVehicle() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        // The rider can come with the vehicle's spawn.
+        AddEntityPacket boat = addEntity(BOAT_RUNTIME_ID, BOAT_UNIQUE_ID, "minecraft:boat");
+        boat.getEntityLinks().add(new EntityLinkData(BOAT_UNIQUE_ID, FakeSpectrumServer.UNIQUE_ID, EntityLinkData.Type.RIDER, false, false));
+        this.server.send(boat);
+        this.server.send(new Flush());
+        this.client.await(AddEntityPacket.class);
+        assertEquals("minecraft:boat", onLoop(session, () -> player.getEntity().vehicle().definition().identifier()));
+
+        RemoveEntityPacket remove = new RemoveEntityPacket();
+        remove.setUniqueEntityId(BOAT_UNIQUE_ID);
+        this.server.send(remove);
+        this.server.send(new Flush());
+        this.client.await(RemoveEntityPacket.class);
+        assertNull(onLoop(session, () -> player.getEntity().vehicle()));
+        this.assertNothingFailed();
+    }
+
+    // The old server's link names an entity it never added, so the proxy has nothing of it to remove at the transfer.
+    @Test
+    void forgetsTheRideOfTheLastServerAtATransfer() throws Exception {
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            Session session = this.spawn();
+            BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+            this.server.send(link(BOAT_UNIQUE_ID, EntityLinkData.Type.RIDER));
+            this.server.send(new Flush());
+            this.client.await(SetEntityLinkPacket.class);
+
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+            next.send(addEntity(BOAT_RUNTIME_ID, BOAT_UNIQUE_ID, "minecraft:boat"));
+            next.send(new Flush());
+            this.client.await(AddEntityPacket.class);
+            assertNotNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(BOAT_RUNTIME_ID)));
+            assertNull(onLoop(session, () -> player.getEntity().vehicle()));
+            this.assertNothingFailed();
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
+    void leavesAStaticSeatWithoutADefinition() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        AddEntityPacket seat = addEntity(50, -50, TestBoar.STATIC_SEAT);
+        seat.getEntityLinks().add(new EntityLinkData(-50, FakeSpectrumServer.UNIQUE_ID, EntityLinkData.Type.RIDER, false, false));
+        this.server.send(seat);
+        this.server.send(new Flush());
+
+        this.answerLatencyAfter(AddEntityPacket.class);
+        awaitOnLoop(session, () -> player.staticSeat != null);
+        assertEquals(-50, onLoop(session, () -> player.staticSeat.actor.uniqueId));
+        assertNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(50)));
+        assertNull(onLoop(session, () -> player.compensatedWorld.getTrackedEntity(50)));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void forgetsTheLastServersEntitiesAtATransfer() throws Exception {
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            Session session = this.spawn();
+            BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+            this.server.send(addEntity(BOAT_RUNTIME_ID, BOAT_UNIQUE_ID, "minecraft:boat"));
+            this.server.send(link(BOAT_UNIQUE_ID, EntityLinkData.Type.RIDER));
+            this.server.send(new Flush());
+            this.client.await(SetEntityLinkPacket.class);
+            assertNotNull(onLoop(session, () -> player.getEntity().vehicle()));
+
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+            assertNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(BOAT_RUNTIME_ID)));
+            assertNull(onLoop(session, () -> player.getEntity().vehicle()));
+            this.assertNothingFailed();
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
+    void tracksAnotherPlayerAsAPlayer() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        AddPlayerPacket add = new AddPlayerPacket();
+        add.setUuid(UUID.randomUUID());
+        add.setUsername("Other");
+        add.setPlatformChatId("");
+        add.setDeviceId("");
+        add.setGameType(GameType.SURVIVAL);
+        add.setUniqueEntityId(-30);
+        add.setRuntimeEntityId(30);
+        add.setPosition(this.startGame.getPlayerPosition());
+        add.setMotion(Vector3f.ZERO);
+        add.setRotation(Vector3f.ZERO);
+        add.setHand(ItemData.AIR);
+        this.server.send(add);
+        this.server.send(new Flush());
+
+        this.answerLatencyAfter(AddPlayerPacket.class);
+        awaitOnLoop(session, () -> player.compensatedWorld.getEntity(30) != null);
+        EntityCache other = onLoop(session, () -> player.compensatedWorld.getEntity(30));
+        assertTrue(other.getType().is(EntityTypes.PLAYER));
+        assertEquals(1.62001F, other.getYOffset());
+        assertEquals(0.6F, other.getDimensions().width());
+        assertEquals(1.8F, other.getDimensions().height());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void tracksNoMoreThanItsLimitOfEntities() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        // EntityTracker.MAX_ENTITIES
+        int limit = 8192;
+        for (int i = 0; i <= limit; i++) {
+            this.server.send(addEntity(100 + i, -100 - i, "minecraft:pig"));
+        }
+        this.server.send(new Flush());
+
+        String error = "has more than " + limit + " entities";
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (!this.logged.toString(StandardCharsets.UTF_8).contains(error) && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertTrue(log.contains(" ERROR ") && log.contains(error), log);
+        assertNotNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(100 + limit - 1)));
+        assertNull(onLoop(session, () -> player.getEntityAccessor().definitionByRuntimeId(100 + limit)));
+        assertFalse(log.contains("Exception"), log);
+    }
+
+    private AddEntityPacket addEntity(long runtimeId, long uniqueId, String identifier) {
+        AddEntityPacket add = new AddEntityPacket();
+        add.setIdentifier(identifier);
+        add.setRuntimeEntityId(runtimeId);
+        add.setUniqueEntityId(uniqueId);
+        add.setPosition(this.startGame.getPlayerPosition().add(2, 0, 0));
+        add.setMotion(Vector3f.ZERO);
+        add.setRotation(Vector2f.ZERO);
+        return add;
+    }
+
+    // A link between the vehicle and the player, by their unique IDs.
+    private static SetEntityLinkPacket link(long vehicleUniqueId, EntityLinkData.Type type) {
+        SetEntityLinkPacket link = new SetEntityLinkPacket();
+        link.setEntityLink(new EntityLinkData(vehicleUniqueId, FakeSpectrumServer.UNIQUE_ID, type, false, false));
+        return link;
     }
 
     // A sub-chunk at Y 0 to 15 with stone at Y 0 and air above, with these runtime IDs.
