@@ -7,6 +7,7 @@ import org.cloudburstmc.protocol.bedrock.data.ExperimentData;
 import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
+import org.cloudburstmc.protocol.bedrock.data.auth.TokenPayload;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientToServerHandshakePacket;
@@ -26,6 +27,7 @@ import java.security.KeyPair;
 import java.security.PublicKey;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
@@ -60,7 +62,7 @@ final class LoginHandler implements BedrockPacketHandler {
     private final Consumer<ClientLogin> onLogin;
 
     private Step step = Step.NETWORK_SETTINGS;
-    private ChainValidationResult.IdentityData identity;
+    private Identity identity;
     private byte[] clientData;
     private boolean xboxAuthenticated;
     private boolean clientCacheSupported;
@@ -157,7 +159,7 @@ final class LoginHandler implements BedrockPacketHandler {
         return PacketSignal.HANDLED;
     }
 
-    private record Verified(ChainValidationResult.IdentityData identity, byte[] clientData, boolean xboxSigned, PublicKey identityKey) {
+    private record Verified(Identity identity, byte[] clientData, boolean xboxSigned, PublicKey identityKey) {
     }
 
     private Verified verify(LoginPacket packet) throws Exception {
@@ -170,17 +172,23 @@ final class LoginHandler implements BedrockPacketHandler {
         if (this.requireXbox && !result.signed()) {
             throw new IllegalStateException("not signed by Xbox Live");
         }
+        long now = System.currentTimeMillis() / 1000;
+        ChainValidationResult.IdentityData data = result.identityClaims().extraData;
+        UUID uuid = data.identity;
         if (packet.getAuthPayload() instanceof CertificateChainPayload chain) {
-            LoginChecks.checkChain(chain.getChain(), System.currentTimeMillis() / 1000);
+            LoginChecks.checkChain(chain.getChain(), now);
+        } else if (packet.getAuthPayload() instanceof TokenPayload token && token.getAuthType() == AuthType.SELF_SIGNED) {
+            uuid = LoginChecks.checkSelfSignedToken(token.getToken(), now);
         }
-        LoginChecks.checkIdentity(result.identityClaims().extraData, result.signed());
+        Identity identity = new Identity(Objects.requireNonNullElse(data.displayName, ""), uuid, Objects.requireNonNullElse(data.xuid, ""), Objects.requireNonNullElse(data.titleId, ""));
+        LoginChecks.checkIdentity(identity, result.signed());
 
         PublicKey identityKey = result.identityClaims().parsedIdentityPublicKey();
         byte[] clientData = EncryptionUtils.verifyClientData(packet.getClientJwt(), identityKey);
         if (clientData == null) {
             throw new IllegalStateException("client data is not signed by the identity key");
         }
-        return new Verified(result.identityClaims().extraData, clientData, result.signed(), identityKey);
+        return new Verified(identity, clientData, result.signed(), identityKey);
     }
 
     private void finishLogin(Verified verified) {

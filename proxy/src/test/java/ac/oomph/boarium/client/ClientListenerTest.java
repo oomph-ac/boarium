@@ -24,6 +24,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HexFormat;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -70,8 +71,8 @@ class ClientListenerTest {
         client.connect(this.group, this.listener.address());
 
         ClientLogin login = this.login.get(10, TimeUnit.SECONDS);
-        assertEquals("Tester", login.identity().displayName);
-        assertEquals(client.identity, login.identity().identity);
+        assertEquals("Tester", login.identity().displayName());
+        assertEquals(client.identity, login.identity().uuid());
         assertFalse(login.xboxAuthenticated());
         assertTrue(login.clientCacheSupported());
         assertTrue(new String(login.clientData(), StandardCharsets.UTF_8).contains("\"ThirdPartyName\":\"Tester\""));
@@ -119,7 +120,7 @@ class ClientListenerTest {
         client.sendSubClientPacket = true;
         client.connect(this.group, this.listener.address());
 
-        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName);
+        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
         client.loginDone.get(10, TimeUnit.SECONDS);
         assertTrue(client.received.stream().noneMatch(DisconnectPacket.class::isInstance));
     }
@@ -192,7 +193,9 @@ class ClientListenerTest {
 
     private void assertTurnedAway(TestClient client) throws Exception {
         client.connect(this.group, this.listener.address());
-        assertThrows(ExecutionException.class, () -> client.loginDone.get(10, TimeUnit.SECONDS));
+        // RakNet gives up connecting after 10 seconds, so a client that never connected fails with its own error, and was not turned away by the proxy.
+        String error = assertThrows(ExecutionException.class, () -> client.loginDone.get(15, TimeUnit.SECONDS)).getCause().getMessage();
+        assertTrue(error.startsWith("disconnected"), error);
         assertFalse(this.login.isDone());
     }
 
@@ -268,17 +271,104 @@ class ClientListenerTest {
         client.chainClaims.put("exp", System.currentTimeMillis() / 1000 - 30);
         client.connect(this.group, this.listener.address());
 
-        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName);
+        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
+    }
+
+    @Test
+    void logsInASelfSignedTokenWithItsOwnUuid() throws Exception {
+        this.listen(false);
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.sendToken = true;
+        client.connect(this.group, this.listener.address());
+
+        ClientLogin login = this.login.get(10, TimeUnit.SECONDS);
+        assertEquals("Tester", login.identity().displayName());
+        assertEquals(client.identity, login.identity().uuid());
+        assertEquals("", login.identity().xuid());
+        assertFalse(login.xboxAuthenticated());
+    }
+
+    @Test
+    void takesTheUuidOfAGophertunnelTokenFromItsIdentityClaim() throws Exception {
+        this.listen(false);
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.sendToken = true;
+        client.tokenClaims.remove("leguuid");
+        client.tokenClaims.remove("aud");
+        client.tokenClaims.put("identity", client.identity.toString());
+        client.connect(this.group, this.listener.address());
+
+        assertEquals(client.identity, this.login.get(10, TimeUnit.SECONDS).identity().uuid());
+    }
+
+    @Test
+    void prefersTheLeguuidClaimToTheIdentityClaim() throws Exception {
+        this.listen(false);
+        TestClient client = this.tokenClient();
+        client.tokenClaims.put("identity", UUID.randomUUID().toString());
+        client.connect(this.group, this.listener.address());
+
+        assertEquals(client.identity, this.login.get(10, TimeUnit.SECONDS).identity().uuid());
+    }
+
+    @Test
+    void turnsAwayBadSelfSignedTokens() throws Exception {
+        this.listen(false);
+
+        TestClient badSignature = this.tokenClient();
+        badSignature.chainSigner = EncryptionUtils.createKeyPair();
+        this.assertTurnedAway(badSignature);
+
+        TestClient expired = this.tokenClient();
+        expired.tokenClaims.put("exp", System.currentTimeMillis() / 1000 - 3600);
+        this.assertTurnedAway(expired);
+
+        TestClient notYetValid = this.tokenClient();
+        notYetValid.tokenClaims.put("nbf", System.currentTimeMillis() / 1000 + 3600);
+        this.assertTurnedAway(notYetValid);
+
+        TestClient noUuid = this.tokenClient();
+        noUuid.tokenClaims.remove("leguuid");
+        this.assertTurnedAway(noUuid);
+
+        TestClient shortUuid = this.tokenClient();
+        shortUuid.tokenClaims.put("leguuid", "1-2-3-4-5");
+        this.assertTurnedAway(shortUuid);
+
+        TestClient nilUuid = this.tokenClient();
+        nilUuid.tokenClaims.put("leguuid", "00000000-0000-0000-0000-000000000000");
+        this.assertTurnedAway(nilUuid);
+
+        TestClient nullUuidBesideIdentity = this.tokenClient();
+        nullUuidBesideIdentity.tokenClaims.put("leguuid", null);
+        nullUuidBesideIdentity.tokenClaims.put("identity", nullUuidBesideIdentity.identity.toString());
+        this.assertTurnedAway(nullUuidBesideIdentity);
+
+        TestClient withXuid = this.tokenClient();
+        withXuid.tokenClaims.put("xid", "2535400000000000");
+        this.assertTurnedAway(withXuid);
+
+        TestClient badName = this.tokenClient();
+        badName.tokenClaims.put("xname", "9Tester");
+        this.assertTurnedAway(badName);
+    }
+
+    private TestClient tokenClient() {
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.sendToken = true;
+        return client;
+    }
+
+    @Test
+    void turnsAwayASelfSignedTokenWhenXboxIsRequired() throws Exception {
+        this.listen(true);
+        this.assertTurnedAway(this.tokenClient());
     }
 
     @Test
     void turnsAwayAnOfflineClientWhenXboxIsRequired() throws Exception {
         this.listen(true);
-        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        client.connect(this.group, this.listener.address());
-
-        assertInstanceOf(IllegalStateException.class, assertThrows(ExecutionException.class, () -> client.loginDone.get(10, TimeUnit.SECONDS)).getCause());
-        assertFalse(this.login.isDone());
+        this.assertTurnedAway(new TestClient("Tester", CODEC, CODEC.getProtocolVersion()));
     }
 
     @Test

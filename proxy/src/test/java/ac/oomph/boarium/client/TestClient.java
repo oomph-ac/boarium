@@ -11,6 +11,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockClientSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
+import org.cloudburstmc.protocol.bedrock.data.auth.TokenPayload;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockClientInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
@@ -68,6 +69,9 @@ final class TestClient {
     boolean sendNetworkSettingsRequest = true;
     boolean sendBrokenLogin;
     boolean sendSubClientPacket;
+    // When set, the client logs in with a self-signed token holding tokenClaims, as the game does, instead of a one-entry chain.
+    boolean sendToken;
+    final Map<String, Object> tokenClaims = new HashMap<>();
 
     private final BedrockCodec codec;
     private final int protocolVersion;
@@ -76,6 +80,14 @@ final class TestClient {
         this.name = name;
         this.codec = codec;
         this.protocolVersion = protocolVersion;
+        long now = System.currentTimeMillis() / 1000;
+        this.tokenClaims.putAll(Map.of(
+                "cpk", Base64.getEncoder().encodeToString(this.key.getPublic().getEncoded()),
+                "xname", name,
+                "leguuid", this.identity.toString(),
+                "aud", "api://auth-minecraft-services/multiplayer",
+                "nbf", now - 3600,
+                "exp", now + 3600));
     }
 
     /**
@@ -112,7 +124,12 @@ final class TestClient {
                         TestClient.this.session.complete(session);
                     }
                 })
-                .connect(address);
+                .connect(address)
+                .addListener(connected -> {
+                    if (!connected.isSuccess()) {
+                        this.loginDone.completeExceptionally(new IllegalStateException("could not connect", connected.cause()));
+                    }
+                });
     }
 
     private String sign(Map<String, Object> claims, KeyPair signer) throws Exception {
@@ -137,7 +154,7 @@ final class TestClient {
         String chain = this.sign(claims, this.chainSigner);
         LoginPacket login = new LoginPacket();
         login.setProtocolVersion(this.protocolVersion);
-        login.setAuthPayload(new CertificateChainPayload(List.of(chain), this.authType));
+        login.setAuthPayload(this.sendToken ? new TokenPayload(this.sign(this.tokenClaims, this.chainSigner), this.authType) : new CertificateChainPayload(List.of(chain), this.authType));
         login.setClientJwt(this.sign(Map.of("ThirdPartyName", this.name, "DeviceOS", 7, "GameVersion", this.codec.getMinecraftVersion()), this.clientDataSigner));
         return login;
     }
