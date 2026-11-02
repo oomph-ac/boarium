@@ -3,6 +3,7 @@ package ac.oomph.boarium.session;
 import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.compensated.CompensatedInventory;
 import ac.boar.anticheat.compensated.cache.entity.EntityCache;
+import ac.boar.anticheat.data.ItemUseTracker;
 import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.data.effect.Effect;
 import ac.boar.anticheat.data.enchantment.Enchantment;
@@ -51,6 +52,17 @@ import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerSlotType;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerType;
+import org.cloudburstmc.protocol.bedrock.data.inventory.FullContainerName;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemStackRequest;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.ItemStackRequestSlotData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.ItemStackRequestAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.request.action.PlaceAction;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponse;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseContainer;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseSlot;
+import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseStatus;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryTransactionType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
@@ -58,20 +70,28 @@ import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ContainerOpenPacket;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.InventoryContentPacket;
+import org.cloudburstmc.protocol.bedrock.packet.InventorySlotPacket;
 import org.cloudburstmc.protocol.bedrock.packet.InventoryTransactionPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ItemStackRequestPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ItemStackResponsePacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MobEquipmentPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetPlayerGameTypePacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
+import org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket;
 import org.cloudburstmc.protocol.common.util.VarInts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
@@ -659,6 +679,373 @@ class BoarSessionTest {
         assertFalse(log.contains("Exception"), log);
     }
 
+    @Test
+    void followsTheHotbarSlotTheClientHolds() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.client.session.get().sendPacket(hold(3));
+        awaitOnLoop(session, () -> RECORDER.received.contains(MobEquipmentPacket.class));
+        assertEquals(3, onLoop(session, () -> player.getInventoryAccessor().heldItemSlot()));
+
+        this.client.session.get().sendPacket(hold(5));
+        awaitOnLoop(session, () -> player.getInventoryAccessor().heldItemSlot() == 5);
+        assertEquals(5, onLoop(session, () -> player.getInventoryAccessor().heldItemSlot()));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void sendsTheClientTheItemTheServerLastSentForASlot() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.holdStones(session, player, 2);
+
+        onLoop(session, () -> {
+            player.getInventoryAccessor().updateSlot(player.getInventoryAccessor().heldItemSlot());
+            return null;
+        });
+        // Boar's sends to the client go out with the server's next Flush.
+        this.server.send(new Flush());
+        InventorySlotPacket slot = this.client.await(InventorySlotPacket.class);
+        assertEquals(ContainerId.INVENTORY, slot.getContainerId());
+        assertEquals(2, slot.getSlot());
+        assertTrue(stones().equals(slot.getItem(), true, true, true), slot.getItem().toString());
+        assertNull(this.server.received.poll(500, TimeUnit.MILLISECONDS));
+        // Boar's listeners never saw it.
+        assertFalse(RECORDER.sent.contains(InventorySlotPacket.class));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void releasesNoItemWhileMitigationsAreOff() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertTrue(player.disableMitigations());
+        this.holdStones(session, player, 2);
+
+        List<BedrockPacket> toServer = this.releaseFromBoar(session, player);
+        assertTrue(toServer.stream().noneMatch(InventoryTransactionPacket.class::isInstance), toServer.toString());
+        assertNull(this.server.received.poll(500, TimeUnit.MILLISECONDS));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void releasesTheHeldItemOnTheServerWhileMitigationsAreOn() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        onLoop(session, () -> {
+            player.setDisableMitigations(false);
+            return null;
+        });
+        this.holdStones(session, player, 2);
+
+        List<BedrockPacket> toServer = this.releaseFromBoar(session, player);
+        InventoryTransactionPacket release = toServer.stream().filter(InventoryTransactionPacket.class::isInstance).map(InventoryTransactionPacket.class::cast).findFirst().orElseThrow(() -> new AssertionError(toServer));
+        assertEquals(InventoryTransactionType.ITEM_RELEASE, release.getTransactionType());
+        assertEquals(0, release.getActionType());
+        assertEquals(0, release.getLegacyRequestId());
+        assertTrue(release.getActions().isEmpty());
+        assertEquals(2, release.getHotbarSlot());
+        assertTrue(stones().equals(release.getItemInHand(), true, true, true), release.getItemInHand().toString());
+        assertEquals(this.startGame.getPlayerPosition(), release.getHeadPosition());
+        assertEquals(1, toServer.stream().filter(InventoryTransactionPacket.class::isInstance).count());
+        // Boar's own NetworkStackLatency packets are all the client gets.
+        List<BedrockPacket> toClient = new ArrayList<>();
+        for (BedrockPacket packet; (packet = this.client.received.poll(500, TimeUnit.MILLISECONDS)) != null; ) {
+            if (!(packet instanceof NetworkStackLatencyPacket)) {
+                toClient.add(packet);
+            }
+        }
+        assertTrue(toClient.isEmpty(), toClient.toString());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void sendsTheClientTheServersNewItemThatBoarHasNotApplied() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+
+        // The client gets the new stack, but does not acknowledge it, so Boar keeps the old one.
+        InventorySlotPacket newer = new InventorySlotPacket();
+        newer.setContainerId(ContainerId.INVENTORY);
+        newer.setSlot(0);
+        newer.setItem(stones(10, 2));
+        this.server.send(newer);
+        this.server.send(new Flush());
+        assertEquals(10, this.client.await(InventorySlotPacket.class).getItem().getCount());
+        assertEquals(64, onLoop(session, () -> player.compensatedInventory.inventoryContainer.get(0).getData().getCount()));
+
+        InventorySlotPacket resent = this.placeOutOfReach(session, 0, stones(64, 1));
+        assertEquals(0, resent.getSlot());
+        assertEquals(10, resent.getItem().getCount());
+        assertEquals(2, resent.getItem().getNetId());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void sendsTheClientBoarsCountAfterThePlacementsItAccepted() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+        Vector3i feet = this.standOnAStoneFloor(session);
+
+        for (int placed = 0; placed < 3; placed++) {
+            // The top face of the floor two blocks east, then to either side of it.
+            this.client.session.get().sendPacket(place(feet.add(2, -1, placed == 2 ? -1 : placed), eyes(feet), stones(64 - placed, 1)));
+        }
+        awaitOnLoop(session, () -> player.compensatedInventory.inventoryContainer.get(0).getData().getCount() == 61);
+        assertEquals(61, onLoop(session, () -> player.compensatedInventory.inventoryContainer.get(0).getData().getCount()));
+
+        InventorySlotPacket resent = this.placeOutOfReach(session, 0, stones(61, 1));
+        assertEquals(61, resent.getItem().getCount());
+        assertEquals(1, resent.getItem().getNetId());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void sendsTheClientTheItemAStackResponseMoved() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+
+        // The player opens its inventory, as dragonfly shows it, and moves the stack from slot 0 to slot 1.
+        ContainerOpenPacket open = new ContainerOpenPacket();
+        open.setId((byte) ContainerId.INVENTORY);
+        open.setType(ContainerType.INVENTORY);
+        open.setBlockPosition(this.startGame.getPlayerPosition().toInt());
+        open.setUniqueEntityId(-1);
+        this.server.send(open);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(ContainerOpenPacket.class);
+        awaitOnLoop(session, () -> player.compensatedInventory.openContainer != null);
+        assertNotNull(onLoop(session, () -> player.compensatedInventory.openContainer));
+        int requestId = -3;
+        PlaceAction move = new PlaceAction(64, slotData(0, 1), slotData(1, 0));
+        ItemStackRequestPacket request = new ItemStackRequestPacket();
+        request.getRequests().add(new ItemStackRequest(requestId, new ItemStackRequestAction[]{move}, new String[0]));
+        this.client.session.get().sendPacket(request);
+        this.client.session.get().sendPacket(hold(1));
+        while (!(this.server.await() instanceof MobEquipmentPacket)) {
+            // The request.
+        }
+
+        // As dragonfly answers: only the response, naming the request's container, with a new stack network ID for the moved stack.
+        ItemStackResponseContainer changes = new ItemStackResponseContainer(ContainerSlotType.HOTBAR_AND_INVENTORY, List.of(
+                new ItemStackResponseSlot(0, 0, 0, 0, "", 0, ""),
+                new ItemStackResponseSlot(1, 1, 64, 3, "", 0, "")), new FullContainerName(ContainerSlotType.HOTBAR_AND_INVENTORY, null));
+        ItemStackResponsePacket response = new ItemStackResponsePacket();
+        response.getEntries().add(new ItemStackResponse(ItemStackResponseStatus.OK, requestId, List.of(changes)));
+        this.server.send(response);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(ItemStackResponsePacket.class);
+        awaitOnLoop(session, () -> player.compensatedInventory.inventoryContainer.get(1).getData().getNetId() == 3);
+        assertEquals(64, onLoop(session, () -> player.compensatedInventory.inventoryContainer.get(1).getData().getCount()));
+        assertEquals(1, onLoop(session, () -> player.getInventoryAccessor().heldItemSlot()));
+
+        InventorySlotPacket resent = this.placeOutOfReach(session, 1, stones(64, 3));
+        assertEquals(1, resent.getSlot());
+        assertEquals(64, resent.getItem().getCount());
+        assertEquals(3, resent.getItem().getNetId());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void forgetsTheLastServersItemsAtATransfer() throws Exception {
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        next.items = ITEMS;
+        try {
+            Session session = this.spawn();
+            BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+            this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+            // A new stack the client does not acknowledge before it leaves the server.
+            InventorySlotPacket newer = new InventorySlotPacket();
+            newer.setContainerId(ContainerId.INVENTORY);
+            newer.setSlot(0);
+            newer.setItem(stones(10, 2));
+            this.server.send(newer);
+            this.server.send(new Flush());
+            this.client.await(InventorySlotPacket.class);
+
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+            onLoop(session, () -> {
+                player.getInventoryAccessor().updateSlot(0);
+                return null;
+            });
+            next.send(new Flush());
+            ItemData resent = this.client.await(InventorySlotPacket.class).getItem();
+            assertEquals(64, resent.getCount());
+            assertEquals(1, resent.getNetId());
+            this.assertNothingFailed();
+        } finally {
+            next.close();
+        }
+    }
+
+    // Turns Boar's mitigations on for this player, so that it undoes the placements it rejects, and has the server put the player in survival, where Boar counts the items the player uses and moves.
+    private BoarPlayer withMitigations(Session session) throws Exception {
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        onLoop(session, () -> {
+            player.setDisableMitigations(false);
+            return null;
+        });
+        SetPlayerGameTypePacket survival = new SetPlayerGameTypePacket();
+        survival.setGamemode(GameType.SURVIVAL.ordinal());
+        this.server.send(survival);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(SetPlayerGameTypePacket.class);
+        awaitOnLoop(session, () -> player.gameType == GameType.SURVIVAL);
+        assertEquals(GameType.SURVIVAL, onLoop(session, () -> player.gameType));
+        return player;
+    }
+
+    // Has the server send the player's inventory with this item in this slot, which the client acknowledges.
+    private void giveAndAcknowledge(Session session, BoarPlayer player, int slot, ItemData item) throws Exception {
+        this.readItemsOnTheClient();
+        List<ItemData> inventory = new ArrayList<>(Collections.nCopies(36, ItemData.AIR));
+        inventory.set(slot, item);
+        InventoryContentPacket content = new InventoryContentPacket();
+        content.setContainerId(ContainerId.INVENTORY);
+        content.setContents(inventory);
+        this.server.send(content);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(InventoryContentPacket.class);
+        awaitOnLoop(session, () -> !player.compensatedInventory.inventoryContainer.get(slot).isEmpty());
+    }
+
+    // Sends the chunk under the StartGame position with a stone floor, and inputs standing on it. Returns the block of the player's feet.
+    private Vector3i standOnAStoneFloor(Session session) throws Exception {
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(stoneFloor(AIR_RUNTIME_ID, STONE_RUNTIME_ID));
+        this.server.send(chunk);
+        this.server.send(new Flush());
+        Vector3i feet = Vector3i.from((chunkX << 4) + 3, 1, (chunkZ << 4) + 5);
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(feet.sub(0, 1, 0), 0).block().toString().equals("minecraft:stone"));
+        long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
+        for (int tick = 1; tick <= 5; tick++) {
+            this.answerLatency();
+            PlayerAuthInputPacket input = authInput();
+            input.setPosition(eyes(feet));
+            input.setTick(tick);
+            this.client.session.get().sendPacket(input);
+            Thread.sleep(50);
+        }
+        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + 5);
+        return feet;
+    }
+
+    // Places a block far out of reach while holding this slot, which Boar undoes, and returns the slot it sends the client then.
+    private InventorySlotPacket placeOutOfReach(Session session, int slot, ItemData inHand) throws Exception {
+        Vector3f eyes = this.startGame.getPlayerPosition();
+        InventoryTransactionPacket place = place(eyes.toInt().add(30, -2, 0), eyes, inHand);
+        place.setHotbarSlot(slot);
+        RECORDER.sent.clear();
+        this.client.session.get().sendPacket(place);
+        awaitOnLoop(session, () -> RECORDER.sent.contains(UpdateBlockPacket.class));
+        // Boar's sends to the client go out with the server's next Flush.
+        this.server.send(new Flush());
+        return this.client.await(InventorySlotPacket.class);
+    }
+
+    // A click on the top face of this block with the item in hotbar slot 0, as a real client sends it.
+    private static InventoryTransactionPacket place(Vector3i clicked, Vector3f eyes, ItemData inHand) {
+        InventoryTransactionPacket place = new InventoryTransactionPacket();
+        place.setTransactionType(InventoryTransactionType.ITEM_USE);
+        place.setActionType(0);
+        place.setTriggerType(ItemUseTransaction.TriggerType.PLAYER_INPUT);
+        place.setBlockPosition(clicked);
+        place.setBlockFace(1);
+        place.setHotbarSlot(0);
+        place.setItemInHand(inHand);
+        place.setPlayerPosition(eyes);
+        place.setClickPosition(Vector3f.from(0.5F, 1, 0.5F));
+        place.setBlockDefinition(Definitions.ANY_BLOCK.getDefinition(STONE_RUNTIME_ID));
+        place.setClientInteractPrediction(ItemUseTransaction.PredictedResult.SUCCESS);
+        return place;
+    }
+
+    // Where the client says its eyes are when it stands in this block
+    private static Vector3f eyes(Vector3i feet) {
+        return Vector3f.from(feet.getX() + 0.5F, feet.getY() + 1.62F, feet.getZ() + 0.5F);
+    }
+
+    // A slot of the player's inventory in an item stack request, with the stack network ID the client thinks it holds
+    private static ItemStackRequestSlotData slotData(int slot, int netId) {
+        return new ItemStackRequestSlotData(ContainerSlotType.HOTBAR_AND_INVENTORY, slot, netId, new FullContainerName(ContainerSlotType.HOTBAR_AND_INVENTORY, null));
+    }
+
+    // Gives the player stone in this hotbar slot and has the client hold it, once the server has all the client's earlier packets.
+    private void holdStones(Session session, BoarPlayer player, int slot) throws Exception {
+        this.readItemsOnTheClient();
+        List<ItemData> inventory = new ArrayList<>(Collections.nCopies(36, ItemData.AIR));
+        inventory.set(slot, stones());
+        InventoryContentPacket content = new InventoryContentPacket();
+        content.setContainerId(ContainerId.INVENTORY);
+        content.setContents(inventory);
+        this.server.send(content);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(InventoryContentPacket.class);
+        awaitOnLoop(session, () -> !player.compensatedInventory.inventoryContainer.get(slot).isEmpty());
+
+        this.client.session.get().sendPacket(hold(slot));
+        while (!(this.server.await() instanceof MobEquipmentPacket)) {
+            // The client's other packets.
+        }
+        assertEquals(slot, onLoop(session, () -> player.getInventoryAccessor().heldItemSlot()));
+    }
+
+    // Has the server say the player uses an item the client never started to use, which Boar answers by releasing the item at the client's next input.
+    // The release's head position is that of the input before, at the StartGame position.
+    // Returns what the server got up to that input.
+    private List<BedrockPacket> releaseFromBoar(Session session, BoarPlayer player) throws Exception {
+        Vector3f head = this.startGame.getPlayerPosition();
+        this.answerLatency();
+        PlayerAuthInputPacket first = authInput();
+        first.setPosition(head);
+        this.client.session.get().sendPacket(first);
+        while (!(this.server.await() instanceof PlayerAuthInputPacket)) {
+            // The client's latency answers.
+        }
+
+        SetEntityDataPacket using = new SetEntityDataPacket();
+        using.setRuntimeEntityId(FakeSpectrumServer.RUNTIME_ID);
+        using.getMetadata().setFlag(EntityFlag.USING_ITEM, true);
+        this.server.send(using);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(SetEntityDataPacket.class);
+        awaitOnLoop(session, () -> player.getItemUseTracker().getDirtyUsing() == ItemUseTracker.DirtyUsing.METADATA);
+        assertEquals(ItemUseTracker.DirtyUsing.METADATA, onLoop(session, () -> player.getItemUseTracker().getDirtyUsing()));
+
+        PlayerAuthInputPacket second = authInput();
+        second.setPosition(head.add(0, 0, 0.1F));
+        second.setTick(2);
+        this.client.session.get().sendPacket(second);
+        List<BedrockPacket> toServer = new ArrayList<>();
+        for (BedrockPacket packet; !((packet = this.server.await()) instanceof PlayerAuthInputPacket); ) {
+            toServer.add(packet);
+        }
+        // Boar handled the server's use; since the client is not using an item, it called releaseItem first.
+        assertEquals(ItemUseTracker.DirtyUsing.NONE, onLoop(session, () -> player.getItemUseTracker().getDirtyUsing()));
+        return toServer;
+    }
+
+    // The client's MobEquipment when its player picks this hotbar slot, with an empty item in the packet.
+    private static MobEquipmentPacket hold(int slot) {
+        MobEquipmentPacket equipment = new MobEquipmentPacket();
+        equipment.setRuntimeEntityId(FakeSpectrumServer.RUNTIME_ID);
+        equipment.setItem(ItemData.AIR);
+        equipment.setContainerId(ContainerId.INVENTORY);
+        equipment.setInventorySlot(slot);
+        equipment.setHotbarSlot(slot);
+        return equipment;
+    }
+
     private AddEntityPacket addEntity(long runtimeId, long uniqueId, String identifier) {
         AddEntityPacket add = new AddEntityPacket();
         add.setIdentifier(identifier);
@@ -727,6 +1114,11 @@ class BoarSessionTest {
     // A stack of stone as the server and a real client send it, with the block it places.
     private static ItemData stones() {
         return ItemData.builder().definition(STONE).count(64).blockDefinition(Definitions.ANY_BLOCK.getDefinition(STONE_RUNTIME_ID)).build();
+    }
+
+    // A stack of stone with the stack network ID the server gave it
+    private static ItemData stones(int count, int netId) {
+        return stones().toBuilder().count(count).usingNetId(true).netId(netId).build();
     }
 
     // The test client has no item or block definitions of its own, and needs them to read the items the server sends.

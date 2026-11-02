@@ -155,18 +155,20 @@ final class BoarProcessor implements Processor {
             // Boar asks for an entity's definition while it handles the entity's AddEntity, so the tracker sees each packet before Boar.
             if (packet.packet() != null) {
                 ((EntityTracker) player.getEntityAccessor()).observe(packet.packet(), player.uniqueEntityId);
+                ((InventoryTracker) player.getInventoryAccessor()).observe(packet.packet());
             }
             this.handle(player, packet, false);
         }
     }
 
-    // A server can be left mid-batch, with no Flush to come. Its entities, and the player's ride, end with it.
+    // A server can be left mid-batch, with no Flush to come. Its entities, the player's ride and its items end with it.
     @Override
     public void preTransfer(Session session, String origin, String target) {
         this.flush(session);
         BoarPlayer player = this.players.get(session);
         if (player != null) {
             ((EntityTracker) player.getEntityAccessor()).clear();
+            ((InventoryTracker) player.getInventoryAccessor()).clear();
         }
     }
 
