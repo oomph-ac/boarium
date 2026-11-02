@@ -1,6 +1,7 @@
 package ac.oomph.boarium.boar;
 
 import ac.boar.anticheat.Boar;
+import ac.boar.anticheat.player.BoarPlayer;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.session.Processor;
 
@@ -17,6 +18,11 @@ public final class TestBoar {
     private static Function<ClientLogin, Processor> processors;
 
     private TestBoar() {
+    }
+
+    // Marks a server batch as begun for this player, as BoarProcessor does at each packet from the server. Call on the client's event loop.
+    public static void openServerBatch(BoarPlayer player) {
+        ((BoariumPlayerManager.AckTransport) player.getAckTransport()).serverBatchOpen = true;
     }
 
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {

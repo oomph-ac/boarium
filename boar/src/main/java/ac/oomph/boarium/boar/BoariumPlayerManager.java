@@ -248,6 +248,9 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
             BoarPlayer player = this.players.get(this.session);
             if (player != null && BoarProcessor.passes(player, packet, false)) {
                 this.session.sendToClient(packet, immediately);
+                if (!immediately) {
+                    ((AckTransport) player.getAckTransport()).flushLater();
+                }
             } else {
                 ReferenceCountUtil.release(packet);
             }
@@ -269,10 +272,11 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         }
     }
 
-    // Boar's acknowledgments, whose keepalive flushes the client: it waits while a server batch is half written, which only the server's Flush ends.
+    // Boar's acknowledgments, and the flushes of its own packets to the client. Neither flushes a half-written server batch, which only the server's Flush or a transfer ends.
     static final class AckTransport extends BatchAcknowledgmentTransport {
         // Only used on the client's event loop.
         boolean serverBatchOpen;
+        private boolean flushQueued;
 
         AckTransport(BoarPlayer player) {
             super(player);
@@ -282,6 +286,25 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         public void keepalive() {
             if (!this.serverBatchOpen) {
                 super.keepalive();
+            }
+        }
+
+        // Flushes Boar's own packets to the client once the task that wrote them is done. They would otherwise wait for the server's next Flush, since Boar skips its keepalive while an acknowledgment is pending.
+        void flushLater() {
+            if (this.serverBatchOpen || this.flushQueued) {
+                return;
+            }
+            Channel channel = this.player.getConnection().getChannel();
+            try {
+                channel.eventLoop().execute(() -> {
+                    this.flushQueued = false;
+                    if (!this.serverBatchOpen) {
+                        channel.flush();
+                    }
+                });
+                this.flushQueued = true;
+            } catch (RejectedExecutionException e) {
+                // The client has left.
             }
         }
     }

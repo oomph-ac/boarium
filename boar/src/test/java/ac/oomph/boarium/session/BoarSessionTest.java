@@ -90,6 +90,7 @@ import org.cloudburstmc.protocol.bedrock.packet.SetEntityLinkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetPlayerGameTypePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetTimePacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket;
 import org.cloudburstmc.protocol.common.util.VarInts;
@@ -703,8 +704,6 @@ class BoarSessionTest {
             player.getInventoryAccessor().updateSlot(player.getInventoryAccessor().heldItemSlot());
             return null;
         });
-        // Boar's sends to the client go out with the server's next Flush.
-        this.server.send(new Flush());
         InventorySlotPacket slot = this.client.await(InventorySlotPacket.class);
         assertEquals(ContainerId.INVENTORY, slot.getContainerId());
         assertEquals(2, slot.getSlot());
@@ -850,6 +849,71 @@ class BoarSessionTest {
     }
 
     @Test
+    void sendsBoarsUndoWithoutWaitingForAQuietServer() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+
+        this.undoOutOfReach(session, 0, stones(64, 1));
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200);
+        List<Class<?>> toClient = new ArrayList<>();
+        for (BedrockPacket packet; !toClient.contains(NetworkStackLatencyPacket.class) && (packet = this.client.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
+            // Skips Boar's keepalives from before the placement
+            if (!toClient.isEmpty() || packet instanceof UpdateBlockPacket) {
+                toClient.add(packet.getClass());
+            }
+        }
+        // Both blocks and the held slot, then Boar's acknowledgment
+        assertEquals(List.of(UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, NetworkStackLatencyPacket.class), toClient);
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void sendsBoarsUndoWithTheServersOpenBatch() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+
+        // A batch the server has begun and not flushed yet, with Boar's undo written in the middle
+        SetPlayerGameTypePacket survival = new SetPlayerGameTypePacket();
+        survival.setGamemode(GameType.SURVIVAL.ordinal());
+        RECORDER.sent.clear();
+        this.client.received.clear();
+        this.server.send(survival);
+        awaitOnLoop(session, () -> RECORDER.sent.contains(SetPlayerGameTypePacket.class));
+        this.undoOutOfReach(session, 0, stones(64, 1));
+        SetTimePacket time = new SetTimePacket();
+        time.setTime(6000);
+        this.server.send(time);
+        this.assertOnlyKeepalivesFor(300);
+
+        this.server.send(new Flush());
+        assertEquals(List.of(SetPlayerGameTypePacket.class, UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, SetTimePacket.class,
+                NetworkStackLatencyPacket.class), this.receivedUntilAcknowledgment());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void sendsBoarsSlotWithABatchTheServerBeginsBeforeTheFlushRuns() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+
+        // updateSlot queues the flush, and a server batch begins before it runs.
+        this.client.received.clear();
+        onLoop(session, () -> {
+            player.getInventoryAccessor().updateSlot(0);
+            TestBoar.openServerBatch(player);
+            return null;
+        });
+        this.assertOnlyKeepalivesFor(300);
+
+        this.server.send(new Flush());
+        assertEquals(List.of(InventorySlotPacket.class, NetworkStackLatencyPacket.class), this.receivedUntilAcknowledgment());
+        this.assertNothingFailed();
+    }
+
+    @Test
     void forgetsTheLastServersItemsAtATransfer() throws Exception {
         FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
         next.items = ITEMS;
@@ -871,7 +935,6 @@ class BoarSessionTest {
                 player.getInventoryAccessor().updateSlot(0);
                 return null;
             });
-            next.send(new Flush());
             ItemData resent = this.client.await(InventorySlotPacket.class).getItem();
             assertEquals(64, resent.getCount());
             assertEquals(1, resent.getNetId());
@@ -942,15 +1005,18 @@ class BoarSessionTest {
 
     // Places a block far out of reach while holding this slot, which Boar undoes, and returns the slot it sends the client then.
     private InventorySlotPacket placeOutOfReach(Session session, int slot, ItemData inHand) throws Exception {
+        this.undoOutOfReach(session, slot, inHand);
+        return this.client.await(InventorySlotPacket.class);
+    }
+
+    // Places a block far out of reach while holding this slot, and waits until Boar has written the client its undo.
+    private void undoOutOfReach(Session session, int slot, ItemData inHand) throws Exception {
         Vector3f eyes = this.startGame.getPlayerPosition();
         InventoryTransactionPacket place = place(eyes.toInt().add(30, -2, 0), eyes, inHand);
         place.setHotbarSlot(slot);
         RECORDER.sent.clear();
         this.client.session.get().sendPacket(place);
         awaitOnLoop(session, () -> RECORDER.sent.contains(UpdateBlockPacket.class));
-        // Boar's sends to the client go out with the server's next Flush.
-        this.server.send(new Flush());
-        return this.client.await(InventorySlotPacket.class);
     }
 
     // A click on the top face of this block with the item in hotbar slot 0, as a real client sends it.
@@ -1126,6 +1192,27 @@ class BoarSessionTest {
         BedrockCodecHelper clientHelper = this.client.session.get().getPeer().getCodecHelper();
         clientHelper.setItemDefinitions(Definitions.items(ITEMS));
         clientHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
+    }
+
+    // Waits this long, and fails if the client gets any packet but Boar's keepalives.
+    private void assertOnlyKeepalivesFor(long millis) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
+        List<Class<?>> received = new ArrayList<>();
+        for (BedrockPacket packet; (packet = this.client.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
+            received.add(packet.getClass());
+        }
+        assertTrue(received.stream().allMatch(NetworkStackLatencyPacket.class::equals), received.toString());
+    }
+
+    // The packets the client gets up to the next NetworkStackLatency.
+    private List<Class<?>> receivedUntilAcknowledgment() throws Exception {
+        List<Class<?>> received = new ArrayList<>();
+        while (!received.contains(NetworkStackLatencyPacket.class)) {
+            BedrockPacket packet = this.client.received.poll(10, TimeUnit.SECONDS);
+            assertNotNull(packet, received.toString());
+            received.add(packet.getClass());
+        }
+        return received;
     }
 
     // Answers each NetworkStackLatency the client was sent, as a real client does.

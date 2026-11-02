@@ -73,7 +73,7 @@ final class InventoryTracker implements InventoryAccessor {
         packet.setContainerId(ContainerId.INVENTORY);
         packet.setSlot(slot);
         packet.setItem(serverItem != null ? serverItem : boarItem);
-        // Unflushed, like the blocks Boar restores.
         this.session.sendToClient(packet, false);
+        ((BoariumPlayerManager.AckTransport) this.player.getAckTransport()).flushLater();
     }
 }
