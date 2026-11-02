@@ -358,6 +358,22 @@ public final class BlockTable {
         return withAt(state, block, propertyPosition(block, property), value);
     }
 
+    // The index of the state's value of a property ID, in that property's values, or -1 if its block does not have that property
+    public int valueIndex(int state, int property) {
+        int block = stateBlock[state];
+        int position = propertyPosition(block, property);
+        if (position < 0) {
+            return -1;
+        }
+        return (state - blockFirstState[block]) / blockStrides[block][position] % propertyValues[blockProperties[block][position]].length;
+    }
+
+    // The state with one property ID changed to the value at this index, or -1 if its block does not have that property or the index
+    public int withIndex(int state, int property, int index) {
+        int block = stateBlock[state];
+        return withIndexAt(state, block, propertyPosition(block, property), index);
+    }
+
     private String valueAt(int state, int block, int position) {
         if (position < 0) {
             return null;
@@ -370,13 +386,19 @@ public final class BlockTable {
         if (position < 0) {
             return -1;
         }
-        String[] values = propertyValues[blockProperties[block][position]];
-        int target = Arrays.asList(values).indexOf(value);
-        if (target < 0) {
+        return withIndexAt(state, block, position, Arrays.asList(propertyValues[blockProperties[block][position]]).indexOf(value));
+    }
+
+    private int withIndexAt(int state, int block, int position, int target) {
+        if (position < 0) {
+            return -1;
+        }
+        int count = propertyValues[blockProperties[block][position]].length;
+        if (target < 0 || target >= count) {
             return -1;
         }
         int stride = blockStrides[block][position];
-        int current = (state - blockFirstState[block]) / stride % values.length;
+        int current = (state - blockFirstState[block]) / stride % count;
         return state + (target - current) * stride;
     }
 

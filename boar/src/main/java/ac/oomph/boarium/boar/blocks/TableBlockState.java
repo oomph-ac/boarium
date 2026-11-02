@@ -31,6 +31,7 @@ public record TableBlockState(int intermediaryId, Vector3i getPosition, int getL
     private static final int SLIME = TABLE.block("minecraft:slime_block");
     private static final boolean[] BEDS = new boolean[TABLE.blockCount()];
     private static final List<Box>[] BOXES = boxes();
+    private static final TableConnections CONNECTIONS = new TableConnections();
 
     public static final BlockStateFactory FACTORY = TableBlockState::create;
 
@@ -40,9 +41,14 @@ public record TableBlockState(int intermediaryId, Vector3i getPosition, int getL
         }
     }
 
-    // Honey, slime and beds get Boar's own state classes, as in Boar's Geyser adapter (beds by "_bed" in the name). Like Geyser, an ID the table does not have is air.
+    // Like Geyser, an ID the table does not have is air.
+    static int orAir(int id) {
+        return id >= 0 && id < TABLE.stateCount() ? id : 0;
+    }
+
+    // Honey, slime and beds get Boar's own state classes, as in Boar's Geyser adapter (beds by "_bed" in the name).
     private static BoarBlockState create(int id, Vector3i position, int layer) {
-        int state = id >= 0 && id < TABLE.stateCount() ? id : 0;
+        int state = orAir(id);
         TableBlockState delegate = new TableBlockState(state, position, layer);
         int block = TABLE.blockOf(state);
         if (block == HONEY) {
@@ -125,9 +131,14 @@ public record TableBlockState(int intermediaryId, Vector3i getPosition, int getL
         return TABLE.isReplaceable(this.intermediaryId);
     }
 
-    // Not done yet: Boar's Geyser adapter reshapes fences, bars, chests and stairs here from their neighbours, and builds bars and walls in connectionCollisionOverride. Until then each keeps the shape of its own state.
+    @Override
+    public List<Box> connectionCollisionOverride(BoarPlayer player, Vector3i pos) {
+        return CONNECTIONS.collisionOverride(player, this.intermediaryId, pos.getX(), pos.getY(), pos.getZ());
+    }
+
     @Override
     public BoarBlockState applyConnectionShape(BoarPlayer player, BoarBlockState self, Vector3i pos) {
-        return self;
+        int reshaped = CONNECTIONS.reshape(player, this.intermediaryId, pos.getX(), pos.getY(), pos.getZ());
+        return reshaped == this.intermediaryId ? self : BoarBlockState.create(reshaped, this.getPosition, this.getLayer);
     }
 }

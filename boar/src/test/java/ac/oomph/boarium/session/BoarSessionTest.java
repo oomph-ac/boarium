@@ -3,6 +3,7 @@ package ac.oomph.boarium.session;
 import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.player.BoarPlayer;
+import ac.boar.anticheat.util.math.Box;
 import ac.boar.mappings.block.Blocks;
 import ac.boar.mappings.entity.EntityDefinitions;
 import ac.boar.mappings.item.Items;
@@ -11,6 +12,7 @@ import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
 import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.TestBoar;
+import ac.oomph.boarium.boar.blocks.BlockTable;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.client.TestClient;
@@ -22,6 +24,7 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
+import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
@@ -63,6 +66,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -77,6 +81,7 @@ class BoarSessionTest {
     // The 1.26.30 runtime IDs of air and stone when StartGame does not ask for hashed IDs
     private static final int AIR_RUNTIME_ID = 13094;
     private static final int STONE_RUNTIME_ID = 2706;
+    private static final int FENCE_Z = 8;
 
     private static Function<ClientLogin, Processor> processors;
 
@@ -214,6 +219,45 @@ class BoarSessionTest {
     }
 
     @Test
+    void standsNextToAFenceLine() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(fenceLine());
+        this.server.send(chunk);
+        this.server.send(new Flush());
+
+        Vector3i fence = Vector3i.from((chunkX << 4) + 5, 1, (chunkZ << 4) + FENCE_Z);
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(fence, 0).block().toString().equals("minecraft:oak_fence"));
+
+        // Standing on the floor, against the fence's south side, as the client says with its eyes 1.62 above its feet.
+        Vector3f eyes = Vector3f.from(fence.getX() + 0.5F, fence.getY() + 1.62F, fence.getZ() + 0.925F);
+        for (int tick = 1; tick <= 20; tick++) {
+            this.answerLatency();
+            PlayerAuthInputPacket input = authInput();
+            input.setPosition(eyes);
+            input.setTick(tick);
+            this.client.session.get().sendPacket(input);
+            Thread.sleep(50);
+        }
+        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= 20);
+        // Boar ran its movement prediction there, not only its checks for a teleport or a loading screen.
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+
+        // A fence in the line joins the fences east and west of it, as oak_fence[east=true,north=false,south=false,waterlogged=false,west=true] (Java state 6979 in Geyser).
+        List<Box> expected = BoarBlockState.create(6979, fence, 0).getCollisionBoxes().stream().map(box -> box.offset(fence.getX(), fence.getY(), fence.getZ())).toList();
+        List<Box> boxes = onLoop(session, () -> player.compensatedWorld.getBlockState(fence, 0).findCollision(player, fence, null, false));
+        assertArrayEquals(corners(expected), corners(boxes));
+        this.assertNothingFailed();
+    }
+
+    @Test
     void seesOnlyAirWhenTheServerAddsCustomBlocks() throws Exception {
         Session session = this.spawn(login -> new AddsCustomBlock(processors.apply(login)));
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
@@ -238,6 +282,47 @@ class BoarSessionTest {
         VarInts.writeInt(data, AIR_RUNTIME_ID);
         VarInts.writeInt(data, STONE_RUNTIME_ID);
         return data;
+    }
+
+    // A sub-chunk at Y 0 to 15 with a stone floor at Y 0 and a line of oak fences along X at Y 1 and local Z FENCE_Z.
+    private static ByteBuf fenceLine() {
+        BlockTable table = BlockTable.get();
+        int fence = table.toRuntime(table.defaultState(table.block("minecraft:oak_fence")), false);
+        ByteBuf data = Unpooled.buffer();
+        data.writeByte(9).writeByte(1).writeByte(0);
+        // Two bits per block, so 16 blocks in each word, at index x << 8 | z << 4 | y: one word is one column of Y 0 to 15.
+        data.writeByte(2 << 1 | 1);
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                data.writeIntLE(z == FENCE_Z ? 1 | 2 << 2 : 1);
+            }
+        }
+        VarInts.writeInt(data, 3);
+        VarInts.writeInt(data, AIR_RUNTIME_ID);
+        VarInts.writeInt(data, STONE_RUNTIME_ID);
+        VarInts.writeInt(data, fence);
+        return data;
+    }
+
+    // Each box's minX, minY, minZ, maxX, maxY, maxZ in a row, since Box does not override equals(Object)
+    private static float[] corners(List<Box> boxes) {
+        float[] corners = new float[boxes.size() * 6];
+        for (int i = 0; i < boxes.size(); i++) {
+            Box box = boxes.get(i);
+            System.arraycopy(new float[]{box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ}, 0, corners, i * 6, 6);
+        }
+        return corners;
+    }
+
+    // Answers each NetworkStackLatency the client was sent, as a real client does.
+    private void answerLatency() throws Exception {
+        for (BedrockPacket packet; (packet = this.client.received.poll()) != null; ) {
+            if (packet instanceof NetworkStackLatencyPacket latency && latency.isFromServer()) {
+                NetworkStackLatencyPacket answer = new NetworkStackLatencyPacket();
+                answer.setTimestamp(latency.getTimestamp());
+                this.client.session.get().sendPacket(answer);
+            }
+        }
     }
 
     // Boar's world is read on the client's event loop, where Boar changes it.
