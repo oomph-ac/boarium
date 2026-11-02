@@ -1,6 +1,7 @@
 package ac.oomph.boarium.client;
 
 import io.netty.channel.EventLoopGroup;
+import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
@@ -10,6 +11,7 @@ import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +22,7 @@ import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.HexFormat;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -39,8 +42,12 @@ class ClientListenerTest {
     private final CompletableFuture<ClientLogin> login = new CompletableFuture<>();
 
     private void listen(boolean requireXbox) throws Exception {
+        this.listen(requireXbox, Duration.ofMinutes(1));
+    }
+
+    private void listen(boolean requireXbox, Duration loginTimeout) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival").playerCount(0).maximumPlayerCount(10);
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, requireXbox, this.login::complete);
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, requireXbox, loginTimeout, this.login::complete);
     }
 
     @BeforeEach
@@ -73,6 +80,67 @@ class ClientListenerTest {
         assertEquals(PlayStatusPacket.Status.LOGIN_SUCCESS, assertInstanceOf(PlayStatusPacket.class, client.received.stream().filter(p -> p instanceof PlayStatusPacket).findFirst().orElseThrow()).getStatus());
         ResourcePackStackPacket stack = assertInstanceOf(ResourcePackStackPacket.class, client.received.stream().filter(p -> p instanceof ResourcePackStackPacket).findFirst().orElseThrow());
         assertEquals(CODEC.getMinecraftVersion(), stack.getGameVersion());
+    }
+
+    @Test
+    void turnsOnCloudburstsEncryptionChecksum() throws Exception {
+        this.listen(false);
+
+        assertEquals("true", System.getProperty("cloudburst.validateEncryption"));
+    }
+
+    @Test
+    void disconnectsAClientThatTakesTooLong() throws Exception {
+        this.listen(false, Duration.ofMillis(300));
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        // The client never sends its first packet, so the login cannot finish.
+        client.sendNetworkSettingsRequest = false;
+        client.connect(this.group, this.listener.address());
+
+        assertEquals("disconnectionScreen.timeout", client.await(DisconnectPacket.class).getKickMessage());
+    }
+
+    @Test
+    void leavesAFinishedLoginConnectedPastTheTimeout() throws Exception {
+        this.listen(false, Duration.ofMillis(500));
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.connect(this.group, this.listener.address());
+        this.login.get(10, TimeUnit.SECONDS);
+
+        Thread.sleep(1000);
+        assertTrue(client.session.get().isConnected());
+        assertTrue(client.received.stream().noneMatch(DisconnectPacket.class::isInstance));
+    }
+
+    @Test
+    void ignoresASecondPlayerOnTheSameConnection() throws Exception {
+        this.listen(false);
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.sendSubClientPacket = true;
+        client.connect(this.group, this.listener.address());
+
+        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName);
+        client.loginDone.get(10, TimeUnit.SECONDS);
+        assertTrue(client.received.stream().noneMatch(DisconnectPacket.class::isInstance));
+    }
+
+    @Test
+    void rejectsALoginTimeoutUnderOneMillisecond() {
+        assertThrows(IllegalArgumentException.class, () -> this.listen(false, Duration.ZERO));
+    }
+
+    @Test
+    void disconnectsAClientThatSendsAPacketThatCannotBeRead() throws Exception {
+        this.listen(false, Duration.ofMillis(300));
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.sendBrokenLogin = true;
+        client.connect(this.group, this.listener.address());
+
+        assertEquals("disconnectionScreen.internalError.cantConnect", client.await(DisconnectPacket.class).getKickMessage());
+        // Wait past the login timeout, which must not send a second Disconnect.
+        Thread.sleep(1000);
+        assertTrue(client.received.stream().noneMatch(p -> p instanceof DisconnectPacket));
+        assertFalse(this.login.isDone());
     }
 
     @Test
@@ -135,6 +203,10 @@ class ClientListenerTest {
         client.loginInOneUnencryptedBatch = true;
 
         this.assertTurnedAway(client);
+        client.await(DisconnectPacket.class);
+        // Give a handshake time to arrive if the failed login still sent one.
+        Thread.sleep(500);
+        assertTrue(client.received.stream().noneMatch(p -> p instanceof DisconnectPacket || p instanceof ServerToClientHandshakePacket));
     }
 
     @Test
@@ -228,6 +300,8 @@ class ClientListenerTest {
         assertThrows(ExecutionException.class, () -> client.loginDone.get(10, TimeUnit.SECONDS));
         PlayStatusPacket status = assertInstanceOf(PlayStatusPacket.class, client.received.poll(10, TimeUnit.SECONDS));
         assertEquals(PlayStatusPacket.Status.LOGIN_FAILED_CLIENT_OLD, status.getStatus());
+        // A shown Disconnect message could replace the screen the PlayStatus opens.
+        assertTrue(client.await(DisconnectPacket.class).isMessageSkipped());
         assertFalse(this.login.isDone());
     }
 }

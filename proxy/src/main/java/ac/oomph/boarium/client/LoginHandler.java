@@ -1,5 +1,6 @@
 package ac.oomph.boarium.client;
 
+import io.netty.channel.EventLoop;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.ExperimentData;
@@ -23,7 +24,13 @@ import org.cloudburstmc.protocol.common.PacketSignal;
 
 import java.security.KeyPair;
 import java.security.PublicKey;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -43,7 +50,9 @@ final class LoginHandler implements BedrockPacketHandler {
             new ResourcePackStackPacket.Entry("0674721c-a0aa-41a1-9ba8-1ed33ea3e7ed", "1.20.50", ""),
             new ResourcePackStackPacket.Entry("0fba4063-dba1-4281-9b89-ff9390653530", "1.0.0", ""));
 
-    private enum Step { NETWORK_SETTINGS, LOGIN, ENCRYPTING, HANDSHAKE, RESOURCE_PACKS, DONE }
+    private enum Step { NETWORK_SETTINGS, LOGIN, VERIFYING, HANDSHAKE, RESOURCE_PACKS, DONE, FAILED }
+
+    private static final Executor VERIFIER = Executors.newVirtualThreadPerTaskExecutor();
 
     private final BedrockServerSession session;
     private final BedrockCodec codec;
@@ -55,17 +64,44 @@ final class LoginHandler implements BedrockPacketHandler {
     private byte[] clientData;
     private boolean xboxAuthenticated;
     private boolean clientCacheSupported;
+    private final ScheduledFuture<?> timeout;
 
-    LoginHandler(BedrockServerSession session, BedrockCodec codec, boolean requireXbox, Consumer<ClientLogin> onLogin) {
+    LoginHandler(BedrockServerSession session, BedrockCodec codec, boolean requireXbox, Duration timeout, Consumer<ClientLogin> onLogin) {
         this.session = session;
         this.codec = codec;
         this.requireXbox = requireXbox;
         this.onLogin = onLogin;
+        if (timeout.toMillis() < 1) {
+            throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + timeout);
+        }
+        this.timeout = session.getPeer().getChannel().eventLoop().schedule(() -> {
+            if (this.step != Step.FAILED && this.session.isConnected()) {
+                this.fail("disconnectionScreen.timeout");
+            }
+        }, timeout.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    @Override
+    public void onDisconnect(CharSequence reason) {
+        this.timeout.cancel(false);
+    }
+
+    // Disconnecting takes Cloudburst a few seconds, so the step makes the rest of this handler ignore the client until then.
+    // A null reason sends a Disconnect the client does not show.
+    private PacketSignal fail(String reason) {
+        this.step = Step.FAILED;
+        this.timeout.cancel(false);
+        this.session.disconnect(reason, false);
+        return PacketSignal.HANDLED;
     }
 
     private PacketSignal outOfOrder() {
-        this.session.disconnect("disconnectionScreen.internalError.cantConnect");
-        return PacketSignal.HANDLED;
+        return this.step == Step.FAILED ? PacketSignal.HANDLED : this.fail("disconnectionScreen.internalError.cantConnect");
+    }
+
+    // Called on the event loop when handling a packet from the client fails.
+    void failOnError() {
+        this.outOfOrder();
     }
 
     @Override
@@ -80,8 +116,8 @@ final class LoginHandler implements BedrockPacketHandler {
             status.setStatus(protocol > this.codec.getProtocolVersion() ? PlayStatusPacket.Status.LOGIN_FAILED_SERVER_OLD : PlayStatusPacket.Status.LOGIN_FAILED_CLIENT_OLD);
             this.session.setCodec(this.codec);
             this.session.sendPacketImmediately(status);
-            this.session.disconnect();
-            return PacketSignal.HANDLED;
+            // The PlayStatus already shows the client why, as gophertunnel does.
+            return this.fail(null);
         }
 
         this.session.setCodec(this.codec);
@@ -100,52 +136,78 @@ final class LoginHandler implements BedrockPacketHandler {
             return this.outOfOrder();
         }
 
+        // The checks can fetch Mojang's keys over HTTPS, so they run off the event loop.
+        // Login packets that arrive meanwhile, including any sent in the Login's own unencrypted batch, fail as out of order, so the handshake reply can only come after encryption is on.
+        this.step = Step.VERIFYING;
+        EventLoop loop = this.session.getPeer().getChannel().eventLoop();
+        VERIFIER.execute(() -> {
+            Verified verified;
+            try {
+                verified = this.verify(packet);
+            } catch (Throwable t) {
+                verified = null;
+            }
+            Verified result = verified;
+            try {
+                loop.execute(() -> this.finishLogin(result));
+            } catch (RejectedExecutionException e) {
+                // The event loop has shut down, and the connection with it.
+            }
+        });
+        return PacketSignal.HANDLED;
+    }
+
+    private record Verified(ChainValidationResult.IdentityData identity, byte[] clientData, boolean xboxSigned, PublicKey identityKey) {
+    }
+
+    private Verified verify(LoginPacket packet) throws Exception {
+        assert !this.session.getPeer().getChannel().eventLoop().inEventLoop() : "login checks must not block the event loop";
+        if (packet.getAuthPayload().getAuthType() == AuthType.GUEST) {
+            throw new IllegalStateException("guest accounts cannot log in");
+        }
+
+        ChainValidationResult result = EncryptionUtils.validatePayload(packet.getAuthPayload());
+        if (this.requireXbox && !result.signed()) {
+            throw new IllegalStateException("not signed by Xbox Live");
+        }
+        if (packet.getAuthPayload() instanceof CertificateChainPayload chain) {
+            LoginChecks.checkChain(chain.getChain(), System.currentTimeMillis() / 1000);
+        }
+        LoginChecks.checkIdentity(result.identityClaims().extraData, result.signed());
+
+        PublicKey identityKey = result.identityClaims().parsedIdentityPublicKey();
+        byte[] clientData = EncryptionUtils.verifyClientData(packet.getClientJwt(), identityKey);
+        if (clientData == null) {
+            throw new IllegalStateException("client data is not signed by the identity key");
+        }
+        return new Verified(result.identityClaims().extraData, clientData, result.signed(), identityKey);
+    }
+
+    private void finishLogin(Verified verified) {
+        assert this.session.getPeer().getChannel().eventLoop().inEventLoop() : "the session is only changed on its event loop";
+        if (this.step != Step.VERIFYING || !this.session.isConnected()) {
+            return;
+        }
+        if (verified == null) {
+            this.fail("disconnectionScreen.notAuthenticated");
+            return;
+        }
+
         try {
-            if (packet.getAuthPayload().getAuthType() == AuthType.GUEST) {
-                this.session.disconnect("disconnectionScreen.notAuthenticated");
-                return PacketSignal.HANDLED;
-            }
-
-            ChainValidationResult result = EncryptionUtils.validatePayload(packet.getAuthPayload());
-            if (this.requireXbox && !result.signed()) {
-                this.session.disconnect("disconnectionScreen.notAuthenticated");
-                return PacketSignal.HANDLED;
-            }
-            if (packet.getAuthPayload() instanceof CertificateChainPayload chain) {
-                LoginChecks.checkChain(chain.getChain(), System.currentTimeMillis() / 1000);
-            }
-            LoginChecks.checkIdentity(result.identityClaims().extraData, result.signed());
-
-            PublicKey identityKey = result.identityClaims().parsedIdentityPublicKey();
-            byte[] clientData = EncryptionUtils.verifyClientData(packet.getClientJwt(), identityKey);
-            if (clientData == null) {
-                this.session.disconnect("disconnectionScreen.notAuthenticated");
-                return PacketSignal.HANDLED;
-            }
-
-            this.identity = result.identityClaims().extraData;
-            this.clientData = clientData;
-            this.xboxAuthenticated = result.signed();
-
             KeyPair serverKey = EncryptionUtils.createKeyPair();
             byte[] token = EncryptionUtils.generateRandomToken();
             ServerToClientHandshakePacket handshake = new ServerToClientHandshakePacket();
             handshake.setJwt(EncryptionUtils.createHandshakeJwt(serverKey, token));
             this.session.sendPacketImmediately(handshake);
-            this.session.enableEncryption(EncryptionUtils.getSecretKey(serverKey.getPrivate(), identityKey, token));
-
-            // Packets after the Login in its own batch were not encrypted, and a client without the identity key could send the rest of the login there.
-            // So the handshake reply only counts once this read is done; packets still in this batch fail as out of order.
-            this.step = Step.ENCRYPTING;
-            this.session.getPeer().getChannel().eventLoop().execute(() -> {
-                if (this.step == Step.ENCRYPTING) {
-                    this.step = Step.HANDSHAKE;
-                }
-            });
+            this.session.enableEncryption(EncryptionUtils.getSecretKey(serverKey.getPrivate(), verified.identityKey(), token));
         } catch (Exception e) {
-            this.session.disconnect("disconnectionScreen.notAuthenticated");
+            this.fail("disconnectionScreen.internalError.cantConnect");
+            return;
         }
-        return PacketSignal.HANDLED;
+        this.identity = verified.identity();
+        this.clientData = verified.clientData();
+        this.xboxAuthenticated = verified.xboxSigned();
+        this.step = Step.HANDSHAKE;
     }
 
     @Override
@@ -168,6 +230,9 @@ final class LoginHandler implements BedrockPacketHandler {
 
     @Override
     public PacketSignal handle(ClientCacheStatusPacket packet) {
+        if (this.step == Step.FAILED) {
+            return PacketSignal.HANDLED;
+        }
         this.clientCacheSupported = packet.isSupported();
         return PacketSignal.HANDLED;
     }
@@ -188,9 +253,10 @@ final class LoginHandler implements BedrockPacketHandler {
             }
             case COMPLETED -> {
                 this.step = Step.DONE;
+                this.timeout.cancel(false);
                 this.onLogin.accept(new ClientLogin(this.session, this.identity, this.clientData, this.xboxAuthenticated, this.clientCacheSupported));
             }
-            default -> this.session.disconnect("disconnectionScreen.resourcePack");
+            default -> this.fail("disconnectionScreen.resourcePack");
         }
         return PacketSignal.HANDLED;
     }

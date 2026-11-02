@@ -1,6 +1,8 @@
 package ac.oomph.boarium.client;
 
 import io.netty.bootstrap.Bootstrap;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
@@ -9,6 +11,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockClientSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
+import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockClientInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
@@ -24,6 +27,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
 import org.cloudburstmc.protocol.common.PacketSignal;
+import org.cloudburstmc.protocol.common.util.VarInts;
 import org.jose4j.json.JsonUtil;
 import org.jose4j.jws.AlgorithmIdentifiers;
 import org.jose4j.jws.JsonWebSignature;
@@ -61,6 +65,9 @@ final class TestClient {
     final Map<String, Object> chainClaims = new HashMap<>();
     final Map<String, Object> identityClaims = new HashMap<>();
     boolean loginInOneUnencryptedBatch;
+    boolean sendNetworkSettingsRequest = true;
+    boolean sendBrokenLogin;
+    boolean sendSubClientPacket;
 
     private final BedrockCodec codec;
     private final int protocolVersion;
@@ -97,9 +104,11 @@ final class TestClient {
                     protected void initSession(BedrockClientSession session) {
                         session.setCodec(TestClient.this.codec);
                         session.setPacketHandler(new Handler(session));
-                        RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
-                        request.setProtocolVersion(TestClient.this.protocolVersion);
-                        session.sendPacketImmediately(request);
+                        if (TestClient.this.sendNetworkSettingsRequest) {
+                            RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
+                            request.setProtocolVersion(TestClient.this.protocolVersion);
+                            session.sendPacketImmediately(request);
+                        }
                         TestClient.this.session.complete(session);
                     }
                 })
@@ -150,7 +159,18 @@ final class TestClient {
         public PacketSignal handle(NetworkSettingsPacket packet) {
             this.session.setCompression(packet.getCompressionAlgorithm());
             try {
-                if (TestClient.this.loginInOneUnencryptedBatch) {
+                if (TestClient.this.sendSubClientPacket) {
+                    ClientCacheStatusPacket cache = new ClientCacheStatusPacket();
+                    cache.setSupported(true);
+                    this.session.getPeer().sendPacketImmediately(0, 1, cache);
+                }
+                if (TestClient.this.sendBrokenLogin) {
+                    // A Login (ID 1) cut short after its first byte, sent as ready-made bytes.
+                    ByteBuf broken = Unpooled.buffer();
+                    VarInts.writeUnsignedInt(broken, 1);
+                    broken.writeByte(1);
+                    this.session.getPeer().sendPacket(BedrockPacketWrapper.create(1, 0, 0, null, broken));
+                } else if (TestClient.this.loginInOneUnencryptedBatch) {
                     ResourcePackClientResponsePacket havePacks = new ResourcePackClientResponsePacket();
                     havePacks.setStatus(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS);
                     ResourcePackClientResponsePacket completed = new ResourcePackClientResponsePacket();
