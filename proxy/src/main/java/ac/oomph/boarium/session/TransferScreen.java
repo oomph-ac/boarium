@@ -5,10 +5,10 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
-import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.data.LevelEvent;
 import org.cloudburstmc.protocol.bedrock.data.PlayerActionType;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
+import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.GameRulesChangedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
@@ -21,6 +21,8 @@ import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetPlayerGameTypePacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.StopSoundPacket;
+
+import java.util.function.Consumer;
 
 /**
  * What the client is sent around a transfer, as spectrum-internal's Session.TransferContext and its Dimension animation send it.
@@ -35,24 +37,24 @@ final class TransferScreen {
     }
 
     // Stops the player from moving while the next server connects, as spectrum-internal's sendMetadata(true) does.
-    static void freeze(BedrockServerSession client, long runtimeId) {
+    static void freeze(Consumer<BedrockPacket> send, long runtimeId) {
         SetEntityDataPacket data = new SetEntityDataPacket();
         data.setRuntimeEntityId(runtimeId);
         data.getMetadata().setFlag(EntityFlag.NO_AI, true);
         data.getMetadata().setFlag(EntityFlag.BREATHING, true);
         data.getMetadata().setFlag(EntityFlag.HAS_GRAVITY, true);
-        client.sendPacketImmediately(data);
+        send.accept(data);
     }
 
     // Starts the dimension change screen, into a dimension other than the client's first one, as Spectrum's Dimension animation picks it.
-    static void play(BedrockServerSession client, int clientDimension, ServerGameData next) {
-        changeDimension(client, clientDimension == NETHER ? END : NETHER, next.startGame().getPlayerPosition());
+    static void play(Consumer<BedrockPacket> send, int clientDimension, ServerGameData next) {
+        changeDimension(send, clientDimension == NETHER ? END : NETHER, next.startGame().getPlayerPosition());
     }
 
     /**
      * Gives the client the next server's world: empty chunks around the player in that server's dimension, removal of what {@code tracker} recorded, then the player's position and the world's settings.
      */
-    static void resetWorld(BedrockServerSession client, Tracker tracker, long clientRuntimeId, ServerGameData next) {
+    static void resetWorld(Consumer<BedrockPacket> send, Tracker tracker, long clientRuntimeId, ServerGameData next) {
         StartGamePacket startGame = next.startGame();
         Vector3f position = startGame.getPlayerPosition();
         int chunkX = (int) position.getX() >> 4;
@@ -65,10 +67,10 @@ final class TransferScreen {
                 chunk.setChunkZ(z);
                 chunk.setSubChunksLength(1);
                 chunk.setData(emptyChunk(startGame.getDimensionId()));
-                client.sendPacketImmediately(chunk);
+                send.accept(chunk);
             }
         }
-        tracker.clear(client, clientRuntimeId);
+        tracker.clear(send, clientRuntimeId);
 
         MovePlayerPacket move = new MovePlayerPacket();
         move.setRuntimeEntityId(next.runtimeId());
@@ -76,54 +78,54 @@ final class TransferScreen {
         move.setRotation(Vector3f.from(startGame.getRotation().getX(), startGame.getRotation().getY(), startGame.getRotation().getY()));
         // gophertunnel's MoveModeReset.
         move.setMode(MovePlayerPacket.Mode.RESPAWN);
-        client.sendPacketImmediately(move);
+        send.accept(move);
         LevelEventPacket rain = new LevelEventPacket();
         rain.setType(LevelEvent.STOP_RAINING);
         rain.setPosition(Vector3f.ZERO);
         rain.setData(10_000);
-        client.sendPacketImmediately(rain);
+        send.accept(rain);
         LevelEventPacket thunder = new LevelEventPacket();
         thunder.setType(LevelEvent.STOP_THUNDERSTORM);
         thunder.setPosition(Vector3f.ZERO);
-        client.sendPacketImmediately(thunder);
+        send.accept(thunder);
         SetDifficultyPacket difficulty = new SetDifficultyPacket();
         difficulty.setDifficulty(startGame.getDifficulty());
-        client.sendPacketImmediately(difficulty);
+        send.accept(difficulty);
         SetPlayerGameTypePacket gameType = new SetPlayerGameTypePacket();
         gameType.setGamemode(startGame.getPlayerGameType().ordinal());
-        client.sendPacketImmediately(gameType);
+        send.accept(gameType);
         GameRulesChangedPacket rules = new GameRulesChangedPacket();
         rules.getGameRules().addAll(startGame.getGamerules());
-        client.sendPacketImmediately(rules);
+        send.accept(rules);
     }
 
     // Ends the dimension change screen in the overworld and spawns the player, as spectrum-internal's Dimension animation does whatever the next server's dimension.
-    static void clear(BedrockServerSession client, ServerGameData next) {
-        spawn(client);
-        changeDimension(client, OVERWORLD, next.startGame().getPlayerPosition());
-        spawn(client);
+    static void clear(Consumer<BedrockPacket> send, ServerGameData next) {
+        spawn(send);
+        changeDimension(send, OVERWORLD, next.startGame().getPlayerPosition());
+        spawn(send);
     }
 
-    private static void changeDimension(BedrockServerSession client, int dimension, Vector3f position) {
+    private static void changeDimension(Consumer<BedrockPacket> send, int dimension, Vector3f position) {
         ChangeDimensionPacket change = new ChangeDimensionPacket();
         change.setDimension(dimension);
         change.setPosition(position);
-        client.sendPacketImmediately(change);
+        send.accept(change);
         StopSoundPacket sound = new StopSoundPacket();
         sound.setSoundName("");
         sound.setStoppingAllSound(true);
-        client.sendPacketImmediately(sound);
+        send.accept(sound);
         PlayerActionPacket done = new PlayerActionPacket();
         done.setAction(PlayerActionType.DIMENSION_CHANGE_SUCCESS);
         done.setBlockPosition(Vector3i.ZERO);
         done.setResultPosition(Vector3i.ZERO);
-        client.sendPacketImmediately(done);
+        send.accept(done);
     }
 
-    private static void spawn(BedrockServerSession client) {
+    private static void spawn(Consumer<BedrockPacket> send) {
         PlayStatusPacket status = new PlayStatusPacket();
         status.setStatus(PlayStatusPacket.Status.PLAYER_SPAWN);
-        client.sendPacketImmediately(status);
+        send.accept(status);
     }
 
     /**

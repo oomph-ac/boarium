@@ -53,13 +53,13 @@ public interface Processor {
     }
 
     /**
-     * Called with each packet the server sends, before it goes on to the client.
+     * Called with each packet the server sends, and each the proxy sends the client around a transfer, before it goes on to the client. The proxy's own packets cannot be cancelled.
      */
     default void server(Session session, PacketContext packet) {
     }
 
     /**
-     * Called when the server asks for the client's packets to be flushed, before they are.
+     * Called before the client's packets are flushed: at the server's Flush, at spawn, and around a transfer.
      */
     default void flush(Session session) {
     }

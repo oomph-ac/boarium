@@ -25,8 +25,10 @@ import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
+import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
@@ -130,6 +132,21 @@ class BoarSessionTest {
         assertFalse(Boar.getInstance().getPlayerManager().containsKey(session));
         assertTrue(player.future.isCancelled());
         this.assertNothingFailed();
+    }
+
+    @Test
+    void showsBoarTheWorldATransferLeavesBehind() throws Exception {
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            Session session = this.spawn();
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+
+            assertTrue(RECORDER.sent.contains(ChangeDimensionPacket.class));
+            assertTrue(RECORDER.sent.contains(LevelChunkPacket.class));
+            this.assertNothingFailed();
+        } finally {
+            next.close();
+        }
     }
 
     @Test

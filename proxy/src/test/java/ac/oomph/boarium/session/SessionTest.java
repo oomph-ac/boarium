@@ -698,6 +698,63 @@ class SessionTest {
     }
 
     @Test
+    void showsTheProcessorWhatTheClientSendsDuringATransfer() throws Exception {
+        List<String> seen = new CopyOnWriteArrayList<>();
+        this.processor = new Processor() {
+            @Override
+            public Set<Integer> clientDecode() {
+                return Set.of(CODEC.getPacketDefinition(TextPacket.class).getId());
+            }
+
+            @Override
+            public void client(Session session, List<PacketContext> batch) {
+                batch.forEach(context -> seen.add(((TextPacket) context.packet()).getMessage()));
+            }
+        };
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            next.answer = false;
+            this.connect(Duration.ofMinutes(1));
+            Session session = this.spawnAndSettle();
+            session.transfer(next.address());
+            next.request.get(10, TimeUnit.SECONDS);
+            this.client.session.get().getPeer().sendPacketImmediately(0, 0, chat("during the transfer"));
+
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (seen.isEmpty() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(List.of("during the transfer"), seen);
+            assertTrue(next.received.isEmpty());
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
+    void showsTheProcessorWhatATransferSendsTheClient() throws Exception {
+        List<String> seen = new CopyOnWriteArrayList<>();
+        this.processor = new Processor() {
+            @Override
+            public void server(Session session, PacketContext packet) {
+                if (packet.packet() != null) {
+                    seen.add(packet.packet().getClass().getSimpleName());
+                }
+            }
+        };
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.connect(Duration.ofMinutes(1));
+            Session session = this.spawnAndSettle();
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+
+            assertTrue(seen.containsAll(List.of("SetEntityDataPacket", "ChangeDimensionPacket", "LevelChunkPacket", "MovePlayerPacket", "PlayStatusPacket")), seen.toString());
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
     void disconnectsThePlayerWhenTheProcessorFails() throws Exception {
         this.processor = new Processor() {
             @Override

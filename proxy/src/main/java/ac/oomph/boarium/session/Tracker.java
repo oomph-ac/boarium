@@ -1,6 +1,5 @@
 package ac.oomph.boarium.session;
 
-import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AddItemEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AddPaintingPacket;
@@ -13,9 +12,12 @@ import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RemoveObjectivePacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetDisplayObjectivePacket;
 
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * What a server showed the client that the next server would not know to remove: entities, boss bars, effects, player list entries and scoreboards, as spectrum-internal's tracker records them.
@@ -55,40 +57,45 @@ final class Tracker {
     /**
      * Sends the client what removes everything recorded, and forgets it. {@code runtimeId} is the player's own entity, which the effects are on.
      */
-    synchronized void clear(BedrockServerSession client, long runtimeId) {
-        for (long entity : this.entities) {
-            RemoveEntityPacket remove = new RemoveEntityPacket();
-            remove.setUniqueEntityId(entity);
-            client.sendPacketImmediately(remove);
+    void clear(Consumer<BedrockPacket> send, long runtimeId) {
+        // Built under the lock and sent after it, since send runs the processor.
+        List<BedrockPacket> removals = new ArrayList<>();
+        synchronized (this) {
+            for (long entity : this.entities) {
+                RemoveEntityPacket remove = new RemoveEntityPacket();
+                remove.setUniqueEntityId(entity);
+                removals.add(remove);
+            }
+            for (long bossBar : this.bossBars) {
+                BossEventPacket hide = new BossEventPacket();
+                hide.setBossUniqueEntityId(bossBar);
+                hide.setAction(BossEventPacket.Action.REMOVE);
+                removals.add(hide);
+            }
+            for (int effectId : this.effects) {
+                MobEffectPacket remove = new MobEffectPacket();
+                remove.setRuntimeEntityId(runtimeId);
+                remove.setEvent(MobEffectPacket.Event.REMOVE);
+                remove.setEffectId(effectId);
+                removals.add(remove);
+            }
+            if (!this.players.isEmpty()) {
+                PlayerListPacket remove = new PlayerListPacket();
+                remove.setAction(PlayerListPacket.Action.REMOVE);
+                this.players.forEach(uuid -> remove.getEntries().add(new PlayerListPacket.Entry(uuid)));
+                removals.add(remove);
+            }
+            for (String objective : this.scoreboards) {
+                RemoveObjectivePacket remove = new RemoveObjectivePacket();
+                remove.setObjectiveId(objective);
+                removals.add(remove);
+            }
+            this.entities.clear();
+            this.bossBars.clear();
+            this.effects.clear();
+            this.players.clear();
+            this.scoreboards.clear();
         }
-        for (long bossBar : this.bossBars) {
-            BossEventPacket hide = new BossEventPacket();
-            hide.setBossUniqueEntityId(bossBar);
-            hide.setAction(BossEventPacket.Action.REMOVE);
-            client.sendPacketImmediately(hide);
-        }
-        for (int effectId : this.effects) {
-            MobEffectPacket remove = new MobEffectPacket();
-            remove.setRuntimeEntityId(runtimeId);
-            remove.setEvent(MobEffectPacket.Event.REMOVE);
-            remove.setEffectId(effectId);
-            client.sendPacketImmediately(remove);
-        }
-        if (!this.players.isEmpty()) {
-            PlayerListPacket remove = new PlayerListPacket();
-            remove.setAction(PlayerListPacket.Action.REMOVE);
-            this.players.forEach(uuid -> remove.getEntries().add(new PlayerListPacket.Entry(uuid)));
-            client.sendPacketImmediately(remove);
-        }
-        for (String objective : this.scoreboards) {
-            RemoveObjectivePacket remove = new RemoveObjectivePacket();
-            remove.setObjectiveId(objective);
-            client.sendPacketImmediately(remove);
-        }
-        this.entities.clear();
-        this.bossBars.clear();
-        this.effects.clear();
-        this.players.clear();
-        this.scoreboards.clear();
+        removals.forEach(send);
     }
 }

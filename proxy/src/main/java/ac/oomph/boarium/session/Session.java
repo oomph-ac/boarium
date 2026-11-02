@@ -233,15 +233,11 @@ public final class Session {
                     }
                 }
             });
-            // Each of the client's batches goes to the server as one, with its packets as the client sent them; during a transfer they are dropped, since the next server has not spawned the player yet.
-            ClientBatchDecoder.forwardBatches(this.session, batch -> {
-                ServerConn current = this.server;
-                if (current != null && this.transfer == null) {
-                    this.fromClient(current, batch);
-                }
-            });
+            // Each of the client's batches goes to the server as one, with its packets as the client sent them.
+            // During a transfer the next server has not spawned the player yet, so a batch goes to no server, but the processor still sees it, such as the client's answers to its NetworkStackLatency packets.
+            ClientBatchDecoder.forwardBatches(this.session, batch -> this.fromClient(this.transfer == null ? this.server : null, batch));
             // The packets the server sent during the connection sequence, which were passed on at spawn, would otherwise wait for its next Flush.
-            this.clientChannel().flush();
+            this.flushToClient();
             if (server != null) {
                 this.watch(server);
             }
@@ -309,7 +305,8 @@ public final class Session {
         if (!toFallback) {
             this.inFallback = false;
         }
-        TransferScreen.freeze(this.session, this.runtimeId);
+        TransferScreen.freeze(this::sendFromProxy, this.runtimeId);
+        this.flushToClient();
         ServerConn old = this.server;
         this.server = null;
         if (old != null) {
@@ -318,8 +315,9 @@ public final class Session {
 
         CompletableFuture<Connected> connected = this.connect(addr);
         CompletableFuture<Connected> spawned = connected.thenComposeAsync(next -> {
-            TransferScreen.play(this.session, this.dimension, next.data());
-            TransferScreen.resetWorld(this.session, this.tracker, this.runtimeId, next.data());
+            TransferScreen.play(this::sendFromProxy, this.dimension, next.data());
+            TransferScreen.resetWorld(this::sendFromProxy, this.tracker, this.runtimeId, next.data());
+            this.flushToClient();
             this.server = next.server();
             this.serverAddr = addr;
             return next.handshake().spawn().applyToEither(next.closed(), ignored -> next);
@@ -349,8 +347,8 @@ public final class Session {
                 this.fallback();
                 return;
             }
-            TransferScreen.clear(this.session, next.data());
-            this.clientChannel().flush();
+            TransferScreen.clear(this::sendFromProxy, next.data());
+            this.flushToClient();
             this.watch(next.server());
             done.complete(null);
             this.hook(() -> this.processor.postTransfer(this, origin, addr));
@@ -362,10 +360,12 @@ public final class Session {
         }, this.loop);
     }
 
-    // A batch from the client, on its event loop, through the processor to the server.
+    // A batch from the client, on its event loop, through the processor to the server, or to no server when it is null.
     private void fromClient(ServerConn server, List<ByteBuf> batch) {
         if (this.processor == Processor.NONE) {
-            server.writeBatch(batch);
+            if (server != null) {
+                server.writeBatch(batch);
+            }
             return;
         }
         List<PacketContext> contexts = new ArrayList<>(batch.size());
@@ -399,7 +399,7 @@ public final class Session {
                     out.add(context.payload());
                 }
             }
-            if (!out.isEmpty()) {
+            if (server != null && !out.isEmpty()) {
                 server.writeBatch(out);
             }
         } catch (RuntimeException e) {
@@ -435,9 +435,7 @@ public final class Session {
                 this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, packet, null));
             }
             case Flush flush -> {
-                if (this.processor == Processor.NONE || this.hook(() -> this.processor.flush(this))) {
-                    this.clientChannel().flush();
-                }
+                this.flushToClient();
             }
             case Latency latency -> this.serverLatency = latency.latency();
             case UpdateCache update -> this.cache = update.cache();
@@ -475,6 +473,22 @@ public final class Session {
         } else {
             this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, null, payload));
             ReferenceCountUtil.release(packet);
+        }
+    }
+
+    // A packet of the proxy's own to the client, which the processor sees as one from the server, so that it knows what the client was shown; it goes out with the next flushToClient.
+    // The processor cannot drop it, since the client needs each of these to move from the old server's world to the next one.
+    private void sendFromProxy(BedrockPacket packet) {
+        if (this.processor != Processor.NONE && !this.hook(() -> this.processor.server(this, new PacketContext(null, packet)))) {
+            ReferenceCountUtil.release(packet);
+            return;
+        }
+        this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, packet, null));
+    }
+
+    private void flushToClient() {
+        if (this.processor == Processor.NONE || this.hook(() -> this.processor.flush(this))) {
+            this.clientChannel().flush();
         }
     }
 
