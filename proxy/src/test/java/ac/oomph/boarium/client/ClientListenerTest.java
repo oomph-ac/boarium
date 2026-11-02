@@ -302,6 +302,43 @@ class ClientListenerTest {
     }
 
     @Test
+    void takesABatchOfAsManyPacketsAsGophertunnel() throws Exception {
+        this.listen(false);
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.packetsBeforeLogin = ClientBatchDecoder.MAX_PACKETS;
+        client.connect(this.group, this.listener.address());
+
+        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
+    }
+
+    @Test
+    void takesAnUncompressedBatch() throws Exception {
+        this.listen(false);
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        client.compression = PacketCompressionAlgorithm.NONE;
+        client.connect(this.group, this.listener.address());
+
+        assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
+    }
+
+    @Test
+    void turnsAwayBadBatches() throws Exception {
+        this.listen(false);
+
+        TestClient tooManyPackets = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        tooManyPackets.packetsBeforeLogin = ClientBatchDecoder.MAX_PACKETS + 1;
+        this.assertTurnedAway(tooManyPackets);
+
+        TestClient otherCompression = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        otherCompression.compression = PacketCompressionAlgorithm.SNAPPY;
+        this.assertTurnedAway(otherCompression);
+
+        TestClient emptyPacket = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        emptyPacket.sendEmptyPacket = true;
+        this.assertTurnedAway(emptyPacket);
+    }
+
+    @Test
     void prefersTheLeguuidClaimToTheIdentityClaim() throws Exception {
         this.listen(false);
         TestClient client = this.tokenClient();

@@ -13,6 +13,7 @@ import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
+import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchDecoder;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockServerInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
@@ -64,6 +65,7 @@ public final class ClientListener {
                 .childHandler(new BedrockServerInitializer() {
                     @Override
                     protected void postInitChannel(Channel channel) {
+                        channel.pipeline().replace(BedrockBatchDecoder.NAME, BedrockBatchDecoder.NAME, new ClientBatchDecoder());
                         // Any error while handling the client's packets ends the connection, with a disconnect screen once the client has a session.
                         channel.pipeline().addLast(new ChannelInboundHandlerAdapter() {
                             @Override

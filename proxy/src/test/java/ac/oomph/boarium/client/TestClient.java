@@ -9,6 +9,7 @@ import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.protocol.bedrock.BedrockClientSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
+import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
 import org.cloudburstmc.protocol.bedrock.data.auth.TokenPayload;
@@ -71,6 +72,11 @@ final class TestClient {
     boolean sendSubClientPacket;
     // When set, the client logs in with a self-signed token holding tokenClaims, as the game does, instead of a one-entry chain.
     boolean sendToken;
+    // The compression the client uses after network settings; null uses the one the server picked.
+    PacketCompressionAlgorithm compression;
+    // When above 0, the client sends this many ClientCacheStatus packets in one batch before its login.
+    int packetsBeforeLogin;
+    boolean sendEmptyPacket;
     final Map<String, Object> tokenClaims = new HashMap<>();
 
     private final BedrockCodec codec;
@@ -174,8 +180,19 @@ final class TestClient {
 
         @Override
         public PacketSignal handle(NetworkSettingsPacket packet) {
-            this.session.setCompression(packet.getCompressionAlgorithm());
+            this.session.setCompression(TestClient.this.compression != null ? TestClient.this.compression : packet.getCompressionAlgorithm());
             try {
+                if (TestClient.this.packetsBeforeLogin > 0) {
+                    ClientCacheStatusPacket[] packets = new ClientCacheStatusPacket[TestClient.this.packetsBeforeLogin];
+                    for (int i = 0; i < packets.length; i++) {
+                        packets[i] = new ClientCacheStatusPacket();
+                        packets[i].setSupported(true);
+                    }
+                    this.session.getPeer().sendPacketsImmediately(0, 0, packets);
+                }
+                if (TestClient.this.sendEmptyPacket) {
+                    this.session.getPeer().getChannel().writeAndFlush(BedrockPacketWrapper.create(0, 0, 0, null, Unpooled.buffer()));
+                }
                 if (TestClient.this.sendSubClientPacket) {
                     ClientCacheStatusPacket cache = new ClientCacheStatusPacket();
                     cache.setSupported(true);
