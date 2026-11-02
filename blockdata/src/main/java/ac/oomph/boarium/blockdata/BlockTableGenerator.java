@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -31,22 +32,24 @@ import java.util.regex.Pattern;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * Writes boar's block table for Bedrock 1.26.30 from a Geyser standalone jar, with the answers Geyser gives for each Java block state and the Bedrock palette.
+ * Writes boar's block table for Bedrock 1.26.30 from a Geyser standalone jar, with the answers Geyser gives for each Java block state, the Bedrock palette, and the Java block each Bedrock block item places.
  * Geyser's classes are loaded from the jar at run time, so this module builds without it.
  *
  * The table is gzip over big-endian DataOutputStream data, in this order:
- * magic "BBT1", protocol, Geyser build (UTF);
+ * magic "BBT2", protocol, Geyser build (UTF);
  * strings (count, UTF each);
  * properties (count; per property: name, value count u8, values), where a name or value is a u16 string index;
  * blocks (count; per block: name, state count, Geyser's default state offset, destroy time, category bits, property count u8, property ids u16), in Java order, each block's states following the previous block's;
  * shapes (count; per shape: box count u8, then minX, minY, minZ, maxX, maxY, maxZ as floats per box);
  * Java states (count; per state: shape u16, flags u8);
  * palette entries (count; per entry: name, network hash, state count u8, then per state: key, NBT tag type u8 (1 byte, 3 int, 8 string), value);
- * the palette index of each Java state, as u16.
+ * the palette index of each Java state, as u16;
+ * block items (count; per item: Bedrock item name, Java block index u16), by name.
  */
 public final class BlockTableGenerator {
-    private static final int MAGIC = 0x42425431;
+    private static final int MAGIC = 0x42425432;
     private static final String PALETTE = "bedrock/block_palette.26_30.nbt";
+    private static final String ITEM_PALETTE = "bedrock/runtime_item_states.26_30.json";
     private static final int PROTOCOL = 1001;
 
     private static final int FACE_STURDY = 1;
@@ -339,6 +342,14 @@ public final class BlockTableGenerator {
         for (char runtimeId : javaToRuntime) {
             data.writeShort(runtimeId);
         }
+
+        Map<String, Integer> itemBlocks = itemBlocks(blocks, blockOfState, stateCounts);
+        require(blocks.size() <= 0xFFFF, "More than 65535 Java blocks");
+        data.writeInt(itemBlocks.size());
+        for (Map.Entry<String, Integer> item : itemBlocks.entrySet()) {
+            data.writeShort(string(item.getKey()));
+            data.writeShort(item.getValue());
+        }
         data.flush();
 
         require(strings.size() <= 0xFFFF, "More than 65535 strings");
@@ -354,8 +365,66 @@ public final class BlockTableGenerator {
         body.writeTo(header);
         header.flush();
 
-        System.out.println(states.size() + " Java states in " + blocks.size() + " blocks, " + propertyNames.size() + " properties, " + shapes.size() + " shapes, " + palette.size() + " palette entries for protocol " + PROTOCOL + ", from Geyser " + geyserBuild);
+        System.out.println(states.size() + " Java states in " + blocks.size() + " blocks, " + propertyNames.size() + " properties, " + shapes.size() + " shapes, " + palette.size() + " palette entries, " + itemBlocks.size() + " block items for protocol " + PROTOCOL + ", from Geyser " + geyserBuild);
         return table.toByteArray();
+    }
+
+    private record BlockItem(String javaItem, int data, int block) {
+    }
+
+    // The Java block of each Bedrock item that places one, by Bedrock item name, from Geyser's item mappings.
+    // Boarium's items carry only the Bedrock name, so when several Java items share one, such as the 16 beds told apart by their data value, the one with the lowest data value wins.
+    private Map<String, Integer> itemBlocks(List<JavaBlock> blocks, int[] blockOfState, int[] stateCounts) throws Exception {
+        Set<String> bedrockItems = new HashSet<>();
+        for (Object item : (List<?>) readJson(ITEM_PALETTE, List.class)) {
+            bedrockItems.add((String) ((Map<?, ?>) item).get("name"));
+        }
+
+        Map<String, List<BlockItem>> byName = new TreeMap<>();
+        for (Map.Entry<?, ?> entry : new TreeMap<>((Map<?, ?>) readJson("mappings/items.json", Map.class)).entrySet()) {
+            String javaItem = (String) entry.getKey();
+            Map<?, ?> item = (Map<?, ?>) entry.getValue();
+            boolean isBlock = Boolean.TRUE.equals(item.get("is_block"));
+            require(isBlock == item.containsKey("firstBlockRuntimeId") && isBlock == item.containsKey("lastBlockRuntimeId"), javaItem + " has is_block " + isBlock + " but its Java state range does not agree");
+            if (!isBlock) {
+                continue;
+            }
+            int first = integer(item.get("firstBlockRuntimeId"), javaItem);
+            int last = integer(item.get("lastBlockRuntimeId"), javaItem);
+            require(first >= 0 && first <= last && last < blockOfState.length, javaItem + " places Java states " + first + " to " + last + ", outside Geyser's states");
+            int block = blockOfState[first];
+            require(first == blocks.get(block).firstState && last == first + stateCounts[block] - 1, javaItem + " places Java states " + first + " to " + last + ", which are not all the states of " + blocks.get(block).name);
+
+            String name = (String) item.get("bedrock_identifier");
+            require(bedrockItems.contains(name), javaItem + " has the Bedrock name " + name + ", which is not in " + ITEM_PALETTE);
+            int data = item.containsKey("bedrock_data") ? integer(item.get("bedrock_data"), javaItem) : 0;
+            byName.computeIfAbsent(name, n -> new ArrayList<>()).add(new BlockItem(javaItem, data, block));
+        }
+
+        Map<String, Integer> itemBlocks = new TreeMap<>();
+        for (Map.Entry<String, List<BlockItem>> entry : byName.entrySet()) {
+            String name = entry.getKey();
+            List<BlockItem> items = entry.getValue();
+            // Geyser gives this name to the Java block items that Bedrock does not have, so it stands for no single block.
+            if (name.equals("minecraft:unknown")) {
+                System.out.println("Skipped " + name + ", the Bedrock name of " + items.stream().map(BlockItem::javaItem).toList());
+                continue;
+            }
+            items.sort(Comparator.comparingInt(BlockItem::data));
+            require(items.stream().mapToInt(BlockItem::data).distinct().count() == items.size(), name + " is the Bedrock name of Java items with the same data value: " + items);
+            BlockItem chosen = items.getFirst();
+            if (items.size() > 1) {
+                System.out.println(name + " is the Bedrock name of " + items.size() + " Java items; " + chosen.javaItem + " (data " + chosen.data + ") places " + blocks.get(chosen.block).name);
+            }
+            itemBlocks.put(name, chosen.block);
+        }
+        return itemBlocks;
+    }
+
+    private static int integer(Object number, String javaItem) {
+        double value = (Double) number;
+        require(value == (int) value, javaItem + " has the non-integer value " + number);
+        return (int) value;
     }
 
     private JavaBlock newBlock(Object handle, int firstState, String stateText) throws Exception {
@@ -628,6 +697,15 @@ public final class BlockTableGenerator {
             } finally {
                 ((AutoCloseable) reader).close();
             }
+        }
+    }
+
+    // The JSON file at this path in Geyser's jar, read with the jar's Gson into Java maps, lists, strings, booleans and doubles.
+    private Object readJson(String path, Class<?> type) throws Exception {
+        try (InputStream in = loader.getResourceAsStream(path)) {
+            require(in != null, "Geyser jar has no " + path);
+            Class<?> gson = loader.loadClass("com.google.gson.Gson");
+            return gson.getMethod("fromJson", String.class, Class.class).invoke(gson.getConstructor().newInstance(), new String(in.readAllBytes(), StandardCharsets.UTF_8), type);
         }
     }
 

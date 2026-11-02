@@ -50,6 +50,7 @@ class BlockTableTest {
         assertEquals(32366, table.stateCount());
         assertEquals(1196, table.blockCount());
         assertEquals(16913, table.paletteSize());
+        assertEquals(1022, table.itemBlocks().size());
         assertEquals("2.11.3-b1248 (git-master-751d2aa)", table.geyserBuild());
         assertSame(BlockTable.get(), BlockTable.get());
     }
@@ -132,6 +133,16 @@ class BlockTableTest {
             zip.write(badMagic);
         }
         assertThrows(IOException.class, () -> BlockTable.load(new ByteArrayInputStream(out.toByteArray())));
+
+        // The table ends with the block index of its last block item.
+        byte[] missingBlock = data.clone();
+        missingBlock[missingBlock.length - 2] = (byte) 0xFF;
+        missingBlock[missingBlock.length - 1] = (byte) 0xFF;
+        ByteArrayOutputStream missingBlockOut = new ByteArrayOutputStream();
+        try (GZIPOutputStream zip = new GZIPOutputStream(missingBlockOut)) {
+            zip.write(missingBlock);
+        }
+        assertThrows(IOException.class, () -> BlockTable.load(new ByteArrayInputStream(missingBlockOut.toByteArray())));
 
         assertThrows(IOException.class, () -> BlockTable.load(new ByteArrayInputStream(Arrays.copyOf(gzip, gzip.length / 2))));
 

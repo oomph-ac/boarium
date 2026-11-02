@@ -2,9 +2,13 @@ package ac.oomph.boarium.boar;
 
 import ac.boar.anticheat.data.inventory.BoarItemStack;
 import ac.boar.anticheat.util.Reference;
+import ac.boar.mappings.block.Block;
+import ac.boar.mappings.block.BlockMappings;
 import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
+import ac.oomph.boarium.boar.blocks.BlockTable;
+import ac.oomph.boarium.boar.blocks.TableBlock;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
@@ -18,6 +22,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -70,7 +75,27 @@ class BedrockItemsTest {
         BoarItemStack stone = BoarItemStack.of(null, stack(STONE, 1));
         assertEquals("minecraft:stone", stone.item().toString());
         assertFalse(stone.is(Items.BOW));
-        assertFalse(stone.item().isBlock());
+    }
+
+    // Expected blocks come from mappings/items.json in the same Geyser jar: the Java item with the Bedrock name, and the block of its firstBlockRuntimeId.
+    @Test
+    void mapsEachBlockItemToTheJavaBlockItPlaces() {
+        assertPlaces("minecraft:stone", "minecraft:stone", 1);
+        assertPlaces("minecraft:oak_planks", "minecraft:oak_planks", 15);
+        assertPlaces("minecraft:wooden_door", "minecraft:oak_door", 5655);
+        assertPlaces("minecraft:oak_sign", "minecraft:oak_sign", 5335);
+        // The 16 Java beds and the 16 Java banners share a Bedrock name; the one with data value 0 wins.
+        assertPlaces("minecraft:bed", "minecraft:white_bed", 1931);
+        assertPlaces("minecraft:banner", "minecraft:black_banner", 13167);
+        assertPlaces("minecraft:powder_snow_bucket", "minecraft:powder_snow", 27162);
+        assertPlaces("minecraft:wheat_seeds", "minecraft:wheat", 5311);
+
+        assertNotABlock("minecraft:bow");
+        // Geyser's name for test_block and test_instance_block
+        assertNotABlock("minecraft:unknown");
+        // Bedrock only
+        assertNotABlock("minecraft:border_block");
+        assertEquals(1022, BlockMappings.get().getItemToBlock().size());
     }
 
     @Test
@@ -79,6 +104,7 @@ class BedrockItemsTest {
         BoarItemStack wand = BoarItemStack.of(session, stack(new SimpleItemDefinition("cubecraft:wand", 2000, true), 1));
         assertFalse(wand.isEmpty());
         assertEquals("cubecraft:wand", wand.item().toString());
+        assertFalse(wand.item().isBlock());
         assertSame(wand.item(), BoarItemStack.of(session, stack(new SimpleItemDefinition("cubecraft:wand", 2000, true), 1)).item());
         // Another session has its own item of the name.
         assertFalse(wand.item().is(BoarItemStack.of(session(List.of()), stack(new SimpleItemDefinition("cubecraft:wand", 2000, true), 1)).item()));
@@ -129,6 +155,24 @@ class BedrockItemsTest {
 
     private static BoariumPlayerManager.BoariumNetworkSession session(List<ItemDefinition> items) {
         return new BoariumPlayerManager.BoariumNetworkSession(null, false, new BedrockItems.SessionItems(Definitions.items(items)));
+    }
+
+    private static Item item(String name) {
+        return BoarItemStack.of(null, stack(new SimpleItemDefinition(name, 0, false), 1)).item();
+    }
+
+    private static void assertPlaces(String name, String block, int firstState) {
+        Item item = item(name);
+        assertTrue(item.isBlock(), name);
+        Block placed = BlockMappings.get().getItemToBlock().get(item);
+        assertEquals(block, placed.toString());
+        assertEquals(firstState, BlockTable.get().firstState(((TableBlock) placed).index()));
+    }
+
+    private static void assertNotABlock(String name) {
+        Item item = item(name);
+        assertFalse(item.isBlock(), name);
+        assertNull(BlockMappings.get().getItemToBlock().get(item));
     }
 
     private static ItemData stack(ItemDefinition definition, int count) {

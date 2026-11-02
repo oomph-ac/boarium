@@ -51,6 +51,8 @@ import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryTransactionType;
+import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
@@ -58,6 +60,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.InventoryContentPacket;
+import org.cloudburstmc.protocol.bedrock.packet.InventoryTransactionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
 import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
@@ -81,6 +84,8 @@ import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -116,10 +121,11 @@ class BoarSessionTest {
     private static final long HORSE_RUNTIME_ID = 21;
     private static final long HORSE_UNIQUE_ID = -21;
     // The fake server's items, with their 1.26.30 runtime IDs
+    private static final SimpleItemDefinition STONE = new SimpleItemDefinition("minecraft:stone", 1, false);
     private static final SimpleItemDefinition ELYTRA = new SimpleItemDefinition("minecraft:elytra", 603, false);
     private static final SimpleItemDefinition LEATHER_BOOTS = new SimpleItemDefinition("minecraft:leather_boots", 370, false);
     private static final List<ItemDefinition> ITEMS = List.of(
-            new SimpleItemDefinition("minecraft:stone", 1, false), new SimpleItemDefinition("minecraft:shield", 387, false), new SimpleItemDefinition("minecraft:bow", 331, false),
+            STONE, new SimpleItemDefinition("minecraft:shield", 387, false), new SimpleItemDefinition("minecraft:bow", 331, false),
             ELYTRA, LEATHER_BOOTS, new SimpleItemDefinition("minecraft:bucket", 392, false), new SimpleItemDefinition("minecraft:water_bucket", 394, false));
 
     private static Function<ClientLogin, Processor> processors;
@@ -399,6 +405,65 @@ class BoarSessionTest {
     }
 
     @Test
+    void placesTheStoneBlockThePlayerHolds() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.readItemsOnTheClient();
+        List<ItemData> inventory = new ArrayList<>(Collections.nCopies(36, ItemData.AIR));
+        inventory.set(0, stones());
+        InventoryContentPacket content = new InventoryContentPacket();
+        content.setContainerId(ContainerId.INVENTORY);
+        content.setContents(inventory);
+        this.server.send(content);
+
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(stoneFloor(AIR_RUNTIME_ID, STONE_RUNTIME_ID));
+        this.server.send(chunk);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(InventoryContentPacket.class);
+        awaitOnLoop(session, () -> !player.compensatedInventory.inventoryContainer.get(0).isEmpty());
+
+        // Standing on the floor, so the block the player clicks is within its reach.
+        Vector3i feet = Vector3i.from((chunkX << 4) + 3, 1, (chunkZ << 4) + 5);
+        for (int tick = 1; tick <= 5; tick++) {
+            this.answerLatency();
+            PlayerAuthInputPacket input = authInput();
+            input.setPosition(Vector3f.from(feet.getX() + 0.5F, feet.getY() + 1.62F, feet.getZ() + 0.5F));
+            input.setTick(tick);
+            this.client.session.get().sendPacket(input);
+            Thread.sleep(50);
+        }
+        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= 5);
+
+        // The top face of the floor two blocks east, clicked with the stone in hotbar slot 0.
+        Vector3i clicked = feet.add(2, -1, 0);
+        InventoryTransactionPacket place = new InventoryTransactionPacket();
+        place.setTransactionType(InventoryTransactionType.ITEM_USE);
+        place.setActionType(0);
+        place.setTriggerType(ItemUseTransaction.TriggerType.PLAYER_INPUT);
+        place.setBlockPosition(clicked);
+        place.setBlockFace(1);
+        place.setHotbarSlot(0);
+        place.setItemInHand(stones());
+        place.setPlayerPosition(Vector3f.from(feet.getX() + 0.5F, feet.getY() + 1.62F, feet.getZ() + 0.5F));
+        place.setClickPosition(Vector3f.from(0.5F, 1, 0.5F));
+        place.setBlockDefinition(Definitions.ANY_BLOCK.getDefinition(STONE_RUNTIME_ID));
+        place.setClientInteractPrediction(ItemUseTransaction.PredictedResult.SUCCESS);
+        this.client.session.get().sendPacket(place);
+
+        Vector3i placed = clicked.add(0, 1, 0);
+        awaitOnLoop(session, () -> RECORDER.received.contains(InventoryTransactionPacket.class));
+        assertEquals("minecraft:stone", onLoop(session, () -> player.compensatedWorld.getBlockState(placed, 0).block().toString()));
+        this.assertNothingFailed();
+    }
+
+    @Test
     void tracksAnEntityTheServerAddsUntilItIsRemoved() throws Exception {
         Session session = this.spawn();
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
@@ -657,6 +722,11 @@ class BoarSessionTest {
             System.arraycopy(new float[]{box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ}, 0, corners, i * 6, 6);
         }
         return corners;
+    }
+
+    // A stack of stone as the server and a real client send it, with the block it places.
+    private static ItemData stones() {
+        return ItemData.builder().definition(STONE).count(64).blockDefinition(Definitions.ANY_BLOCK.getDefinition(STONE_RUNTIME_ID)).build();
     }
 
     // The test client has no item or block definitions of its own, and needs them to read the items the server sends.

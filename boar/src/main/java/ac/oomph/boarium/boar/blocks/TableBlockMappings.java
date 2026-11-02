@@ -11,10 +11,11 @@ import java.util.Map;
 import java.util.function.IntPredicate;
 
 /**
- * Boar's block lists, from the block table's categories. No item maps to a block yet, since boarium has no item data.
+ * Boar's block lists, from the block table's categories, and the block each block item places.
  */
 public final class TableBlockMappings implements BlockMappings {
     private final BlockTable table = BlockTable.get();
+    private final Map<Item, Block> itemToBlock;
     private final List<Block> stairs = this.category(BlockTable.STAIRS);
     private final List<Block> leaves = this.category(BlockTable.LEAVES);
     private final List<Block> shulker = this.category(BlockTable.SHULKER);
@@ -35,6 +36,10 @@ public final class TableBlockMappings implements BlockMappings {
     private final List<Block> cauldron = this.category(BlockTable.CAULDRON);
     // Boar's check takes the name without "minecraft:".
     private final List<Block> interactive = this.blocks(block -> InteractiveBlocks.isInteractive(this.table.blockName(block).substring("minecraft:".length())));
+
+    public TableBlockMappings(Map<Item, Block> itemToBlock) {
+        this.itemToBlock = itemToBlock;
+    }
 
     private List<Block> category(int bit) {
         return this.blocks(block -> (this.table.categories(block) & bit) != 0);
@@ -147,6 +152,6 @@ public final class TableBlockMappings implements BlockMappings {
 
     @Override
     public Map<Item, Block> getItemToBlock() {
-        return Map.of();
+        return this.itemToBlock;
     }
 }

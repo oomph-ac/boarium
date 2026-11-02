@@ -59,7 +59,7 @@ record BoariumPlatform(Path dataFolder, BoarPlayerManager<?> playerManager) impl
 
     @Override
     public BlockMappings loadBlockMappings() {
-        return new TableBlockMappings();
+        return new TableBlockMappings(BedrockItems.ITEM_TO_BLOCK);
     }
 
     @Override

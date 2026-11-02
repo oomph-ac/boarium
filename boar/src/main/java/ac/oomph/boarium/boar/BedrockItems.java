@@ -5,9 +5,12 @@ import ac.boar.anticheat.data.inventory.ItemStackProvider;
 import ac.boar.anticheat.util.Reference;
 import ac.boar.anticheat.util.ReferencePopulator;
 import ac.boar.api.anticheat.model.NetworkSession;
+import ac.boar.mappings.block.Block;
 import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
+import ac.oomph.boarium.boar.blocks.BlockTable;
+import ac.oomph.boarium.boar.blocks.TableBlock;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
@@ -33,17 +36,18 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
- * Boar's items by Bedrock name, as in an ItemDefinition. No item is a block.
+ * Boar's items by Bedrock name, as in an ItemDefinition. An item is a block when the block table gives its name a Java block; a server's own items never are.
  * Boar names its item references by Java identifier, and each of those is also the item's Bedrock name.
  */
 final class BedrockItems implements ItemStackProvider, ItemMappings {
     private static final Logger LOG = LoggerFactory.getLogger(BedrockItems.class);
     private static final List<String> NAMES = readNames();
     // One item for each 1.26.30 name, made at start, so items compare by identity.
-    private static final Map<String, BedrockItem> ITEMS = NAMES.stream().collect(Collectors.toUnmodifiableMap(name -> name, BedrockItem::new));
+    private static final Map<String, BedrockItem> ITEMS = NAMES.stream().collect(Collectors.toUnmodifiableMap(name -> name, name -> new BedrockItem(name, block(name))));
+    static final Map<Item, Block> ITEM_TO_BLOCK = itemToBlock();
     static final BedrockItem AIR = ITEMS.get("minecraft:air");
     // The item of every name past a session's limit of its server's own items
-    static final BedrockItem UNKNOWN = new BedrockItem("boarium:unknown");
+    static final BedrockItem UNKNOWN = new BedrockItem("boarium:unknown", null);
     private static final Stack EMPTY = new Stack(AIR, 0);
     static final List<String> REFERENCES = referenceNames();
     static final BedrockItems INSTANCE = new BedrockItems();
@@ -111,6 +115,24 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         return this.heads;
     }
 
+    // Null for a Bedrock item that Geyser gives no Java block, such as minecraft:border_block.
+    private static Block block(String name) {
+        Integer block = BlockTable.get().itemBlocks().get(name);
+        return block == null ? null : TableBlock.of(block);
+    }
+
+    private static Map<Item, Block> itemToBlock() {
+        Map<Item, Block> blocks = new HashMap<>();
+        for (String name : BlockTable.get().itemBlocks().keySet()) {
+            BedrockItem item = ITEMS.get(name);
+            if (item == null) {
+                throw new IllegalStateException("The block table's block item " + name + " is not a 1.26.30 item");
+            }
+            blocks.put(item, item.block);
+        }
+        return Map.copyOf(blocks);
+    }
+
     private static List<Item> matching(Predicate<String> name) {
         return NAMES.stream().filter(name).<Item>map(ITEMS::get).toList();
     }
@@ -161,7 +183,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
                 if (this.own.size() >= OWN_LIMIT) {
                     return UNKNOWN;
                 }
-                item = new BedrockItem(name);
+                item = new BedrockItem(name, null);
                 this.own.put(name, item);
             }
             return item;
@@ -170,10 +192,12 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
 
     static final class BedrockItem implements Item {
         private final String name;
+        private final Block block;
         private final Stack stack;
 
-        private BedrockItem(String name) {
+        private BedrockItem(String name, Block block) {
             this.name = name;
+            this.block = block;
             this.stack = new Stack(this, 1);
         }
 
@@ -189,7 +213,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
 
         @Override
         public boolean isBlock() {
-            return false;
+            return this.block != null;
         }
 
         @Override

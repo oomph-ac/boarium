@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -197,7 +198,7 @@ class TableBlocksTest {
 
     @Test
     void categories() {
-        BlockMappings mappings = new TableBlockMappings();
+        BlockMappings mappings = new TableBlockMappings(Map.of());
         assertTrue(mappings.getFenceBlocks().contains(block("minecraft:oak_fence")));
         assertTrue(mappings.getWallBlocks().contains(block("minecraft:cobblestone_wall")));
         assertTrue(mappings.getStairsBlocks().contains(block("minecraft:oak_stairs")));
@@ -209,7 +210,6 @@ class TableBlocksTest {
         assertTrue(mappings.getInteractiveBlocks().contains(block("minecraft:oak_door")));
         assertTrue(mappings.getInteractiveBlocks().contains(block("minecraft:crafting_table")));
         assertFalse(mappings.getInteractiveBlocks().contains(block("minecraft:stone")));
-        assertTrue(mappings.getItemToBlock().isEmpty());
     }
 
     @Test

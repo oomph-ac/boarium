@@ -14,13 +14,13 @@ import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 /**
- * Geyser's answers about Java block states and one Bedrock block palette, read from the table the blockdata module generates.
+ * Geyser's answers about Java block states, one Bedrock block palette and the Java block of each Bedrock block item, read from the table the blockdata module generates.
  * A Java state is its Java ID. When the server adds no custom blocks, a palette index is the runtime ID a client uses when StartGame does not ask for hashed IDs; with hashed IDs, the client uses the network hash instead.
  * A property ID stands for one property: a name with its values in index order, since different properties share a name (facing has 4 values on stairs and 6 on pistons).
  */
 public final class BlockTable {
     public static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/block_table.26_30.bin.gz";
-    private static final int MAGIC = 0x42425431;
+    private static final int MAGIC = 0x42425432;
 
     public static final int FACE_STURDY = 1;
     public static final int WATERLOGGED = 2;
@@ -84,8 +84,15 @@ public final class BlockTable {
     private final char[] javaToPalette;
     private final int[] paletteToJava;
 
+    private final Map<String, Integer> itemBlocks;
+
     private BlockTable(DataInputStream in) throws IOException {
-        if (in.readInt() != MAGIC) {
+        int magic = in.readInt();
+        if (magic != MAGIC) {
+            // "BBT" followed by another format number
+            if ((magic >>> 8) == MAGIC >>> 8) {
+                throw new IOException("Block table format BBT" + (char) (magic & 0xFF) + ", expected BBT" + (char) (MAGIC & 0xFF) + ": regenerate it with ./gradlew :blockdata:run");
+            }
             throw new IOException("Not a block table");
         }
         protocol = in.readInt();
@@ -216,6 +223,20 @@ public final class BlockTable {
             javaToPalette[id] = (char) in.readUnsignedShort();
             paletteToJava[javaToPalette[id]] = id;
         }
+
+        int itemCount = in.readInt();
+        Map<String, Integer> items = new HashMap<>(itemCount * 2);
+        for (int i = 0; i < itemCount; i++) {
+            String name = strings[in.readUnsignedShort()];
+            int block = in.readUnsignedShort();
+            if (block >= blockCount) {
+                throw new IOException("Block item " + name + " places missing block " + block);
+            }
+            if (items.put(name, block) != null) {
+                throw new IOException("Block item " + name + " is listed twice");
+            }
+        }
+        itemBlocks = Map.copyOf(items);
 
         // Reading to the end makes GZIPInputStream check its CRC, so a corrupt table fails here instead of loading with wrong answers.
         if (in.read() != -1) {
@@ -496,5 +517,10 @@ public final class BlockTable {
     // The Java state of a palette entry; air (0) when no Java state uses it
     public int paletteToJava(int paletteIndex) {
         return paletteToJava[paletteIndex];
+    }
+
+    // The block index each Bedrock block item places, by Bedrock item name such as "minecraft:wooden_door"
+    public Map<String, Integer> itemBlocks() {
+        return itemBlocks;
     }
 }
