@@ -44,7 +44,10 @@ import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.GameType;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
+import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData;
+import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
+import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
@@ -112,6 +115,12 @@ class BoarSessionTest {
     private static final long BOAT_UNIQUE_ID = -20;
     private static final long HORSE_RUNTIME_ID = 21;
     private static final long HORSE_UNIQUE_ID = -21;
+    // The fake server's items, with their 1.26.30 runtime IDs
+    private static final SimpleItemDefinition ELYTRA = new SimpleItemDefinition("minecraft:elytra", 603, false);
+    private static final SimpleItemDefinition LEATHER_BOOTS = new SimpleItemDefinition("minecraft:leather_boots", 370, false);
+    private static final List<ItemDefinition> ITEMS = List.of(
+            new SimpleItemDefinition("minecraft:stone", 1, false), new SimpleItemDefinition("minecraft:shield", 387, false), new SimpleItemDefinition("minecraft:bow", 331, false),
+            ELYTRA, LEATHER_BOOTS, new SimpleItemDefinition("minecraft:bucket", 392, false), new SimpleItemDefinition("minecraft:water_bucket", 394, false));
 
     private static Function<ClientLogin, Processor> processors;
 
@@ -138,6 +147,7 @@ class BoarSessionTest {
         RECORDER.sent.clear();
         this.group = new NioEventLoopGroup(2);
         this.server = new FakeSpectrumServer(this.group, CODEC);
+        this.server.items = ITEMS;
     }
 
     @AfterEach
@@ -346,15 +356,10 @@ class BoarSessionTest {
     void readsTheEnchantmentsOfTheBootsTheServerSends() throws Exception {
         Session session = this.spawn();
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
-        // The fake server's items are only stone and the shield; Boar reads enchantments from the NBT whatever the item is.
-        SimpleItemDefinition shield = new SimpleItemDefinition("minecraft:shield", 387, false);
-        // The test client has no item or block definitions of its own, and needs them to read the item.
-        BedrockCodecHelper clientHelper = this.client.session.get().getPeer().getCodecHelper();
-        clientHelper.setItemDefinitions(Definitions.items(List.of(shield)));
-        clientHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
+        this.readItemsOnTheClient();
         NbtMap depthStrider = NbtMap.builder().putShort("id", (short) 7).putShort("lvl", (short) 3).build();
         ItemData boots = ItemData.builder()
-                .definition(shield)
+                .definition(LEATHER_BOOTS)
                 .count(1)
                 .tag(NbtMap.builder().putList("ench", NbtType.COMPOUND, depthStrider).build())
                 .build();
@@ -368,6 +373,28 @@ class BoarSessionTest {
         awaitOnLoop(session, () -> !player.compensatedInventory.armorContainer.get(3).isEmpty());
         ItemData read = onLoop(session, () -> player.compensatedInventory.armorContainer.get(3).getData());
         assertEquals(Map.of(Enchantment.DEPTH_STRIDER, 3), CompensatedInventory.getEnchantments(read));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void glidesWithTheElytraTheServerGives() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.readItemsOnTheClient();
+        InventoryContentPacket armor = new InventoryContentPacket();
+        armor.setContainerId(ContainerId.ARMOR);
+        armor.setContents(List.of(ItemData.AIR, ItemData.builder().definition(ELYTRA).count(1).build(), ItemData.AIR, ItemData.AIR));
+        this.server.send(armor);
+        this.server.send(new Flush());
+        this.answerLatencyAfter(InventoryContentPacket.class);
+        awaitOnLoop(session, () -> !player.compensatedInventory.armorContainer.get(1).isEmpty());
+
+        // A client in the air starts to glide when its player jumps again with an elytra on.
+        PlayerAuthInputPacket input = authInput();
+        input.getInputData().add(PlayerAuthInputData.START_GLIDING);
+        this.client.session.get().sendPacket(input);
+        awaitOnLoop(session, () -> RECORDER.received.contains(PlayerAuthInputPacket.class));
+        assertTrue(onLoop(session, () -> player.getFlagTracker().has(EntityFlag.GLIDING)));
         this.assertNothingFailed();
     }
 
@@ -630,6 +657,13 @@ class BoarSessionTest {
             System.arraycopy(new float[]{box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ}, 0, corners, i * 6, 6);
         }
         return corners;
+    }
+
+    // The test client has no item or block definitions of its own, and needs them to read the items the server sends.
+    private void readItemsOnTheClient() throws Exception {
+        BedrockCodecHelper clientHelper = this.client.session.get().getPeer().getCodecHelper();
+        clientHelper.setItemDefinitions(Definitions.items(ITEMS));
+        clientHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
     }
 
     // Answers each NetworkStackLatency the client was sent, as a real client does.

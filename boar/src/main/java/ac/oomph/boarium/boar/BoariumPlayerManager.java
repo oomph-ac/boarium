@@ -33,7 +33,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
@@ -45,12 +47,18 @@ import java.util.concurrent.TimeUnit;
  */
 final class BoariumPlayerManager extends BoarPlayerManager<Session> {
     private static final Logger LOG = LoggerFactory.getLogger(BoariumPlayerManager.class);
+    private static final Set<List<String>> LOGGED_MISSING_ITEMS = ConcurrentHashMap.newKeySet();
 
     // The block mapping of each player being added, which Boar asks for while it makes the player.
     private final Map<Session, BlockMappingInfo> adding = new ConcurrentHashMap<>();
 
     // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs.
     BoarPlayer add(Session session, StartGamePacket startGame) {
+        // Boar's checks of an item the server's list lacks never match; most likely the server runs an older Bedrock version.
+        List<String> missing = BedrockItems.missingReferences(session.itemDefinitions());
+        if (!missing.isEmpty() && LOGGED_MISSING_ITEMS.add(missing)) {
+            LOG.warn("The server of {} lacks Boar's items {}", session.client().identity().displayName(), missing);
+        }
         this.adding.put(session, TablePalette.mappingInfo(startGame));
         try {
             return this.add(session);
@@ -70,7 +78,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected NetworkSession createNetworkSession(Session session) {
-        return new BoariumNetworkSession(session, deviceOs(session) == BuildPlatform.SONY.getId());
+        return new BoariumNetworkSession(session, deviceOs(session) == BuildPlatform.SONY.getId(), new BedrockItems.SessionItems(session.itemDefinitions()));
     }
 
     @Override
@@ -159,7 +167,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         return session.client().session().getPeer().getChannel();
     }
 
-    private record BoariumNetworkSession(Session session, boolean playStation) implements NetworkSession {
+    record BoariumNetworkSession(Session session, boolean playStation, BedrockItems.SessionItems items) implements NetworkSession {
         @Override
         public String name() {
             return this.session.client().identity().displayName();

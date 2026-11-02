@@ -28,11 +28,13 @@ import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
 import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
+import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
+import org.cloudburstmc.protocol.common.DefinitionRegistry;
 import org.cloudburstmc.protocol.common.util.VarInts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -636,5 +638,12 @@ public final class Session {
      */
     public String serverAddress() {
         return this.serverAddr;
+    }
+
+    /**
+     * The item definitions of the first server, which the client is sent with its StartGame and keeps for the whole session. Set before {@link Processor#startGame}.
+     */
+    public DefinitionRegistry<ItemDefinition> itemDefinitions() {
+        return this.serverHelper.getItemDefinitions();
     }
 }
