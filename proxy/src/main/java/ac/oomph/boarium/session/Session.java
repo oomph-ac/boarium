@@ -5,26 +5,45 @@ import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.client.ClientGameStart;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.client.SpectrumLoginData;
+import ac.oomph.boarium.protocol.Definitions;
 import ac.oomph.boarium.server.ServerConn;
 import ac.oomph.boarium.server.ServerGameData;
 import ac.oomph.boarium.server.ServerHandshake;
 import ac.oomph.boarium.server.packet.ConnectionRequest;
+import ac.oomph.boarium.server.packet.Flush;
 import ac.oomph.boarium.server.packet.Latency;
+import ac.oomph.boarium.server.packet.SpectrumPackets;
+import ac.oomph.boarium.server.packet.Transfer;
+import ac.oomph.boarium.server.packet.UpdateCache;
 import ac.oomph.boarium.transport.Transport;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoop;
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.cloudburstmc.netty.channel.raknet.RakChannel;
 import org.cloudburstmc.netty.handler.codec.raknet.common.RakSessionCodec;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
+import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
+import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
+import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
+import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
+import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
+import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
+import org.cloudburstmc.protocol.common.util.VarInts;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.net.Inet6Address;
 import java.net.InetSocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -33,6 +52,7 @@ import java.util.concurrent.TimeUnit;
  * One player on the proxy: a logged-in client and its connection to the downstream server it plays on, as spectrum-internal's Session.
  * Once the player spawns, packets pass between the two, and the client's latency goes to the server at the settings' interval.
  * The player can be transferred to another server; when its server is lost, it is transferred once to the fallback server, if there is one, and otherwise disconnected.
+ * A {@link Processor} from the settings sees the traffic on the way.
  * The session's server, its transfers and the fallback change on the client's event loop.
  * A transfer asked for while one runs waits for it, and the latest such address wins.
  */
@@ -40,6 +60,7 @@ public final class Session {
     // spectrum-internal's Session.Transfer timeout.
     static final Duration TRANSFER_TIMEOUT = Duration.ofMinutes(1);
     private static final String CANT_CONNECT = "disconnectionScreen.internalError.cantConnect";
+    private static final Logger LOG = LoggerFactory.getLogger(Session.class);
 
     private final ClientLogin client;
     private final BedrockServerSession session;
@@ -51,9 +72,15 @@ public final class Session {
     private final byte[] clientData;
     private final byte[] identityData;
     private final Tracker tracker = new Tracker();
+    private final Processor processor;
+    private final Set<Integer> clientDecode;
+    private final Set<Integer> serverDecode;
+    // Decodes what servers send for the processor, with the client's item definitions and Cloudburst's limits for a game client, which a server's large lists and strings need.
+    private final BedrockCodecHelper serverHelper;
 
     private volatile ServerConn server;
     private volatile String serverAddr;
+    // What the server last stored for this player with UpdateCache, which the next server's ConnectionRequest carries.
     private volatile byte[] cache = new byte[0];
     private volatile long serverLatency;
     private volatile long clientRoundTrip;
@@ -72,6 +99,12 @@ public final class Session {
         this.transport = transport;
         this.codec = codec;
         this.settings = settings;
+        this.processor = settings.processors().apply(client);
+        this.clientDecode = Set.copyOf(this.processor.clientDecode());
+        this.serverDecode = Set.copyOf(this.processor.serverDecode());
+        this.serverHelper = codec.createHelper();
+        this.serverHelper.setEncodingSettings(EncodingSettings.CLIENT);
+        this.serverHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
         this.clientAddr = address((InetSocketAddress) this.session.getPeer().getChannel().remoteAddress());
         this.clientData = SpectrumLoginData.clientData(client.clientData());
         this.identityData = SpectrumLoginData.identity(client.identity());
@@ -95,6 +128,7 @@ public final class Session {
             return CompletableFuture.failedFuture(e);
         }
 
+        ClientDisconnect.ended(session).thenRun(() -> joined.hook(() -> joined.processor.disconnect(joined)));
         CompletableFuture<Connected> connected = joined.connect(addr);
         CompletableFuture<Session> result = connected.thenComposeAsync(next -> {
             StartGamePacket startGame = next.data().startGame();
@@ -104,6 +138,10 @@ public final class Session {
             joined.dimension = startGame.getDimensionId();
             joined.server = next.server();
             joined.serverAddr = addr;
+            joined.serverHelper.setItemDefinitions(Definitions.items(next.data().items()));
+            if (!joined.hook(() -> joined.processor.startGame(joined, startGame))) {
+                return CompletableFuture.failedFuture(new IllegalStateException("the processor failed at StartGame"));
+            }
             return ClientGameStart.start(session, startGame, next.data().items(), 0)
                     .applyToEither(next.closed(), spawned -> spawned)
                     .thenCompose(spawned -> next.handshake().spawn())
@@ -197,7 +235,7 @@ public final class Session {
             ClientBatchDecoder.forwardBatches(this.session, batch -> {
                 ServerConn current = this.server;
                 if (current != null && this.transfer == null) {
-                    current.writeBatch(batch);
+                    this.fromClient(current, batch);
                 }
             });
             // The packets the server sent during the connection sequence, which were passed on at spawn, would otherwise wait for its next Flush.
@@ -259,6 +297,11 @@ public final class Session {
             this.queued = done;
             return;
         }
+        String origin = this.server != null ? this.serverAddr : null;
+        if (!this.hook(() -> this.processor.preTransfer(this, origin, addr))) {
+            done.completeExceptionally(new IllegalStateException("the processor failed before the transfer"));
+            return;
+        }
         this.transfer = done;
         // A transfer away from the fallback allows another fallback; a fallback that only succeeds does not, so a fallback server that keeps dropping the player cannot hold it in a loop.
         if (!toFallback) {
@@ -293,6 +336,10 @@ public final class Session {
                 connected.thenAccept(failed -> failed.server().close());
                 this.server = null;
                 done.completeExceptionally(error != null ? error : new ClosedChannelException());
+                // A client that left has had its disconnect hook already.
+                if (!ClientDisconnect.ended(this.session).isDone()) {
+                    this.hook(() -> this.processor.transferFailure(this, origin, addr));
+                }
                 if (this.queued != null) {
                     this.queued.completeExceptionally(new IllegalStateException("the transfer before it failed"));
                     this.queued = null;
@@ -304,6 +351,7 @@ public final class Session {
             this.clientChannel().flush();
             this.watch(next.server());
             done.complete(null);
+            this.hook(() -> this.processor.postTransfer(this, origin, addr));
             if (this.queued != null) {
                 CompletableFuture<Void> waiting = this.queued;
                 this.queued = null;
@@ -312,12 +360,212 @@ public final class Session {
         }, this.loop);
     }
 
+    // A batch from the client, on its event loop, through the processor to the server.
+    private void fromClient(ServerConn server, List<ByteBuf> batch) {
+        if (this.processor == Processor.NONE) {
+            server.writeBatch(batch);
+            return;
+        }
+        List<PacketContext> contexts = new ArrayList<>(batch.size());
+        List<ByteBuf> encoded = new ArrayList<>();
+        try {
+            for (ByteBuf payload : batch) {
+                BedrockPacket packet;
+                try {
+                    packet = this.decodeIfAsked(payload, this.clientDecode, this.session.getPeer().getCodecHelper(), PacketRecipient.SERVER);
+                } catch (RuntimeException e) {
+                    // Any client can send a packet that does not decode, so this is no error of the proxy's.
+                    LOG.debug("{} sent a packet that does not decode", this.client.identity().displayName(), e);
+                    ClientDisconnect.disconnect(this.session, CANT_CONNECT);
+                    return;
+                }
+                contexts.add(new PacketContext(payload, packet));
+            }
+            if (!this.hook(() -> this.processor.client(this, contexts))) {
+                return;
+            }
+            List<ByteBuf> out = new ArrayList<>(contexts.size());
+            for (PacketContext context : contexts) {
+                if (context.cancelled()) {
+                    continue;
+                }
+                if (context.modified()) {
+                    ByteBuf packet = this.encode(context.packet());
+                    encoded.add(packet);
+                    out.add(packet);
+                } else {
+                    out.add(context.payload());
+                }
+            }
+            if (!out.isEmpty()) {
+                server.writeBatch(out);
+            }
+        } catch (RuntimeException e) {
+            this.fail("could not encode a packet the processor changed", e);
+        } finally {
+            encoded.forEach(ByteBuf::release);
+            // A decoded packet can hold a slice of the batch, such as an unknown packet's body.
+            contexts.forEach(context -> ReferenceCountUtil.release(context.packet()));
+        }
+    }
+
+    /**
+     * What a server sends, on the client's event loop, through the processor to the client; msg is released here or passed on.
+     * Packets are written to the client without a flush, and the server's Flush sends them, so each of the server's batches reaches the client as one batch at once.
+     * As in Spectrum's production proxy, which turns gophertunnel's flush timer off, there is no flush timer.
+     */
+    void fromServer(ServerConn server, Object msg) {
+        if (!this.forwardsFrom(server)) {
+            ReferenceCountUtil.release(msg);
+            return;
+        }
+        switch (msg) {
+            case ByteBuf payload -> this.fromServer(payload);
+            case BedrockPacket packet -> {
+                if (this.processor != Processor.NONE) {
+                    PacketContext context = new PacketContext(null, packet);
+                    if (!this.hook(() -> this.processor.server(this, context)) || context.cancelled()) {
+                        ReferenceCountUtil.release(packet);
+                        return;
+                    }
+                }
+                this.tracker.observe(packet);
+                this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, packet, null));
+            }
+            case Flush flush -> {
+                if (this.processor == Processor.NONE || this.hook(() -> this.processor.flush(this))) {
+                    this.clientChannel().flush();
+                }
+            }
+            case Latency latency -> this.serverLatency = latency.latency();
+            case UpdateCache update -> this.cache = update.cache();
+            case Transfer transfer -> this.transfer(transfer.addr());
+            default -> ReferenceCountUtil.release(msg);
+        }
+    }
+
+    private void fromServer(ByteBuf payload) {
+        if (this.processor == Processor.NONE) {
+            // Cloudburst writes a set packet buffer as it is, so the wrapper needs no packet ID.
+            this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, null, payload));
+            return;
+        }
+        BedrockPacket packet;
+        try {
+            packet = this.decodeIfAsked(payload, this.serverDecode, this.serverHelper, PacketRecipient.CLIENT);
+        } catch (RuntimeException e) {
+            payload.release();
+            this.fail("could not decode a packet from the server", e);
+            return;
+        }
+        PacketContext context = new PacketContext(payload, packet);
+        if (!this.hook(() -> this.processor.server(this, context)) || context.cancelled()) {
+            payload.release();
+            ReferenceCountUtil.release(packet);
+            return;
+        }
+        if (packet != null) {
+            this.tracker.observe(packet);
+        }
+        if (context.modified()) {
+            payload.release();
+            this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, packet, null));
+        } else {
+            this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, null, payload));
+            ReferenceCountUtil.release(packet);
+        }
+    }
+
+    // The packet decoded, when its ID is one the processor asked for.
+    private BedrockPacket decodeIfAsked(ByteBuf payload, Set<Integer> ids, BedrockCodecHelper helper, PacketRecipient recipient) {
+        if (ids.isEmpty()) {
+            return null;
+        }
+        ByteBuf in = payload.duplicate();
+        int id = VarInts.readUnsignedInt(in) & SpectrumPackets.PACKET_ID_MASK;
+        if (!ids.contains(id)) {
+            return null;
+        }
+        return this.codec.tryDecode(helper, in, id, recipient);
+    }
+
+    // The packet's header and body, as the client and the server read them.
+    private ByteBuf encode(BedrockPacket packet) {
+        int id = packet instanceof UnknownPacket unknown ? unknown.getPacketId() : this.codec.getPacketDefinition(packet.getClass()).getId();
+        ByteBuf out = this.clientChannel().alloc().buffer();
+        try {
+            VarInts.writeUnsignedInt(out, id);
+            this.codec.tryEncode(this.session.getPeer().getCodecHelper(), out, packet);
+            return out;
+        } catch (RuntimeException e) {
+            out.release();
+            throw e;
+        }
+    }
+
+    // Runs a processor hook. One that throws leaves the player's traffic in an unknown state, so the player is disconnected.
+    private boolean hook(Runnable call) {
+        try {
+            call.run();
+            return true;
+        } catch (RuntimeException e) {
+            this.fail("the processor failed", e);
+            return false;
+        }
+    }
+
+    private void fail(String what, RuntimeException e) {
+        LOG.error("{} for {}", what, this.client.identity().displayName(), e);
+        ClientDisconnect.disconnect(this.session, CANT_CONNECT);
+    }
+
+    /**
+     * Sends a packet to the client, without going through the processor. It goes out with the next flush, or at once when {@code flush} is set.
+     */
+    public void sendToClient(BedrockPacket packet, boolean flush) {
+        this.runOnLoop(() -> {
+            if (flush) {
+                this.clientChannel().writeAndFlush(BedrockPacketWrapper.create(0, 0, 0, packet, null));
+            } else {
+                this.clientChannel().write(BedrockPacketWrapper.create(0, 0, 0, packet, null));
+            }
+        }, packet);
+    }
+
+    /**
+     * Sends a packet to the player's server, without going through the processor. It is dropped when the player has no server, such as during a transfer.
+     */
+    public void sendToServer(BedrockPacket packet) {
+        this.runOnLoop(() -> {
+            ServerConn current = this.server;
+            if (current != null && this.transfer == null) {
+                current.write(packet);
+            } else {
+                ReferenceCountUtil.release(packet);
+            }
+        }, packet);
+    }
+
+    // At once on the client's event loop, so that a packet a processor sends in flush goes out with that flush; from another thread, it waits its turn there.
+    private void runOnLoop(Runnable task, BedrockPacket packet) {
+        if (this.loop.inEventLoop()) {
+            task.run();
+        } else {
+            this.execute(task, packet);
+        }
+    }
+
     // Runs on the client's event loop; once that loop has shut down, the client is gone and there is nothing to run.
     private void execute(Runnable task) {
+        this.execute(task, null);
+    }
+
+    // As execute, releasing packet when the loop has shut down.
+    private void execute(Runnable task, BedrockPacket packet) {
         try {
             this.loop.execute(task);
         } catch (RejectedExecutionException e) {
-            // Nothing to do.
+            ReferenceCountUtil.release(packet);
         }
     }
 
@@ -337,19 +585,6 @@ public final class Session {
 
     Channel clientChannel() {
         return this.session.getPeer().getChannel();
-    }
-
-    Tracker tracker() {
-        return this.tracker;
-    }
-
-    void serverLatency(long latency) {
-        this.serverLatency = latency;
-    }
-
-    // What the server last stored for this player with UpdateCache, which the next server's ConnectionRequest carries.
-    void cache(byte[] cache) {
-        this.cache = cache;
     }
 
     byte[] cache() {

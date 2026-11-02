@@ -46,7 +46,9 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -63,6 +65,7 @@ class SessionTest {
     private ClientListener listener;
     private FakeSpectrumServer server;
     private TestClient client;
+    private Processor processor = Processor.NONE;
     private final CompletableFuture<CompletableFuture<Session>> session = new CompletableFuture<>();
 
     @BeforeEach
@@ -89,7 +92,7 @@ class SessionTest {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1),
-                (ClientLogin login) -> this.session.complete(Session.login(login, transport, CODEC, addr, new SessionSettings(null, timeout, SessionSettings.DEFAULT.latencyInterval()))));
+                (ClientLogin login) -> this.session.complete(Session.login(login, transport, CODEC, addr, new SessionSettings(null, timeout, SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         this.client.connect(this.group, this.listener.address());
     }
@@ -382,7 +385,7 @@ class SessionTest {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1),
-                login -> this.session.complete(Session.login(login, transport, CODEC, this.server.address(), new SessionSettings(fallback, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval()))));
+                login -> this.session.complete(Session.login(login, transport, CODEC, this.server.address(), new SessionSettings(fallback, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         this.client.connect(this.group, this.listener.address());
         this.client.loginDone.get(10, TimeUnit.SECONDS);
@@ -557,6 +560,185 @@ class SessionTest {
         this.server.connection.get(10, TimeUnit.SECONDS).close().sync();
 
         this.assertOneDisconnect();
+    }
+
+    // Records what it sees, and changes chat and time packets by their text.
+    private static final class TestProcessor implements Processor {
+        final List<String> calls = new CopyOnWriteArrayList<>();
+
+        @Override
+        public Set<Integer> clientDecode() {
+            return Set.of(CODEC.getPacketDefinition(TextPacket.class).getId());
+        }
+
+        @Override
+        public Set<Integer> serverDecode() {
+            return Set.of(CODEC.getPacketDefinition(SetTimePacket.class).getId());
+        }
+
+        @Override
+        public void startGame(Session session, StartGamePacket startGame) {
+            this.calls.add("startGame " + startGame.getLevelName());
+        }
+
+        @Override
+        public void client(Session session, List<PacketContext> batch) {
+            for (PacketContext context : batch) {
+                if (context.packet() instanceof TextPacket text) {
+                    if (text.getMessage().equals("drop")) {
+                        context.cancel();
+                    } else if (text.getMessage().equals("change")) {
+                        text.setMessage("changed");
+                        context.setModified();
+                    }
+                }
+            }
+        }
+
+        @Override
+        public void server(Session session, PacketContext packet) {
+            if (packet.packet() instanceof SetTimePacket time) {
+                if (time.getTime() == 42) {
+                    time.setTime(7000);
+                    packet.setModified();
+                }
+            }
+        }
+
+        @Override
+        public void flush(Session session) {
+            this.calls.add("flush");
+        }
+
+        @Override
+        public void preTransfer(Session session, String origin, String target) {
+            this.calls.add("preTransfer");
+        }
+
+        @Override
+        public void postTransfer(Session session, String origin, String target) {
+            this.calls.add("postTransfer");
+        }
+
+        @Override
+        public void transferFailure(Session session, String origin, String target) {
+            this.calls.add("transferFailure");
+        }
+
+        @Override
+        public void disconnect(Session session) {
+            this.calls.add("disconnect");
+        }
+    }
+
+    @Test
+    void letsTheProcessorDropAndChangeClientPackets() throws Exception {
+        TestProcessor processor = new TestProcessor();
+        this.processor = processor;
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        this.client.session.get().getPeer().sendPacketsImmediately(0, 0, chat("drop"), chat("change"), chat("keep"));
+        assertEquals("changed", assertInstanceOf(TextPacket.class, this.server.await()).getMessage());
+        assertEquals("keep", assertInstanceOf(TextPacket.class, this.server.await()).getMessage());
+        assertEquals("startGame boarium", processor.calls.getFirst());
+    }
+
+    @Test
+    void letsTheProcessorChangeServerPacketsItAskedToDecode() throws Exception {
+        TestProcessor processor = new TestProcessor();
+        this.processor = processor;
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        // The gophertunnel SetTime holds the time 42, and comes as bytes.
+        this.server.send("SetTime", false);
+        this.server.send(new Flush());
+        assertEquals(7000, this.client.await(SetTimePacket.class).getTime());
+        assertTrue(processor.calls.contains("flush"));
+    }
+
+    @Test
+    void sendsTheProcessorsOwnPacketsWithTheFlush() throws Exception {
+        this.processor = new Processor() {
+            @Override
+            public void flush(Session session) {
+                session.sendToClient(chat("from the processor"), false);
+                session.sendToServer(chat("to the server"));
+            }
+        };
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        this.server.send(new Flush());
+        assertEquals("from the processor", this.client.await(TextPacket.class).getMessage());
+        assertEquals("to the server", assertInstanceOf(TextPacket.class, this.server.await()).getMessage());
+    }
+
+    @Test
+    void tellsTheProcessorAboutTransfersAndTheDisconnect() throws Exception {
+        TestProcessor processor = new TestProcessor();
+        this.processor = processor;
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.connect(Duration.ofMinutes(1));
+            Session session = this.spawnAndSettle();
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+            this.client.session.get().disconnect();
+
+            long deadline = System.currentTimeMillis() + 10_000;
+            while (!processor.calls.contains("disconnect") && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertEquals(List.of("preTransfer", "postTransfer", "disconnect"), processor.calls.stream().filter(call -> !call.startsWith("startGame") && !call.equals("flush")).toList());
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
+    void disconnectsThePlayerWhenTheProcessorFails() throws Exception {
+        this.processor = new Processor() {
+            @Override
+            public void flush(Session session) {
+                throw new IllegalStateException("broken processor");
+            }
+        };
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        this.server.send(new Flush());
+        this.assertOneDisconnect();
+    }
+
+    @Test
+    void disconnectsThePlayerWhenTheProcessorFailsBeforeATransfer() throws Exception {
+        this.processor = new Processor() {
+            @Override
+            public void preTransfer(Session session, String origin, String target) {
+                throw new IllegalStateException("broken processor");
+            }
+        };
+        this.connect(Duration.ofMinutes(1));
+        Session session = this.spawnAndSettle();
+
+        assertThrows(ExecutionException.class, () -> session.transfer("127.0.0.1:1").get(10, TimeUnit.SECONDS));
+        this.assertOneDisconnect();
+    }
+
+    @Test
+    void tellsTheProcessorAboutTheDisconnectOfAFailedLogin() throws Exception {
+        TestProcessor processor = new TestProcessor();
+        this.processor = processor;
+        this.server.answer = false;
+        this.connect(Duration.ofMillis(500));
+
+        assertThrows(ExecutionException.class, () -> this.session.get(10, TimeUnit.SECONDS).get(10, TimeUnit.SECONDS));
+        long deadline = System.currentTimeMillis() + 10_000;
+        while (!processor.calls.contains("disconnect") && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertEquals(List.of("disconnect"), processor.calls);
     }
 
     @Test

@@ -56,7 +56,7 @@ public final class Boarium implements AutoCloseable {
         this.config = config;
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
-        SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval());
+        SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), SessionSettings.DEFAULT.processors());
         this.listener = ClientListener.bind(group, listenAddress(config.listen()), CODEC, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT,
                 login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
