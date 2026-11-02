@@ -1,0 +1,258 @@
+package ac.oomph.boarium.boar;
+
+import ac.boar.anticheat.ack.BatchAcknowledgmentTransport;
+import ac.boar.anticheat.ack.BoarAcknowledgmentTransport;
+import ac.boar.anticheat.data.block.BoarBlockState;
+import ac.boar.anticheat.data.vanilla.Attribute;
+import ac.boar.anticheat.data.vanilla.AttributeInstance;
+import ac.boar.anticheat.player.BoarPlayer;
+import ac.boar.anticheat.player.BoarPlayerManager;
+import ac.boar.anticheat.player.accessor.EntityAccessor;
+import ac.boar.anticheat.player.accessor.InventoryAccessor;
+import ac.boar.anticheat.player.accessor.WorldAccessor;
+import ac.boar.anticheat.player.data.BlockMappingInfo;
+import ac.boar.api.anticheat.model.NetworkSession;
+import ac.boar.mappings.entity.Entity;
+import ac.boar.protocol.BoarBatchAcknowledger;
+import ac.boar.protocol.BoarConnection;
+import ac.oomph.boarium.Boarium;
+import ac.oomph.boarium.client.ClientDisconnect;
+import ac.oomph.boarium.session.Session;
+import io.netty.channel.Channel;
+import io.netty.util.ReferenceCountUtil;
+import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.protocol.bedrock.data.BuildPlatform;
+import org.cloudburstmc.protocol.bedrock.netty.codec.packet.BedrockPacketCodec;
+import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.TextPacket;
+import org.jose4j.json.JsonUtil;
+import org.jose4j.lang.JoseException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Boar's players, one for each boarium session that reached its StartGame.
+ */
+final class BoariumPlayerManager extends BoarPlayerManager<Session> {
+    private static final Logger LOG = LoggerFactory.getLogger(BoariumPlayerManager.class);
+
+    @Override
+    public BoarPlayer add(Session session) {
+        BoarPlayer player = super.add(session);
+        // The compensated world is made with the player, after its world accessor.
+        ((CompensatedWorldAccessor) player.getWorldAccessor()).player = player;
+        return player;
+    }
+
+    @Override
+    protected NetworkSession createNetworkSession(Session session) {
+        return new BoariumNetworkSession(session, deviceOs(session) == BuildPlatform.SONY.getId());
+    }
+
+    @Override
+    protected BoarConnection getConnection(Session session) {
+        return new Connection(this, session);
+    }
+
+    @Override
+    protected Entity getPlayerEntity(Session session) {
+        return Placeholders.playerEntity();
+    }
+
+    @Override
+    protected BlockMappingInfo getMappingInfo(Session session) {
+        return Placeholders.MAPPING_INFO;
+    }
+
+    @Override
+    protected WorldAccessor createWorldAccessor(Session session) {
+        return new CompensatedWorldAccessor();
+    }
+
+    @Override
+    protected EntityAccessor createEntityAccessor(Session session) {
+        return Placeholders.ENTITIES;
+    }
+
+    @Override
+    protected InventoryAccessor createInventoryAccessor(Session session) {
+        return Placeholders.INVENTORY;
+    }
+
+    @Override
+    protected Map<String, AttributeInstance> createDefaultAttributes() {
+        // A player's base movement speed.
+        return Map.of(Attribute.MOVEMENT.getIdentifier(), new AttributeInstance(0.1F));
+    }
+
+    @Override
+    protected BoarAcknowledgmentTransport createAckTransport(BoarPlayer player) {
+        return new AckTransport(player);
+    }
+
+    @Override
+    protected ScheduledFuture<?> beginTicking(Session session, Runnable ticker) {
+        Runnable guarded = () -> {
+            try {
+                ticker.run();
+            } catch (Throwable e) {
+                // A task that throws would never run again.
+                LOG.error("Boar's tick failed for {}", session.client().identity().displayName(), e);
+            }
+        };
+        return channel(session).eventLoop().scheduleAtFixedRate(guarded, 50, 50, TimeUnit.MILLISECONDS);
+    }
+
+    // Boar's listeners see the player's packets through the session's processor, so only Boar's acknowledgments go in the pipeline, at the end of each batch the client is sent.
+    @Override
+    protected void installHandlers(BoarPlayer player, Channel channel) {
+        channel.pipeline().addAfter(BedrockPacketCodec.NAME, BoarBatchAcknowledger.NAME, new BoarBatchAcknowledger(player));
+        Session session = ((BoariumNetworkSession) player.getSession()).session();
+        // A packet Boar replays must skip its listeners, and the session's own sends skip the processor.
+        player.setPacketInjector(session::sendToServer);
+    }
+
+    // Boar must not change what players do while it has no real block data.
+    @Override
+    protected boolean shouldDisableMitigations(Session session) {
+        return true;
+    }
+
+    // The client data's DeviceOS, or 0 when it has none.
+    private static int deviceOs(Session session) {
+        try {
+            return JsonUtil.parseJson(new String(session.client().clientData(), StandardCharsets.UTF_8)).get("DeviceOS") instanceof Number os ? os.intValue() : 0;
+        } catch (JoseException e) {
+            return 0;
+        }
+    }
+
+    private static Channel channel(Session session) {
+        return session.client().session().getPeer().getChannel();
+    }
+
+    private record BoariumNetworkSession(Session session, boolean playStation) implements NetworkSession {
+        @Override
+        public String name() {
+            return this.session.client().identity().displayName();
+        }
+
+        @Override
+        public UUID uuid() {
+            return this.session.client().identity().uuid();
+        }
+
+        @Override
+        public void sendMessage(String message) {
+            TextPacket text = new TextPacket();
+            text.setType(TextPacket.Type.RAW);
+            text.setSourceName("");
+            text.setMessage(message);
+            text.setXuid("");
+            text.setPlatformChatId("");
+            text.setFilteredMessage("");
+            this.session.sendToClient(text, true);
+        }
+
+        @Override
+        public boolean hasPermission(String permission) {
+            return false;
+        }
+
+        @Override
+        public boolean isClosed() {
+            return ClientDisconnect.ended(this.session.client().session()).isDone();
+        }
+
+        @Override
+        public void disconnect(String reason) {
+            ClientDisconnect.disconnect(this.session.client().session(), reason);
+        }
+
+        // A PlayStation answers Boar's NetworkStackLatency in milliseconds rather than nanoseconds.
+        @Override
+        public boolean requiresPingMagnitude() {
+            return this.playStation;
+        }
+
+        // Boar asks this when the client stops answering its NetworkStackLatency packets; the client's answers sent before it spawned never reach Boar, so a slow login would look like that.
+        @Override
+        public void disconnectFromServer(String reason) {
+            LOG.warn("Boar would have sent {} off its server: {}", this.name(), reason);
+        }
+
+        @Override
+        public int protocolVersion() {
+            return Boarium.CODEC.getProtocolVersion();
+        }
+    }
+
+    // Boar's own packets to the client go past its listeners first, as the server's do, since it keeps track of the NetworkStackLatency packets it sends.
+    private record Connection(BoariumPlayerManager players, Session session) implements BoarConnection {
+        @Override
+        public void sendPacket(BedrockPacket packet) {
+            this.send(packet, false);
+        }
+
+        @Override
+        public void sendPacketImmediately(BedrockPacket packet) {
+            this.send(packet, true);
+        }
+
+        private void send(BedrockPacket packet, boolean immediately) {
+            if (!this.getChannel().eventLoop().inEventLoop()) {
+                try {
+                    this.getChannel().eventLoop().execute(() -> this.send(packet, immediately));
+                } catch (RejectedExecutionException e) {
+                    ReferenceCountUtil.release(packet);
+                }
+                return;
+            }
+            BoarPlayer player = this.players.get(this.session);
+            if (player != null && BoarProcessor.passes(player, packet, false)) {
+                this.session.sendToClient(packet, immediately);
+            } else {
+                ReferenceCountUtil.release(packet);
+            }
+        }
+
+        @Override
+        public Channel getChannel() {
+            return channel(this.session);
+        }
+    }
+
+    // Boar's own compensated world, which exists once the player does.
+    private static final class CompensatedWorldAccessor implements WorldAccessor {
+        private BoarPlayer player;
+
+        @Override
+        public BoarBlockState blockStateAt(Vector3i position, int layer) {
+            return this.player.compensatedWorld.getBlockState(position, layer);
+        }
+    }
+
+    // Boar's acknowledgments, whose keepalive flushes the client: it waits while a server batch is half written, which only the server's Flush ends.
+    static final class AckTransport extends BatchAcknowledgmentTransport {
+        // Only used on the client's event loop.
+        boolean serverBatchOpen;
+
+        AckTransport(BoarPlayer player) {
+            super(player);
+        }
+
+        @Override
+        public void keepalive() {
+            if (!this.serverBatchOpen) {
+                super.keepalive();
+            }
+        }
+    }
+}

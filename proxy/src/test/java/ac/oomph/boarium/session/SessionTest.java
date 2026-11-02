@@ -54,6 +54,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -709,6 +710,37 @@ class SessionTest {
 
         this.server.send(new Flush());
         this.assertOneDisconnect();
+    }
+
+    @Test
+    void tellsTheProcessorTheClientSpawnedBeforeTheServerHears() throws Exception {
+        CompletableFuture<Boolean> serverHeardFirst = new CompletableFuture<>();
+        this.processor = new Processor() {
+            @Override
+            public void spawned(Session session) {
+                serverHeardFirst.complete(SessionTest.this.server.received.stream().anyMatch(p -> p instanceof SetLocalPlayerAsInitializedPacket));
+            }
+        };
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        assertFalse(serverHeardFirst.get(10, TimeUnit.SECONDS));
+    }
+
+    @Test
+    void disconnectsThePlayerWhenTheProcessorFailsAtSpawn() throws Exception {
+        this.processor = new Processor() {
+            @Override
+            public void spawned(Session session) {
+                throw new IllegalStateException("broken processor");
+            }
+        };
+        this.connect(Duration.ofMinutes(1));
+
+        assertThrows(ExecutionException.class, () -> this.spawn());
+        this.assertOneDisconnect();
+        // The hook runs before the server is told, so its failure stops that.
+        assertTrue(this.server.received.stream().noneMatch(p -> p instanceof SetLocalPlayerAsInitializedPacket));
     }
 
     @Test

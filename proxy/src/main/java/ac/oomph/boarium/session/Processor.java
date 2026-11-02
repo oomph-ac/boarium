@@ -28,9 +28,22 @@ public interface Processor {
     }
 
     /**
+     * Whether servers may send the player's chunks through the client's blob cache when the client supports it, which leaves only hashes of their blocks in the chunk packets.
+     */
+    default boolean clientCache() {
+        return true;
+    }
+
+    /**
      * Called once, before the client is sent the StartGame of the first server, which the processor can change.
      */
     default void startGame(Session session, StartGamePacket startGame) {
+    }
+
+    /**
+     * Called once the client has spawned in the first server's world: when it sends SetLocalPlayerAsInitialized, which the proxy handles itself, and before the server is told.
+     */
+    default void spawned(Session session) {
     }
 
     /**

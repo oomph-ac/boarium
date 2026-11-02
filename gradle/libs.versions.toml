@@ -3,6 +3,11 @@
 protocol = "3.0.0.Beta13-20260921.100211-29"
 # Same Snappy library the protocol library pulls in.
 aircompressor = "0.27"
+# The Boar anticheat's dev2 branch, pinned to a published snapshot (commit a8a9e22), with its api module at the same snapshot.
+boar = "dev2-20261026.014535-50"
+# Boar compiles against these without bringing them, so they are Boar's versions.
+guava = "33.6.0-jre"
+gson = "2.3.1"
 junit = "5.13.4"
 snakeyaml = "2.3"
 # The slf4j API the protocol library pulls in is 1.7.
@@ -10,6 +15,10 @@ slf4j = "1.7.36"
 
 [libraries]
 protocol = { module = "org.cloudburstmc.protocol:bedrock-connection", version.ref = "protocol" }
+boar = { module = "ac.boar:common", version.ref = "boar" }
+boar-api = { module = "ac.boar:api", version.ref = "boar" }
+guava = { module = "com.google.guava:guava", version.ref = "guava" }
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
 aircompressor = { module = "io.airlift:aircompressor", version.ref = "aircompressor" }
 snakeyaml = { module = "org.yaml:snakeyaml", version.ref = "snakeyaml" }
 slf4j-api = { module = "org.slf4j:slf4j-api", version.ref = "slf4j" }

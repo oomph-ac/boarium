@@ -144,7 +144,9 @@ public final class Session {
             }
             return ClientGameStart.start(session, startGame, next.data().items(), 0)
                     .applyToEither(next.closed(), spawned -> spawned)
-                    .thenCompose(spawned -> next.handshake().spawn())
+                    .thenCompose(spawned -> joined.hook(() -> joined.processor.spawned(joined))
+                            ? next.handshake().spawn()
+                            : CompletableFuture.failedFuture(new IllegalStateException("the processor failed at spawn")))
                     .thenApply(spawned -> joined);
         }, joined.loop);
         result.orTimeout(settings.loginTimeout().toMillis(), TimeUnit.MILLISECONDS);
@@ -170,7 +172,7 @@ public final class Session {
         CompletableFuture<ServerConn> dial;
         try {
             ConnectionRequest request = new ConnectionRequest(this.clientAddr, this.clientData, this.identityData, this.codec.getProtocolVersion(), this.cache);
-            dial = ServerConn.dial(this.transport, addr, this.codec, conn -> new ServerHandshake(conn, request, this.client.clientCacheSupported(), new ServerForwarder(this, conn)));
+            dial = ServerConn.dial(this.transport, addr, this.codec, conn -> new ServerHandshake(conn, request, this.client.clientCacheSupported() && this.processor.clientCache(), new ServerForwarder(this, conn)));
         } catch (RuntimeException e) {
             // Such as an address without a port.
             return CompletableFuture.failedFuture(e);
