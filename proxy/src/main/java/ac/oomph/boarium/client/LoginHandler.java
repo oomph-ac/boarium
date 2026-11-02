@@ -93,7 +93,7 @@ final class LoginHandler implements BedrockPacketHandler {
     private PacketSignal fail(String reason) {
         this.step = Step.FAILED;
         this.timeout.cancel(false);
-        this.session.disconnect(reason, false);
+        ClientDisconnect.disconnect(this.session, reason);
         return PacketSignal.HANDLED;
     }
 

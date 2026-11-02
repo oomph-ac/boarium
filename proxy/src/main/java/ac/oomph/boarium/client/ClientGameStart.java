@@ -55,12 +55,12 @@ public final class ClientGameStart implements BedrockPacketHandler {
      * Sends {@code startGame} and {@code items} to the client and waits for it to spawn.
      *
      * @param chunkRadius the radius to answer the client's request with, or 0 to give it the radius it asked for
-     * @return completes on the client's event loop once it has spawned. Fails if the client asked for a chunk radius below 1, sent another runtime ID or disconnected, and never completes if the client stops answering, so callers set a timeout.
+     * @return completes on the client's event loop once it has spawned. Fails if the client asked for a chunk radius below 1, sent another runtime ID or disconnected, and never completes if the client stops answering, so callers set a timeout and disconnect the client when it fails.
      */
     public static CompletableFuture<Void> start(BedrockServerSession session, StartGamePacket startGame, List<ItemDefinition> items, int chunkRadius) {
         ClientGameStart handler = new ClientGameStart(session, startGame.getRuntimeEntityId(), chunkRadius);
         session.getPeer().getChannel().eventLoop().execute(() -> {
-            if (!session.isConnected()) {
+            if (!session.isConnected() || ClientDisconnect.ended(session).isDone()) {
                 handler.spawned.completeExceptionally(new ClosedChannelException());
                 return;
             }
@@ -70,15 +70,15 @@ public final class ClientGameStart implements BedrockPacketHandler {
 
             JigsawStructureDataPacket jigsaws = new JigsawStructureDataPacket();
             jigsaws.setJigsawStructureDataTag(EMPTY_JIGSAW_STRUCTURES);
-            session.sendPacket(jigsaws);
+            session.sendPacketImmediately(jigsaws);
             VoxelShapesPacket shapes = new VoxelShapesPacket();
             shapes.setShapes(new ArrayList<>());
             shapes.setNameMap(new HashMap<>());
-            session.sendPacket(shapes);
-            session.sendPacket(startGame);
+            session.sendPacketImmediately(shapes);
+            session.sendPacketImmediately(startGame);
             ItemComponentPacket registry = new ItemComponentPacket();
             registry.getItems().addAll(items);
-            session.sendPacket(registry);
+            session.sendPacketImmediately(registry);
         });
         return handler.spawned;
     }
@@ -96,14 +96,14 @@ public final class ClientGameStart implements BedrockPacketHandler {
 
         ChunkRadiusUpdatedPacket radius = new ChunkRadiusUpdatedPacket();
         radius.setRadius(this.chunkRadius != 0 ? this.chunkRadius : packet.getRadius());
-        this.session.sendPacket(radius);
+        this.session.sendPacketImmediately(radius);
         BiomeDefinitionListPacket biomes = new BiomeDefinitionListPacket();
         biomes.setBiomes(new BiomeDefinitions(Map.of()));
-        this.session.sendPacket(biomes);
+        this.session.sendPacketImmediately(biomes);
         PlayStatusPacket status = new PlayStatusPacket();
         status.setStatus(PlayStatusPacket.Status.PLAYER_SPAWN);
-        this.session.sendPacket(status);
-        this.session.sendPacket(new CreativeContentPacket());
+        this.session.sendPacketImmediately(status);
+        this.session.sendPacketImmediately(new CreativeContentPacket());
         return PacketSignal.HANDLED;
     }
 
@@ -124,6 +124,5 @@ public final class ClientGameStart implements BedrockPacketHandler {
 
     private void fail(String reason) {
         this.spawned.completeExceptionally(new IllegalStateException(reason));
-        this.session.disconnect("disconnectionScreen.internalError.cantConnect");
     }
 }

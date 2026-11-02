@@ -74,7 +74,7 @@ public final class ClientListener {
                                 if (session != null && session.isConnected() && session.getPacketHandler() instanceof LoginHandler login) {
                                     login.failOnError();
                                 } else if (session != null && session.isConnected()) {
-                                    session.disconnect("disconnectionScreen.internalError.cantConnect");
+                                    ClientDisconnect.disconnect(session, "disconnectionScreen.internalError.cantConnect");
                                 } else {
                                     ctx.close();
                                 }

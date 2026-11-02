@@ -195,6 +195,25 @@ class ClientGameStartTest {
 
         CompletableFuture<Void> spawned = this.spawned.get(10, TimeUnit.SECONDS);
         assertInstanceOf(IllegalStateException.class, assertThrows(ExecutionException.class, () -> spawned.get(10, TimeUnit.SECONDS)).getCause());
-        assertEquals("disconnectionScreen.internalError.cantConnect", this.client.await(DisconnectPacket.class).getKickMessage());
+    }
+
+    @Test
+    void sendsNothingToAClientThatWasDisconnected() throws Exception {
+        this.startGame = (StartGamePacket) gophertunnel("StartGame");
+        this.items = (ItemComponentPacket) gophertunnel("ItemComponent");
+        BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1), login -> {
+            // Cloudburst still counts the session as connected right after this.
+            ClientDisconnect.disconnect(login.session(), "disconnectionScreen.internalError.cantConnect");
+            this.spawned.complete(ClientGameStart.start(login.session(), this.startGame, this.items.getItems(), 0));
+        });
+        this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.client.connect(this.group, this.listener.address());
+
+        CompletableFuture<Void> spawned = this.spawned.get(10, TimeUnit.SECONDS);
+        assertThrows(ExecutionException.class, () -> spawned.get(10, TimeUnit.SECONDS));
+        this.client.await(DisconnectPacket.class);
+        Thread.sleep(500);
+        assertTrue(this.client.received.stream().noneMatch(p -> p instanceof StartGamePacket));
     }
 }

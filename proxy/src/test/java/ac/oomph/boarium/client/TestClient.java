@@ -51,13 +51,13 @@ import java.util.concurrent.TimeUnit;
  * A Bedrock client for tests that logs in with an offline identity it signs itself, the way a client without Xbox Live does.
  * Every packet it receives is also put in {@link #received}.
  */
-final class TestClient {
+public final class TestClient {
     final String name;
     final UUID identity = UUID.randomUUID();
     final KeyPair key = EncryptionUtils.createKeyPair();
-    final BlockingQueue<BedrockPacket> received = new LinkedBlockingQueue<>();
-    final CompletableFuture<BedrockClientSession> session = new CompletableFuture<>();
-    final CompletableFuture<Void> loginDone = new CompletableFuture<>();
+    public final BlockingQueue<BedrockPacket> received = new LinkedBlockingQueue<>();
+    public final CompletableFuture<BedrockClientSession> session = new CompletableFuture<>();
+    public final CompletableFuture<Void> loginDone = new CompletableFuture<>();
 
     // Knobs for tests of logins the proxy must turn away.
     KeyPair chainSigner = this.key;
@@ -82,7 +82,7 @@ final class TestClient {
     private final BedrockCodec codec;
     private final int protocolVersion;
 
-    TestClient(String name, BedrockCodec codec, int protocolVersion) {
+    public TestClient(String name, BedrockCodec codec, int protocolVersion) {
         this.name = name;
         this.codec = codec;
         this.protocolVersion = protocolVersion;
@@ -99,7 +99,7 @@ final class TestClient {
     /**
      * Waits for the next received packet of {@code type}, dropping the packets before it.
      */
-    <T extends BedrockPacket> T await(Class<T> type) throws InterruptedException {
+    public <T extends BedrockPacket> T await(Class<T> type) throws InterruptedException {
         while (true) {
             BedrockPacket packet = this.received.poll(10, TimeUnit.SECONDS);
             if (packet == null) {
@@ -111,7 +111,15 @@ final class TestClient {
         }
     }
 
-    void connect(EventLoopGroup group, InetSocketAddress address) {
+    // A Login (ID 1) cut short after its first byte, sent as ready-made bytes, which the proxy cannot read.
+    public static void sendBrokenPacket(BedrockClientSession session) {
+        ByteBuf broken = Unpooled.buffer();
+        VarInts.writeUnsignedInt(broken, 1);
+        broken.writeByte(1);
+        session.getPeer().sendPacket(BedrockPacketWrapper.create(1, 0, 0, null, broken));
+    }
+
+    public void connect(EventLoopGroup group, InetSocketAddress address) {
         new Bootstrap()
                 .group(group)
                 .channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
@@ -199,11 +207,7 @@ final class TestClient {
                     this.session.getPeer().sendPacketImmediately(0, 1, cache);
                 }
                 if (TestClient.this.sendBrokenLogin) {
-                    // A Login (ID 1) cut short after its first byte, sent as ready-made bytes.
-                    ByteBuf broken = Unpooled.buffer();
-                    VarInts.writeUnsignedInt(broken, 1);
-                    broken.writeByte(1);
-                    this.session.getPeer().sendPacket(BedrockPacketWrapper.create(1, 0, 0, null, broken));
+                    TestClient.sendBrokenPacket(this.session);
                 } else if (TestClient.this.loginInOneUnencryptedBatch) {
                     ResourcePackClientResponsePacket havePacks = new ResourcePackClientResponsePacket();
                     havePacks.setStatus(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS);
