@@ -4,6 +4,7 @@ import ac.oomph.boarium.server.packet.ConnectionRequest;
 import ac.oomph.boarium.server.packet.ConnectionResponse;
 import ac.oomph.boarium.server.packet.SpectrumPacket;
 import ac.oomph.boarium.server.packet.SpectrumPackets;
+import ac.oomph.boarium.server.packet.Transfer;
 import io.airlift.compress.snappy.SnappyDecompressor;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
@@ -21,6 +22,7 @@ import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.cloudburstmc.protocol.common.util.VarInts;
 
 import java.io.BufferedReader;
@@ -57,6 +59,10 @@ final class FakeSpectrumServer {
     final BlockingQueue<SpectrumPacket> spectrum = new LinkedBlockingQueue<>();
     // When false, the server takes the connection but never answers.
     boolean answer = true;
+    // When set, the server asks for a transfer there during its connection sequence.
+    String transferDuringSequence;
+    // When true, the server closes the connection once the player has spawned.
+    boolean closeAfterSpawn;
 
     private final BedrockCodec codec;
     private final Channel channel;
@@ -110,6 +116,34 @@ final class FakeSpectrumServer {
         this.send(this.connection.get(10, TimeUnit.SECONDS), gophertunnel.get(name), decode);
     }
 
+    // Sends a packet the proxy is asked to decode, encoded by Cloudburst rather than gophertunnel.
+    void send(BedrockPacket packet) throws Exception {
+        BedrockCodecHelper helper = this.codec.createHelper();
+        ByteBuf encoded = Unpooled.buffer();
+        VarInts.writeUnsignedInt(encoded, this.codec.getPacketDefinition(packet.getClass()).getId());
+        this.codec.tryEncode(helper, encoded, packet);
+        this.send(this.connection.get(10, TimeUnit.SECONDS), ByteBufUtil.getBytes(encoded), true);
+        encoded.release();
+    }
+
+    // Sends the packets in one write, so the proxy reads them together; a String is one of the gophertunnel packets, passed through.
+    void sendTogether(Object... packets) throws Exception {
+        Channel connection = this.connection.get(10, TimeUnit.SECONDS);
+        ByteBuf frames = Unpooled.buffer();
+        for (Object packet : packets) {
+            byte[] body;
+            if (packet instanceof String name) {
+                body = gophertunnel.get(name);
+            } else {
+                ByteBuf encoded = SpectrumPackets.encode(connection.alloc(), (SpectrumPacket) packet);
+                body = ByteBufUtil.getBytes(encoded);
+                encoded.release();
+            }
+            frames.writeInt(1 + body.length).writeByte(0).writeBytes(body);
+        }
+        connection.writeAndFlush(frames);
+    }
+
     void send(SpectrumPacket packet) throws Exception {
         Channel connection = this.connection.get(10, TimeUnit.SECONDS);
         ByteBuf encoded = SpectrumPackets.encode(connection.alloc(), packet);
@@ -158,6 +192,11 @@ final class FakeSpectrumServer {
                     response.release();
                     FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("StartGame"), true);
                     FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("ItemComponent"), true);
+                    if (FakeSpectrumServer.this.transferDuringSequence != null) {
+                        ByteBuf transfer = SpectrumPackets.encode(ctx.alloc(), new Transfer(FakeSpectrumServer.this.transferDuringSequence));
+                        FakeSpectrumServer.this.send(ctx.channel(), ByteBufUtil.getBytes(transfer), false);
+                        transfer.release();
+                    }
                 }
                 return;
             }
@@ -174,6 +213,9 @@ final class FakeSpectrumServer {
                 FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("PlayStatus"), true);
             }
             FakeSpectrumServer.this.received.add(packet);
+            if (packet instanceof SetLocalPlayerAsInitializedPacket && FakeSpectrumServer.this.closeAfterSpawn) {
+                ctx.close();
+            }
         }
 
         // The proxy closes its connections with a reset, which needs no logging here.

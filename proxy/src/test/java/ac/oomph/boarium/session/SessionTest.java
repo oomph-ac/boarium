@@ -6,19 +6,31 @@ import ac.oomph.boarium.client.TestClient;
 import ac.oomph.boarium.server.packet.ConnectionRequest;
 import ac.oomph.boarium.server.packet.Flush;
 import ac.oomph.boarium.server.packet.Latency;
+import ac.oomph.boarium.server.packet.Transfer;
 import ac.oomph.boarium.server.packet.UpdateCache;
 import ac.oomph.boarium.transport.TcpTransport;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufUtil;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import org.cloudburstmc.math.vector.Vector2f;
+import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
+import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
+import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
+import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChunkRadiusUpdatedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
+import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MovePlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.RemoveEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
+import org.cloudburstmc.protocol.bedrock.packet.SetEntityDataPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetTimePacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
@@ -27,10 +39,13 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -74,7 +89,7 @@ class SessionTest {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1),
-                (ClientLogin login) -> this.session.complete(Session.login(login, transport, addr, CODEC, timeout)));
+                (ClientLogin login) -> this.session.complete(Session.login(login, transport, addr, null, CODEC, timeout)));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         this.client.connect(this.group, this.listener.address());
     }
@@ -342,13 +357,206 @@ class SessionTest {
 
         this.server.send(new Latency(1000, System.currentTimeMillis()));
         this.server.send(new UpdateCache(new byte[]{1, 2, 3}));
-        ServerForwarder forwarder = session.server().channel().pipeline().get(ServerForwarder.class);
         long deadline = System.currentTimeMillis() + 10_000;
-        while (forwarder.cache().length == 0 && System.currentTimeMillis() < deadline) {
+        while (session.cache().length == 0 && System.currentTimeMillis() < deadline) {
             Thread.sleep(10);
         }
-        assertArrayEquals(new byte[]{1, 2, 3}, forwarder.cache());
+        assertArrayEquals(new byte[]{1, 2, 3}, session.cache());
         assertTrue(session.latency() >= 1000);
+    }
+
+    @Test
+    void buildsSpectrumsEmptyChunks() throws Exception {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(SessionTest.class.getResourceAsStream("spectrum-empty-chunks.txt"), StandardCharsets.UTF_8))) {
+            List<String[]> chunks = reader.lines().filter(line -> !line.startsWith("#")).map(line -> line.split(" ")).toList();
+            assertEquals(3, chunks.size());
+            for (String[] chunk : chunks) {
+                ByteBuf built = TransferScreen.emptyChunk(Integer.parseInt(chunk[0]));
+                assertEquals(chunk[1], ByteBufUtil.hexDump(built), "dimension " + chunk[0]);
+                built.release();
+            }
+        }
+    }
+
+    private void connectWithFallback(String fallback) throws Exception {
+        BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
+        TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1),
+                login -> this.session.complete(Session.login(login, transport, this.server.address(), fallback, CODEC, Duration.ofMinutes(1))));
+        this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.client.connect(this.group, this.listener.address());
+        this.client.loginDone.get(10, TimeUnit.SECONDS);
+    }
+
+    // Waits for the second server to take the player through the connection sequence.
+    private void assertJoined(FakeSpectrumServer next) throws Exception {
+        next.request.get(10, TimeUnit.SECONDS);
+        assertInstanceOf(RequestChunkRadiusPacket.class, next.await());
+        assertInstanceOf(ClientCacheStatusPacket.class, next.await());
+        assertEquals(FakeSpectrumServer.RUNTIME_ID, assertInstanceOf(SetLocalPlayerAsInitializedPacket.class, next.await()).getRuntimeEntityId());
+    }
+
+    @Test
+    void transfersThePlayerWhenTheServerAsks() throws Exception {
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.connect(Duration.ofMinutes(1));
+            Session session = this.spawnAndSettle();
+            this.server.send(new UpdateCache(new byte[]{7}));
+            AddEntityPacket entity = new AddEntityPacket();
+            entity.setUniqueEntityId(42);
+            entity.setRuntimeEntityId(42);
+            entity.setIdentifier("minecraft:pig");
+            entity.setPosition(Vector3f.ZERO);
+            entity.setMotion(Vector3f.ZERO);
+            entity.setRotation(Vector2f.ZERO);
+            entity.setBodyRotation(0);
+            this.server.send(entity);
+            this.server.send(new Transfer(next.address()));
+
+            assertTrue(this.server.connection.get(10, TimeUnit.SECONDS).closeFuture().await(10, TimeUnit.SECONDS));
+            assertArrayEquals(new byte[]{7}, next.request.get(10, TimeUnit.SECONDS).cache());
+            assertTrue(this.client.await(SetEntityDataPacket.class).getMetadata().getFlags().get(EntityFlag.NO_AI));
+            assertEquals(1, this.client.await(ChangeDimensionPacket.class).getDimension());
+            this.client.await(LevelChunkPacket.class);
+            assertEquals(42, this.client.await(RemoveEntityPacket.class).getUniqueEntityId());
+            this.client.await(MovePlayerPacket.class);
+            this.assertJoined(next);
+            assertEquals(PlayStatusPacket.Status.PLAYER_SPAWN, this.client.await(PlayStatusPacket.class).getStatus());
+            assertEquals(0, this.client.await(ChangeDimensionPacket.class).getDimension());
+            assertEquals(next.address(), session.serverAddress());
+
+            // The client's packets now go to the new server.
+            this.client.session.get().getPeer().sendPacketImmediately(0, 0, chat("after"));
+            assertEquals("after", assertInstanceOf(TextPacket.class, next.await()).getMessage());
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
+    void runsATransferAskedForDuringAnotherOnceItEnds() throws Exception {
+        FakeSpectrumServer second = new FakeSpectrumServer(this.group, CODEC);
+        FakeSpectrumServer third = new FakeSpectrumServer(this.group, CODEC);
+        FakeSpectrumServer fourth = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.connect(Duration.ofMinutes(1));
+            Session session = this.spawnAndSettle();
+            CompletableFuture<Void> toSecond = session.transfer(second.address());
+            CompletableFuture<Void> toThird = session.transfer(third.address());
+            CompletableFuture<Void> toFourth = session.transfer(fourth.address());
+
+            toSecond.get(10, TimeUnit.SECONDS);
+            // The latest address waiting wins.
+            assertThrows(ExecutionException.class, () -> toThird.get(10, TimeUnit.SECONDS));
+            toFourth.get(10, TimeUnit.SECONDS);
+            this.assertJoined(fourth);
+            assertEquals(fourth.address(), session.serverAddress());
+            assertTrue(!third.connection.isDone());
+        } finally {
+            second.close();
+            third.close();
+            fourth.close();
+        }
+    }
+
+    @Test
+    void transfersThePlayerWhenTheServerAsksDuringTheLogin() throws Exception {
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.server.transferDuringSequence = next.address();
+            this.connect(Duration.ofMinutes(1));
+            this.spawn();
+
+            this.assertJoined(next);
+        } finally {
+            next.close();
+        }
+    }
+
+    @Test
+    void followsOnlyTheServersFirstTransfer() throws Exception {
+        FakeSpectrumServer first = new FakeSpectrumServer(this.group, CODEC);
+        FakeSpectrumServer second = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.connect(Duration.ofMinutes(1));
+            Session session = this.spawnAndSettle();
+            this.server.sendTogether(new Transfer(first.address()), "SetTime", new Transfer(second.address()), new Flush());
+
+            this.assertJoined(first);
+            // A transfer to the second server would have followed the first by now.
+            Thread.sleep(500);
+            assertEquals(first.address(), session.serverAddress());
+            assertTrue(!second.connection.isDone());
+            assertTrue(this.client.received.stream().noneMatch(p -> p instanceof SetTimePacket));
+        } finally {
+            first.close();
+            second.close();
+        }
+    }
+
+    @Test
+    void disconnectsAPlayerTheFallbackServerKeepsDropping() throws Exception {
+        FakeSpectrumServer fallback = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            fallback.closeAfterSpawn = true;
+            this.connectWithFallback(fallback.address());
+            this.spawnAndSettle();
+            this.server.connection.get(10, TimeUnit.SECONDS).close().sync();
+
+            this.assertJoined(fallback);
+            this.assertOneDisconnect();
+        } finally {
+            fallback.close();
+        }
+    }
+
+    @Test
+    void movesThePlayerToTheFallbackServerWhenItsServerIsLost() throws Exception {
+        FakeSpectrumServer fallback = new FakeSpectrumServer(this.group, CODEC);
+        try {
+            this.connectWithFallback(fallback.address());
+            this.spawnAndSettle();
+            this.server.connection.get(10, TimeUnit.SECONDS).close().sync();
+
+            this.assertJoined(fallback);
+            assertTrue(this.client.received.stream().noneMatch(p -> p instanceof DisconnectPacket));
+        } finally {
+            fallback.close();
+        }
+    }
+
+    @Test
+    void sendsThePlayerBackToTheFallbackServerWhenATransferFromItFails() throws Exception {
+        FakeSpectrumServer fallback = new FakeSpectrumServer(this.group, CODEC);
+        FakeSpectrumServer dead = new FakeSpectrumServer(this.group, CODEC);
+        String deadAddr = dead.address();
+        dead.close();
+        try {
+            this.connectWithFallback(fallback.address());
+            this.spawnAndSettle();
+            this.server.connection.get(10, TimeUnit.SECONDS).close().sync();
+            this.assertJoined(fallback);
+
+            fallback.send(new Transfer(deadAddr));
+            // The fallback server takes the player again: its second ConnectionRequest.
+            assertInstanceOf(ConnectionRequest.class, FakeSpectrumServer.poll(fallback.spectrum));
+            assertTrue(this.client.received.stream().noneMatch(p -> p instanceof DisconnectPacket));
+        } finally {
+            fallback.close();
+        }
+    }
+
+    @Test
+    void disconnectsThePlayerWhenTheFallbackServerFailsToo() throws Exception {
+        FakeSpectrumServer fallback = new FakeSpectrumServer(this.group, CODEC);
+        String addr = fallback.address();
+        fallback.close();
+        this.connectWithFallback(addr);
+        this.spawnAndSettle();
+        this.server.connection.get(10, TimeUnit.SECONDS).close().sync();
+
+        this.assertOneDisconnect();
     }
 
     @Test
