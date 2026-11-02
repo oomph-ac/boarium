@@ -96,6 +96,13 @@ public final class ServerConn {
         return this.channel.writeAndFlush(packet);
     }
 
+    // Called on the event loop, where the codec helper is used.
+    void setItemDefinitions(List<ItemDefinition> items) {
+        SimpleDefinitionRegistry.Builder<ItemDefinition> registry = SimpleDefinitionRegistry.builder();
+        items.forEach(registry::add);
+        this.helper.setItemDefinitions(registry.build());
+    }
+
     /**
      * Sends encoded packets, each one's header and body, as one batch. The caller keeps ownership of the packets.
      */
