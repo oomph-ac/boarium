@@ -17,6 +17,7 @@ import io.netty.util.AttributeKey;
 import io.netty.util.concurrent.Future;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
+import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 
@@ -42,6 +43,8 @@ public final class ServerConn {
         this.channel = channel;
         this.codec = codec;
         this.helper = codec.createHelper();
+        // The proxy reads what a server sends as a game client would, and Cloudburst's default limits would refuse, for example, a string over 32 KB.
+        this.helper.setEncodingSettings(EncodingSettings.CLIENT);
         this.helper.setBlockDefinitions(Definitions.ANY_BLOCK);
         this.helper.setItemDefinitions(Definitions.items(List.of()));
     }

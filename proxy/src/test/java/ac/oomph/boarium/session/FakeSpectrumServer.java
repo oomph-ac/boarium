@@ -1,11 +1,10 @@
 package ac.oomph.boarium.session;
 
-import ac.oomph.boarium.protocol.SpectrumFrame;
-import ac.oomph.boarium.protocol.SpectrumFrameDecoder;
 import ac.oomph.boarium.server.packet.ConnectionRequest;
 import ac.oomph.boarium.server.packet.ConnectionResponse;
 import ac.oomph.boarium.server.packet.SpectrumPacket;
 import ac.oomph.boarium.server.packet.SpectrumPackets;
+import io.airlift.compress.snappy.SnappyDecompressor;
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
@@ -16,6 +15,7 @@ import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
+import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
@@ -28,7 +28,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
@@ -37,17 +39,22 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * A downstream server for tests that runs the Spectrum connection sequence the way spectrum-pm-internal does, with gophertunnel's encoding of each Bedrock packet.
- * Every Bedrock packet it receives after the ConnectionRequest is put in {@link #received}.
+ * After the ConnectionRequest, every Bedrock packet it receives is put in {@link #received}, every batch frame in {@link #batches}, and every Spectrum packet in {@link #spectrum}.
  */
 final class FakeSpectrumServer {
     static final long RUNTIME_ID = 9;
     static final long UNIQUE_ID = -9;
 
+    private static final int FLAG_DECODE = 1;
+    private static final int FLAG_COMPRESSED = 2;
+    private static final int FLAG_BATCH = 4;
     private static Map<String, byte[]> gophertunnel;
 
     final CompletableFuture<ConnectionRequest> request = new CompletableFuture<>();
     final CompletableFuture<Channel> connection = new CompletableFuture<>();
     final BlockingQueue<BedrockPacket> received = new LinkedBlockingQueue<>();
+    final BlockingQueue<List<byte[]>> batches = new LinkedBlockingQueue<>();
+    final BlockingQueue<SpectrumPacket> spectrum = new LinkedBlockingQueue<>();
     // When false, the server takes the connection but never answers.
     boolean answer = true;
 
@@ -69,7 +76,7 @@ final class FakeSpectrumServer {
                     @Override
                     protected void initChannel(Channel ch) {
                         FakeSpectrumServer.this.connection.complete(ch);
-                        ch.pipeline().addLast(new SpectrumFrameDecoder(), new Handler());
+                        ch.pipeline().addLast(new LengthFieldBasedFrameDecoder(16 * 1024 * 1024, 0, 4, 0, 4), new Handler());
                     }
                 })
                 .bind("127.0.0.1", 0)
@@ -87,32 +94,75 @@ final class FakeSpectrumServer {
     }
 
     BedrockPacket await() throws InterruptedException {
-        BedrockPacket packet = this.received.poll(10, TimeUnit.SECONDS);
-        if (packet == null) {
-            throw new IllegalStateException("no packet from the proxy within 10 seconds");
+        return poll(this.received);
+    }
+
+    static <T> T poll(BlockingQueue<T> queue) throws InterruptedException {
+        T value = queue.poll(10, TimeUnit.SECONDS);
+        if (value == null) {
+            throw new IllegalStateException("nothing from the proxy within 10 seconds");
         }
-        return packet;
+        return value;
     }
 
-    // Frames a packet with the decode flag, as spectrum-pm-internal sends the packets of the sequence.
-    private static void send(ChannelHandlerContext ctx, byte[] packet) {
-        ctx.writeAndFlush(Unpooled.buffer().writeInt(1 + packet.length).writeByte(1).writeBytes(packet));
+    // Sends one of the gophertunnel packets, with the decode flag or as bytes the proxy passes through.
+    void send(String name, boolean decode) throws Exception {
+        this.send(this.connection.get(10, TimeUnit.SECONDS), gophertunnel.get(name), decode);
     }
 
-    private final class Handler extends SimpleChannelInboundHandler<SpectrumFrame> {
+    void send(SpectrumPacket packet) throws Exception {
+        Channel connection = this.connection.get(10, TimeUnit.SECONDS);
+        ByteBuf encoded = SpectrumPackets.encode(connection.alloc(), packet);
+        this.send(connection, ByteBufUtil.getBytes(encoded), false);
+        encoded.release();
+    }
+
+    private void send(Channel connection, byte[] packet, boolean decode) {
+        connection.writeAndFlush(Unpooled.buffer().writeInt(1 + packet.length).writeByte(decode ? FLAG_DECODE : 0).writeBytes(packet));
+    }
+
+    private final class Handler extends SimpleChannelInboundHandler<ByteBuf> {
         @Override
-        protected void channelRead0(ChannelHandlerContext ctx, SpectrumFrame frame) {
-            ByteBuf body = frame.content();
+        protected void channelRead0(ChannelHandlerContext ctx, ByteBuf frame) {
+            int flags = frame.readUnsignedByte();
+            byte[] body = ByteBufUtil.getBytes(frame);
+            if ((flags & FLAG_COMPRESSED) != 0) {
+                byte[] out = new byte[SnappyDecompressor.getUncompressedLength(body, 0)];
+                new SnappyDecompressor().decompress(body, 0, body.length, out, 0, out.length);
+                body = out;
+            }
+
+            if ((flags & FLAG_BATCH) != 0) {
+                ByteBuf batch = Unpooled.wrappedBuffer(body);
+                List<byte[]> packets = new ArrayList<>();
+                while (batch.isReadable()) {
+                    byte[] packet = new byte[batch.readIntLE()];
+                    batch.readBytes(packet);
+                    packets.add(packet);
+                    this.read(ctx, packet);
+                }
+                FakeSpectrumServer.this.batches.add(packets);
+                return;
+            }
+            this.read(ctx, body);
+        }
+
+        private void read(ChannelHandlerContext ctx, byte[] bytes) {
+            ByteBuf body = Unpooled.wrappedBuffer(bytes);
+            SpectrumPacket spectrumPacket = SpectrumPackets.decode(body.duplicate());
             if (!FakeSpectrumServer.this.request.isDone()) {
-                SpectrumPacket packet = SpectrumPackets.decode(body);
-                FakeSpectrumServer.this.request.complete((ConnectionRequest) packet);
+                FakeSpectrumServer.this.request.complete((ConnectionRequest) spectrumPacket);
                 if (FakeSpectrumServer.this.answer) {
                     ByteBuf response = SpectrumPackets.encode(ctx.alloc(), new ConnectionResponse(RUNTIME_ID, UNIQUE_ID));
-                    send(ctx, ByteBufUtil.getBytes(response));
+                    FakeSpectrumServer.this.send(ctx.channel(), ByteBufUtil.getBytes(response), true);
                     response.release();
-                    send(ctx, gophertunnel.get("StartGame"));
-                    send(ctx, gophertunnel.get("ItemComponent"));
+                    FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("StartGame"), true);
+                    FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("ItemComponent"), true);
                 }
+                return;
+            }
+            if (spectrumPacket != null) {
+                FakeSpectrumServer.this.spectrum.add(spectrumPacket);
                 return;
             }
 
@@ -120,8 +170,8 @@ final class FakeSpectrumServer {
             BedrockCodecHelper helper = FakeSpectrumServer.this.codec.createHelper();
             BedrockPacket packet = FakeSpectrumServer.this.codec.tryDecode(helper, body, id, PacketRecipient.SERVER);
             if (packet instanceof RequestChunkRadiusPacket) {
-                send(ctx, gophertunnel.get("ChunkRadiusUpdated"));
-                send(ctx, gophertunnel.get("PlayStatus"));
+                FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("ChunkRadiusUpdated"), true);
+                FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("PlayStatus"), true);
             }
             FakeSpectrumServer.this.received.add(packet);
         }

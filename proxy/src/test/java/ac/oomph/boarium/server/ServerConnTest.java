@@ -32,6 +32,7 @@ import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetTimePacket;
+import org.cloudburstmc.protocol.bedrock.packet.TextPacket;
 import org.cloudburstmc.protocol.bedrock.packet.TickSyncPacket;
 import org.cloudburstmc.protocol.bedrock.packet.UnknownPacket;
 import org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket;
@@ -112,6 +113,25 @@ class ServerConnTest {
         ByteBuf frame = Unpooled.buffer().writeInt(1 + body.readableBytes()).writeByte(flags).writeBytes(body);
         body.release();
         return frame;
+    }
+
+    @Test
+    void decodesAStringLongerThanCloudburstsDefaultLimit() {
+        TextPacket text = new TextPacket();
+        text.setType(TextPacket.Type.RAW);
+        text.setSourceName("");
+        text.setMessage("a".repeat(40_000));
+        text.setXuid("");
+        text.setPlatformChatId("");
+        text.setFilteredMessage("");
+
+        EmbeddedChannel channel = new EmbeddedChannel();
+        Collector collector = new Collector();
+        new ServerConn(channel, CODEC).initPipeline(collector);
+        channel.writeInbound(frame(1, encode(text)));
+
+        assertEquals(40_000, assertInstanceOf(TextPacket.class, collector.received.getFirst()).getMessage().length());
+        assertFalse(channel.finish());
     }
 
     @Test
