@@ -1,7 +1,5 @@
 package ac.oomph.boarium.boar;
 
-import ac.boar.anticheat.data.effect.EffectProvider;
-import ac.boar.anticheat.data.enchantment.EnchantmentProvider;
 import ac.boar.anticheat.data.inventory.BoarItemStack;
 import ac.boar.anticheat.data.inventory.ItemStackProvider;
 import ac.boar.anticheat.player.accessor.EntityAccessor;
@@ -26,10 +24,6 @@ import java.util.List;
  * No item is a block, and every entity has a player's size.
  */
 final class Placeholders {
-    // Every effect and enchantment counts as one Boar does not use.
-    static final EffectProvider EFFECTS = id -> null;
-    static final EnchantmentProvider ENCHANTMENTS = id -> null;
-
     static final ItemStackProvider ITEM_STACKS = new ItemStackProvider() {
         @Override
         public BoarItemStack create(NetworkSession session, ItemData data) {

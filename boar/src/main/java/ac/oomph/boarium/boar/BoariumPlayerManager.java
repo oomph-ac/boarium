@@ -196,7 +196,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
             ClientDisconnect.disconnect(this.session.client().session(), reason);
         }
 
-        // A PlayStation answers Boar's NetworkStackLatency in milliseconds rather than nanoseconds.
+        // A PlayStation answers Boar's NetworkStackLatency with the timestamp times a thousand, not a million.
         @Override
         public boolean requiresPingMagnitude() {
             return this.playStation;

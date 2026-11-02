@@ -84,12 +84,12 @@ record BoariumPlatform(Path dataFolder, BoarPlayerManager<?> playerManager) impl
 
     @Override
     public EffectProvider effectProvider() {
-        return Placeholders.EFFECTS;
+        return BedrockEffects.INSTANCE;
     }
 
     @Override
     public EnchantmentProvider enchantmentProvider() {
-        return Placeholders.ENCHANTMENTS;
+        return BedrockEnchantments.INSTANCE;
     }
 
     @Override

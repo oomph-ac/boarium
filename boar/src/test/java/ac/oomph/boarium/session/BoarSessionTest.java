@@ -1,7 +1,11 @@
 package ac.oomph.boarium.session;
 
 import ac.boar.anticheat.Boar;
+import ac.boar.anticheat.compensated.CompensatedInventory;
 import ac.boar.anticheat.data.block.BoarBlockState;
+import ac.boar.anticheat.data.effect.Effect;
+import ac.boar.anticheat.data.enchantment.Enchantment;
+import ac.boar.anticheat.data.vanilla.StatusEffect;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.util.math.Box;
 import ac.boar.mappings.block.Blocks;
@@ -16,6 +20,7 @@ import ac.oomph.boarium.boar.blocks.BlockTable;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.client.TestClient;
+import ac.oomph.boarium.protocol.Definitions;
 import ac.oomph.boarium.server.packet.Flush;
 import ac.oomph.boarium.transport.TcpTransport;
 import io.netty.buffer.ByteBuf;
@@ -29,15 +34,21 @@ import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtType;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
+import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
+import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ChangeDimensionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
+import org.cloudburstmc.protocol.bedrock.packet.InventoryContentPacket;
 import org.cloudburstmc.protocol.bedrock.packet.LevelChunkPacket;
+import org.cloudburstmc.protocol.bedrock.packet.MobEffectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayerAuthInputPacket;
@@ -58,6 +69,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
@@ -292,6 +304,57 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    @Test
+    void givesThePlayerAnEffectTheServerSends() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        MobEffectPacket effect = new MobEffectPacket();
+        effect.setRuntimeEntityId(FakeSpectrumServer.RUNTIME_ID);
+        effect.setEvent(MobEffectPacket.Event.ADD);
+        // Jump boost II
+        effect.setEffectId(8);
+        effect.setAmplifier(1);
+        effect.setDuration(200);
+        this.server.send(effect);
+        this.server.send(new Flush());
+
+        this.answerLatencyAfter(MobEffectPacket.class);
+        awaitOnLoop(session, () -> player.hasEffect(Effect.JUMP_BOOST));
+        StatusEffect jumpBoost = onLoop(session, () -> player.getEffect(Effect.JUMP_BOOST));
+        assertNotNull(jumpBoost);
+        assertEquals(1, jumpBoost.getAmplifier());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void readsTheEnchantmentsOfTheBootsTheServerSends() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        // The fake server's items are only stone and the shield; Boar reads enchantments from the NBT whatever the item is.
+        SimpleItemDefinition shield = new SimpleItemDefinition("minecraft:shield", 387, false);
+        // The test client has no item or block definitions of its own, and needs them to read the item.
+        BedrockCodecHelper clientHelper = this.client.session.get().getPeer().getCodecHelper();
+        clientHelper.setItemDefinitions(Definitions.items(List.of(shield)));
+        clientHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
+        NbtMap depthStrider = NbtMap.builder().putShort("id", (short) 7).putShort("lvl", (short) 3).build();
+        ItemData boots = ItemData.builder()
+                .definition(shield)
+                .count(1)
+                .tag(NbtMap.builder().putList("ench", NbtType.COMPOUND, depthStrider).build())
+                .build();
+        InventoryContentPacket armor = new InventoryContentPacket();
+        armor.setContainerId(ContainerId.ARMOR);
+        armor.setContents(List.of(ItemData.AIR, ItemData.AIR, ItemData.AIR, boots));
+        this.server.send(armor);
+        this.server.send(new Flush());
+
+        this.answerLatencyAfter(InventoryContentPacket.class);
+        awaitOnLoop(session, () -> !player.compensatedInventory.armorContainer.get(3).isEmpty());
+        ItemData read = onLoop(session, () -> player.compensatedInventory.armorContainer.get(3).getData());
+        assertEquals(Map.of(Enchantment.DEPTH_STRIDER, 3), CompensatedInventory.getEnchantments(read));
+        this.assertNothingFailed();
+    }
+
     // A sub-chunk at Y 0 to 15 with stone at Y 0 and air above, with these runtime IDs.
     private static ByteBuf stoneFloor(int air, int stone) {
         ByteBuf data = Unpooled.buffer();
@@ -343,11 +406,35 @@ class BoarSessionTest {
     private void answerLatency() throws Exception {
         for (BedrockPacket packet; (packet = this.client.received.poll()) != null; ) {
             if (packet instanceof NetworkStackLatencyPacket latency && latency.isFromServer()) {
-                NetworkStackLatencyPacket answer = new NetworkStackLatencyPacket();
-                answer.setTimestamp(latency.getTimestamp());
-                this.client.session.get().sendPacket(answer);
+                this.answer(latency);
             }
         }
+    }
+
+    // Answers each NetworkStackLatency the client is sent, up to the first after a packet of this type, so Boar applies that packet once the client has it.
+    private void answerLatencyAfter(Class<? extends BedrockPacket> type) throws Exception {
+        boolean seen = false;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (true) {
+            BedrockPacket packet = this.client.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS);
+            if (packet == null) {
+                throw new IllegalStateException("no NetworkStackLatency after " + type.getSimpleName() + " within 10 seconds");
+            }
+            seen |= type.isInstance(packet);
+            if (packet instanceof NetworkStackLatencyPacket latency && latency.isFromServer()) {
+                this.answer(latency);
+                if (seen) {
+                    return;
+                }
+            }
+        }
+    }
+
+    // A client that is not a PlayStation answers with the timestamp times a million, which Boar's NetworkLatencyPackets divides out.
+    private void answer(NetworkStackLatencyPacket latency) throws Exception {
+        NetworkStackLatencyPacket answer = new NetworkStackLatencyPacket();
+        answer.setTimestamp(latency.getTimestamp() * 1_000_000);
+        this.client.session.get().sendPacket(answer);
     }
 
     // Boar's world is read on the client's event loop, where Boar changes it.
