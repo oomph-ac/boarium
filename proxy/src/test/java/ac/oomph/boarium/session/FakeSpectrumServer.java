@@ -43,7 +43,7 @@ import java.util.concurrent.TimeUnit;
  * A downstream server for tests that runs the Spectrum connection sequence the way spectrum-pm-internal does, with gophertunnel's encoding of each Bedrock packet.
  * After the ConnectionRequest, every Bedrock packet it receives is put in {@link #received}, every batch frame in {@link #batches}, and every Spectrum packet in {@link #spectrum}.
  */
-final class FakeSpectrumServer {
+public final class FakeSpectrumServer {
     static final long RUNTIME_ID = 9;
     static final long UNIQUE_ID = -9;
 
@@ -52,9 +52,9 @@ final class FakeSpectrumServer {
     private static final int FLAG_BATCH = 4;
     private static Map<String, byte[]> gophertunnel;
 
-    final CompletableFuture<ConnectionRequest> request = new CompletableFuture<>();
+    public final CompletableFuture<ConnectionRequest> request = new CompletableFuture<>();
     final CompletableFuture<Channel> connection = new CompletableFuture<>();
-    final BlockingQueue<BedrockPacket> received = new LinkedBlockingQueue<>();
+    public final BlockingQueue<BedrockPacket> received = new LinkedBlockingQueue<>();
     final BlockingQueue<List<byte[]>> batches = new LinkedBlockingQueue<>();
     final BlockingQueue<SpectrumPacket> spectrum = new LinkedBlockingQueue<>();
     // When false, the server takes the connection but never answers.
@@ -67,7 +67,7 @@ final class FakeSpectrumServer {
     private final BedrockCodec codec;
     private final Channel channel;
 
-    FakeSpectrumServer(EventLoopGroup group, BedrockCodec codec) throws Exception {
+    public FakeSpectrumServer(EventLoopGroup group, BedrockCodec codec) throws Exception {
         this.codec = codec;
         if (gophertunnel == null) {
             gophertunnel = new HashMap<>();
@@ -90,16 +90,16 @@ final class FakeSpectrumServer {
                 .channel();
     }
 
-    String address() {
+    public String address() {
         return "127.0.0.1:" + ((InetSocketAddress) this.channel.localAddress()).getPort();
     }
 
-    void close() {
+    public void close() {
         this.channel.close().syncUninterruptibly();
         this.connection.thenAccept(Channel::close);
     }
 
-    BedrockPacket await() throws InterruptedException {
+    public BedrockPacket await() throws InterruptedException {
         return poll(this.received);
     }
 

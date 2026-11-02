@@ -3,7 +3,7 @@ package ac.oomph.boarium.transport;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 
-final class Addresses {
+public final class Addresses {
 
     private Addresses() {
     }
@@ -12,7 +12,7 @@ final class Addresses {
      * Parses {@code host:port}. As in Go's net.Dial, an IPv6 host goes in brackets and an empty host means this machine.
      * A named host is returned unresolved.
      */
-    static InetSocketAddress parse(String addr) {
+    public static InetSocketAddress parse(String addr) {
         int colon = addr.lastIndexOf(':');
         if (colon < 0 || addr.endsWith("]")) {
             throw new IllegalArgumentException("missing port in address " + addr);

@@ -1,0 +1,112 @@
+package ac.oomph.boarium;
+
+import ac.oomph.boarium.transport.Addresses;
+import org.yaml.snakeyaml.LoaderOptions;
+import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.SafeConstructor;
+
+import java.io.IOException;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Duration;
+import java.util.Map;
+
+/**
+ * The proxy's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
+ */
+public record BoariumConfig(String listen, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
+                            String shutdownMessage) {
+
+    static final String DEFAULT_FILE = """
+            # Where players connect to boarium. An empty host means every address of this machine; put an IPv6 address in quotes.
+            listen: ":19132"
+            # The Spectrum server players join first.
+            server: 127.0.0.1:19133
+            # Where players go when their server is lost. Leave it empty for none.
+            fallback_server: ""
+            # Whether players must sign in with Xbox Live.
+            xbox_auth: true
+            # What the server list shows.
+            motd: boarium
+            sub_motd: boarium
+            max_players: 100
+            # How often, in milliseconds, each player's latency is sent to its server.
+            latency_interval: 3000
+            # What players see when boarium shuts down.
+            shutdown_message: boarium closed.
+            """;
+
+    /**
+     * Reads the config at {@code path}, writing the default one there first if there is none.
+     *
+     * @throws IllegalArgumentException if the file is not a map of keys, or a value has the wrong type or is out of range
+     */
+    public static BoariumConfig load(Path path) throws IOException {
+        if (Files.notExists(path)) {
+            Files.writeString(path, DEFAULT_FILE, StandardCharsets.UTF_8);
+        }
+        try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
+            return parse(reader);
+        }
+    }
+
+    static BoariumConfig parse(Reader reader) {
+        Object root = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
+        Map<?, ?> values = root == null ? Map.of() : root instanceof Map<?, ?> map ? map : null;
+        if (values == null) {
+            throw new IllegalArgumentException("the config is not a map of keys to values");
+        }
+        String listen = address(values, "listen", ":19132");
+        String server = address(values, "server", "127.0.0.1:19133");
+        String fallback = get(values, "fallback_server", String.class, "");
+        if (!fallback.isEmpty()) {
+            address(values, "fallback_server", "");
+        }
+        return new BoariumConfig(
+                listen,
+                server,
+                fallback.isEmpty() ? null : fallback,
+                get(values, "xbox_auth", Boolean.class, true),
+                get(values, "motd", String.class, "boarium"),
+                get(values, "sub_motd", String.class, "boarium"),
+                integer(values, "max_players", 100, 0),
+                Duration.ofMillis(integer(values, "latency_interval", 3000, 1)),
+                get(values, "shutdown_message", String.class, "boarium closed."));
+    }
+
+    // A host:port, checked now so that a bad one fails at start and not at each join.
+    private static String address(Map<?, ?> values, String key, String fallback) {
+        String addr = get(values, key, String.class, fallback);
+        try {
+            Addresses.parse(addr);
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(key + ": " + e.getMessage(), e);
+        }
+        return addr;
+    }
+
+    // A whole number from min up to Integer.MAX_VALUE; YAML reads larger ones as Long or BigInteger, and decimals as Double.
+    private static int integer(Map<?, ?> values, String key, int fallback, int min) {
+        Object value = values.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        if (!(value instanceof Integer number) || number < min) {
+            throw new IllegalArgumentException(key + " must be a whole number from " + min + " to " + Integer.MAX_VALUE + ", got " + value);
+        }
+        return number;
+    }
+
+    private static <T> T get(Map<?, ?> values, String key, Class<T> type, T fallback) {
+        Object value = values.get(key);
+        if (value == null) {
+            return fallback;
+        }
+        if (!type.isInstance(value)) {
+            throw new IllegalArgumentException(key + " must be a " + type.getSimpleName().toLowerCase() + ", got " + value);
+        }
+        return type.cast(value);
+    }
+}

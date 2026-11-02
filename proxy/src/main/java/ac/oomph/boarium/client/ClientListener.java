@@ -1,6 +1,7 @@
 package ac.oomph.boarium.client;
 
 import io.netty.bootstrap.ServerBootstrap;
+import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelHandlerContext;
@@ -98,9 +99,23 @@ public final class ClientListener {
                 .bind(address)
                 .sync();
 
-        int port = ((InetSocketAddress) bind.channel().localAddress()).getPort();
-        bind.channel().config().setOption(RakChannelOption.RAK_ADVERTISEMENT, pong.ipv4Port(port).ipv6Port(port).toByteBuf());
-        return new ClientListener(bind.channel());
+        ClientListener listener = new ClientListener(bind.channel());
+        listener.pong(pong);
+        return listener;
+    }
+
+    /**
+     * Sets what the listener answers server list pings with, with the ports set to the one it listens on.
+     */
+    public void pong(BedrockPong pong) {
+        int port = this.address().getPort();
+        ByteBuf advertisement = pong.ipv4Port(port).ipv6Port(port).toByteBuf();
+        try {
+            // RakNet keeps a copy.
+            this.channel.config().setOption(RakChannelOption.RAK_ADVERTISEMENT, advertisement);
+        } finally {
+            advertisement.release();
+        }
     }
 
     public InetSocketAddress address() {

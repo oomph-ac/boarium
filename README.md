@@ -4,7 +4,7 @@ boarium is a Minecraft: Bedrock Edition proxy built on the design of [Spectrum](
 
 Clients join boarium over RakNet. boarium talks to downstream servers with the Spectrum protocol as [oomph-ac/spectrum-internal](https://github.com/oomph-ac/spectrum-internal) speaks it, so servers that run [spectrum-pm-internal](https://github.com/oomph-ac/spectrum-pm-internal) or [spectrum-df-internal](https://github.com/oomph-ac/spectrum-df-internal) can sit behind it. The public spectrum-pm and spectrum-df use an older frame format and do not work with boarium.
 
-boarium is in early development and does not run yet.
+boarium is in early development. It logs players in, passes packets between them and their server, and moves them between servers, as Spectrum does. Boar does not run on it yet.
 
 ## Building
 
@@ -13,3 +13,22 @@ Requires JDK 21.
 ```
 ./gradlew build
 ```
+
+## Running
+
+```
+./gradlew :proxy:installDist
+proxy/build/install/proxy/bin/proxy config.yml
+```
+
+On its first start, boarium writes a default `config.yml` at the given path, or `config.yml` in the working directory when no path is given:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `listen` | `":19132"` | Where players connect. An empty host means every address of this machine; put an IPv6 address in quotes. |
+| `server` | `127.0.0.1:19133` | The Spectrum server players join first. |
+| `fallback_server` | empty | Where players go when their server is lost. Empty for none. |
+| `xbox_auth` | `true` | Whether players must sign in with Xbox Live. |
+| `motd`, `sub_motd`, `max_players` | `boarium`, `boarium`, `100` | What the server list shows. |
+| `latency_interval` | `3000` | How often, in milliseconds, each player's latency is sent to its server. |
+| `shutdown_message` | `boarium closed.` | What players see when boarium shuts down. |

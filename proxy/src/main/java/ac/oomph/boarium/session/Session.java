@@ -31,14 +31,12 @@ import java.util.concurrent.TimeUnit;
 
 /**
  * One player on the proxy: a logged-in client and its connection to the downstream server it plays on, as spectrum-internal's Session.
- * Once the player spawns, packets pass between the two, and the client's latency goes to the server every {@link #LATENCY_INTERVAL}.
+ * Once the player spawns, packets pass between the two, and the client's latency goes to the server at the settings' interval.
  * The player can be transferred to another server; when its server is lost, it is transferred once to the fallback server, if there is one, and otherwise disconnected.
  * The session's server, its transfers and the fallback change on the client's event loop.
  * A transfer asked for while one runs waits for it, and the latest such address wins.
  */
 public final class Session {
-    // spectrum-internal's default latency_interval.
-    static final Duration LATENCY_INTERVAL = Duration.ofSeconds(3);
     // spectrum-internal's Session.Transfer timeout.
     static final Duration TRANSFER_TIMEOUT = Duration.ofMinutes(1);
     private static final String CANT_CONNECT = "disconnectionScreen.internalError.cantConnect";
@@ -48,7 +46,7 @@ public final class Session {
     private final EventLoop loop;
     private final Transport transport;
     private final BedrockCodec codec;
-    private final String fallbackAddr;
+    private final SessionSettings settings;
     private final String clientAddr;
     private final byte[] clientData;
     private final byte[] identityData;
@@ -67,13 +65,13 @@ public final class Session {
     private String queuedAddr;
     private CompletableFuture<Void> queued;
 
-    private Session(ClientLogin client, Transport transport, BedrockCodec codec, String fallbackAddr) {
+    private Session(ClientLogin client, Transport transport, BedrockCodec codec, SessionSettings settings) {
         this.client = client;
         this.session = client.session();
         this.loop = this.session.getPeer().getChannel().eventLoop();
         this.transport = transport;
         this.codec = codec;
-        this.fallbackAddr = fallbackAddr;
+        this.settings = settings;
         this.clientAddr = address((InetSocketAddress) this.session.getPeer().getChannel().remoteAddress());
         this.clientData = SpectrumLoginData.clientData(client.clientData());
         this.identityData = SpectrumLoginData.identity(client.identity());
@@ -81,17 +79,16 @@ public final class Session {
 
     /**
      * Connects a logged-in client to the server at {@code addr} the way spectrum-internal's Session.Login does: dial, the Spectrum connection sequence, the client's StartGame, then spawn.
-     * The client is disconnected if any step fails or the whole login takes longer than {@code timeout}.
+     * The client is disconnected if any step fails or the whole login takes longer than the settings' login timeout.
      *
-     * @param fallbackAddr the server to move the player to when its server is lost, or null for none
      * @return completes once the player has spawned on the server, and fails if the login does
      */
-    public static CompletableFuture<Session> login(ClientLogin client, Transport transport, String addr, String fallbackAddr, BedrockCodec codec, Duration timeout) {
+    public static CompletableFuture<Session> login(ClientLogin client, Transport transport, BedrockCodec codec, String addr, SessionSettings settings) {
         BedrockServerSession session = client.session();
         session.getPeer().getChannel().eventLoop().execute(() -> ClientBatchDecoder.holdAfterSpawn(session));
         Session joined;
         try {
-            joined = new Session(client, transport, codec, fallbackAddr);
+            joined = new Session(client, transport, codec, settings);
         } catch (RuntimeException e) {
             // Such as client data that cannot be read.
             ClientDisconnect.disconnect(session, CANT_CONNECT);
@@ -112,7 +109,7 @@ public final class Session {
                     .thenCompose(spawned -> next.handshake().spawn())
                     .thenApply(spawned -> joined);
         }, joined.loop);
-        result.orTimeout(timeout.toMillis(), TimeUnit.MILLISECONDS);
+        result.orTimeout(settings.loginTimeout().toMillis(), TimeUnit.MILLISECONDS);
 
         ClientDisconnect.ended(session).thenRun(() -> result.completeExceptionally(new ClosedChannelException()));
         result.whenComplete((spawned, error) -> {
@@ -172,7 +169,8 @@ public final class Session {
                 }
                 return;
             }
-            ScheduledFuture<?> latency = this.loop.scheduleAtFixedRate(this::sendLatency, LATENCY_INTERVAL.toMillis(), LATENCY_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
+            long interval = this.settings.latencyInterval().toMillis();
+            ScheduledFuture<?> latency = this.loop.scheduleAtFixedRate(this::sendLatency, interval, interval, TimeUnit.MILLISECONDS);
             ClientDisconnect.ended(this.session).thenRun(() -> {
                 latency.cancel(false);
                 if (this.transfer != null) {
@@ -224,12 +222,12 @@ public final class Session {
         if (ClientDisconnect.ended(this.session).isDone()) {
             return;
         }
-        if (this.fallbackAddr == null || this.inFallback) {
+        if (this.settings.fallbackServer() == null || this.inFallback) {
             ClientDisconnect.disconnect(this.session, CANT_CONNECT);
             return;
         }
         this.inFallback = true;
-        this.startTransfer(this.fallbackAddr, new CompletableFuture<>(), true);
+        this.startTransfer(this.settings.fallbackServer(), new CompletableFuture<>(), true);
     }
 
     /**
