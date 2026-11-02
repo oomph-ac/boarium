@@ -39,6 +39,7 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A Bedrock client for tests that logs in with an offline identity it signs itself, the way a client without Xbox Live does.
@@ -68,6 +69,21 @@ final class TestClient {
         this.name = name;
         this.codec = codec;
         this.protocolVersion = protocolVersion;
+    }
+
+    /**
+     * Waits for the next received packet of {@code type}, dropping the packets before it.
+     */
+    <T extends BedrockPacket> T await(Class<T> type) throws InterruptedException {
+        while (true) {
+            BedrockPacket packet = this.received.poll(10, TimeUnit.SECONDS);
+            if (packet == null) {
+                throw new IllegalStateException("no " + type.getSimpleName() + " within 10 seconds");
+            }
+            if (type.isInstance(packet)) {
+                return type.cast(packet);
+            }
+        }
     }
 
     void connect(EventLoopGroup group, InetSocketAddress address) {

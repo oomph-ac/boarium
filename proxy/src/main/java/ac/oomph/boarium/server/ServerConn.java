@@ -1,5 +1,6 @@
 package ac.oomph.boarium.server;
 
+import ac.oomph.boarium.protocol.Definitions;
 import ac.oomph.boarium.protocol.PacketBatch;
 import ac.oomph.boarium.protocol.SpectrumFrameDecoder;
 import ac.oomph.boarium.protocol.SpectrumFrameEncoder;
@@ -18,7 +19,6 @@ import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
-import org.cloudburstmc.protocol.common.SimpleDefinitionRegistry;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -43,7 +43,7 @@ public final class ServerConn {
         this.codec = codec;
         this.helper = codec.createHelper();
         this.helper.setBlockDefinitions(Definitions.ANY_BLOCK);
-        this.helper.setItemDefinitions(SimpleDefinitionRegistry.<ItemDefinition>builder().build());
+        this.helper.setItemDefinitions(Definitions.items(List.of()));
     }
 
     /**
@@ -98,9 +98,7 @@ public final class ServerConn {
 
     // Called on the event loop, where the codec helper is used.
     void setItemDefinitions(List<ItemDefinition> items) {
-        SimpleDefinitionRegistry.Builder<ItemDefinition> registry = SimpleDefinitionRegistry.builder();
-        items.forEach(registry::add);
-        this.helper.setItemDefinitions(registry.build());
+        this.helper.setItemDefinitions(Definitions.items(items));
     }
 
     /**

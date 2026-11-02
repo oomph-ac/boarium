@@ -1,5 +1,6 @@
 package ac.oomph.boarium.server;
 
+import ac.oomph.boarium.protocol.Definitions;
 import ac.oomph.boarium.protocol.SpectrumFrame;
 import ac.oomph.boarium.server.packet.Latency;
 import ac.oomph.boarium.server.packet.SpectrumPackets;
