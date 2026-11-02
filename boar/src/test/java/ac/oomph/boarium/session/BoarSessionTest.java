@@ -26,6 +26,7 @@ import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtType;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
@@ -70,6 +71,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -203,7 +205,7 @@ class BoarSessionTest {
         chunk.setChunkZ(chunkZ);
         chunk.setDimension(0);
         chunk.setSubChunksLength(1);
-        chunk.setData(stoneFloor());
+        chunk.setData(stoneFloor(AIR_RUNTIME_ID, STONE_RUNTIME_ID));
         this.server.send(chunk);
         this.server.send(new Flush());
 
@@ -257,18 +259,41 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // cubecraft:pipe sorts before stone and air by name hash, so its 2 states move both by 2.
     @Test
-    void seesOnlyAirWhenTheServerAddsCustomBlocks() throws Exception {
+    void readsTheBlocksOfAChunkWhenTheServerAddsCustomBlocks() throws Exception {
         Session session = this.spawn(login -> new AddsCustomBlock(processors.apply(login)));
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
-        assertEquals(1, player.mappingInfo.airIds().size());
-        assertEquals(0, player.mappingInfo.toIntermediary().applyAsInt(STONE_RUNTIME_ID));
-        assertTrue(this.logged.toString(StandardCharsets.UTF_8).contains("The server adds custom blocks for Tester"));
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+        int air = AIR_RUNTIME_ID + 2;
+        int stone = STONE_RUNTIME_ID + 2;
+
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(stoneFloor(air, stone));
+        this.server.send(chunk);
+        this.server.send(new Flush());
+
+        int x = (chunkX << 4) + 3;
+        int z = (chunkZ << 4) + 5;
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0).intermediaryId() != 0);
+        BoarBlockState floor = onLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0));
+        assertEquals("minecraft:stone", floor.block().toString());
+        assertEquals(stone, floor.definition(player).getRuntimeId());
+        assertTrue(onLoop(session, () -> player.compensatedWorld.getBlockState(x, 1, z, 0).isAir()));
+        assertEquals(air, player.mappingInfo.airId());
+        // Without custom blocks, stone has another ID.
+        assertNotEquals(floor.intermediaryId(), player.mappingInfo.toIntermediary().applyAsInt(STONE_RUNTIME_ID));
         this.assertNothingFailed();
     }
 
-    // A sub-chunk at Y 0 to 15 with stone at Y 0 and air above.
-    private static ByteBuf stoneFloor() {
+    // A sub-chunk at Y 0 to 15 with stone at Y 0 and air above, with these runtime IDs.
+    private static ByteBuf stoneFloor(int air, int stone) {
         ByteBuf data = Unpooled.buffer();
         // Sub-chunk version 9, one layer, at sub-chunk Y 0
         data.writeByte(9).writeByte(1).writeByte(0);
@@ -279,8 +304,8 @@ class BoarSessionTest {
             data.writeIntLE(1 | 1 << 16);
         }
         VarInts.writeInt(data, 2);
-        VarInts.writeInt(data, AIR_RUNTIME_ID);
-        VarInts.writeInt(data, STONE_RUNTIME_ID);
+        VarInts.writeInt(data, air);
+        VarInts.writeInt(data, stone);
         return data;
     }
 
@@ -387,7 +412,7 @@ class BoarSessionTest {
         assertFalse(log.contains(" ERROR ") || log.contains("Exception"), log);
     }
 
-    // Boar's processor, with a custom block added to the StartGame the client is sent
+    // Boar's processor, with a custom block of 2 states added to the StartGame the client is sent
     private record AddsCustomBlock(Processor boar) implements Processor {
         @Override
         public Set<Integer> clientDecode() {
@@ -406,7 +431,8 @@ class BoarSessionTest {
 
         @Override
         public void startGame(Session session, StartGamePacket startGame) {
-            startGame.getBlockProperties().add(new BlockPropertyData("cubecraft:custom_block", NbtMap.EMPTY));
+            NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, (byte) 0, (byte) 1).build();
+            startGame.getBlockProperties().add(new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).build()));
             this.boar.startGame(session, startGame);
         }
 

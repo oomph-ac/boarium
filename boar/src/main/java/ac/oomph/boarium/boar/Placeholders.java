@@ -6,7 +6,6 @@ import ac.boar.anticheat.data.inventory.BoarItemStack;
 import ac.boar.anticheat.data.inventory.ItemStackProvider;
 import ac.boar.anticheat.player.accessor.EntityAccessor;
 import ac.boar.anticheat.player.accessor.InventoryAccessor;
-import ac.boar.anticheat.player.data.BlockMappingInfo;
 import ac.boar.anticheat.util.Reference;
 import ac.boar.anticheat.util.ReferencePopulator;
 import ac.boar.api.anticheat.model.NetworkSession;
@@ -16,25 +15,17 @@ import ac.boar.mappings.entity.EntityDefinitions;
 import ac.boar.mappings.entity.EntityType;
 import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
-import ac.oomph.boarium.protocol.Definitions;
-import it.unimi.dsi.fastutil.ints.IntList;
 import org.cloudburstmc.math.vector.Vector3i;
-import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
 
 import java.util.List;
 
 /**
- * Stand-ins for the item and entity data Boar needs to start, until boarium has the real data, and for the block data of clients the block table does not fit.
+ * Stand-ins for the item and entity data Boar needs to start, until boarium has the real data.
  * No item is a block, and every entity has a player's size.
  */
 final class Placeholders {
-    private static final BlockDefinition AIR = Definitions.ANY_BLOCK.getDefinition(0);
-
-    // For a client whose server adds custom blocks, which the block table does not have: every block is air, and air, water, lava and powder snow share one runtime ID.
-    static final BlockMappingInfo MAPPING_INFO = new BlockMappingInfo(AIR, AIR, AIR, AIR, IntList.of(AIR.getRuntimeId()), definition -> false, runtimeId -> 0, intermediaryId -> AIR.getRuntimeId());
-
     // Every effect and enchantment counts as one Boar does not use.
     static final EffectProvider EFFECTS = id -> null;
     static final EnchantmentProvider ENCHANTMENTS = id -> null;

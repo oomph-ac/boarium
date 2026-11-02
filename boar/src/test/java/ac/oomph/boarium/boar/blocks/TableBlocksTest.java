@@ -20,7 +20,6 @@ import ac.boar.mappings.block.Property;
 import ac.oomph.boarium.boar.TestBoar;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
-import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleBlockDefinition;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
@@ -280,18 +279,6 @@ class TableBlocksTest {
             assertEquals(HorseJumpMaterial.UNKNOWN, info.horseJumpMaterial().apply(12345678));
             assertFalse(info.isKnownRawId(12345678));
         }
-    }
-
-    @Test
-    void customBlocksHaveNoMapping() {
-        StartGamePacket custom = new StartGamePacket();
-        custom.getBlockProperties().add(new BlockPropertyData("cubecraft:custom_block", NbtMap.EMPTY));
-        assertNull(TablePalette.mappingInfo(custom));
-
-        // A block the palette has, such as a data-driven vanilla block, is not custom.
-        StartGamePacket vanilla = new StartGamePacket();
-        vanilla.getBlockProperties().add(new BlockPropertyData("minecraft:stone", NbtMap.EMPTY));
-        assertSame(TablePalette.mappingInfo(new StartGamePacket()), TablePalette.mappingInfo(vanilla));
     }
 
     @Test

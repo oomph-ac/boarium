@@ -490,6 +490,11 @@ public final class BlockTable {
     // The Java state of a runtime ID; air (0) when the palette does not define the ID or no Java state uses it
     public int toJava(int runtimeId, boolean hashed) {
         int index = paletteIndex(runtimeId, hashed);
-        return index < 0 ? 0 : paletteToJava[index];
+        return index < 0 ? 0 : paletteToJava(index);
+    }
+
+    // The Java state of a palette entry; air (0) when no Java state uses it
+    public int paletteToJava(int paletteIndex) {
+        return paletteToJava[paletteIndex];
     }
 }

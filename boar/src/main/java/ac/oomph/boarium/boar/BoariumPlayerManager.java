@@ -51,12 +51,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs.
     BoarPlayer add(Session session, StartGamePacket startGame) {
-        BlockMappingInfo mappingInfo = TablePalette.mappingInfo(startGame);
-        if (mappingInfo == null) {
-            LOG.warn("The server adds custom blocks for {}, so Boar sees every block as air", session.client().identity().displayName());
-            mappingInfo = Placeholders.MAPPING_INFO;
-        }
-        this.adding.put(session, mappingInfo);
+        this.adding.put(session, TablePalette.mappingInfo(startGame));
         try {
             return this.add(session);
         } finally {
