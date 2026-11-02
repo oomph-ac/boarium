@@ -15,13 +15,17 @@ import ac.boar.mappings.entity.EntityDefinition;
 import ac.boar.mappings.entity.EntityType;
 import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
+import ac.oomph.boarium.boar.blocks.TableBlock;
+import ac.oomph.boarium.boar.blocks.TableBlockMappings;
+import ac.oomph.boarium.boar.blocks.TableBlockState;
+import ac.oomph.boarium.boar.blocks.TableProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.file.Path;
 
 /**
- * What Boar needs from boarium to start. The block, item and entity data are {@link Placeholders} for now.
+ * What Boar needs from boarium to start. Block data comes from the block table; the item and entity data are {@link Placeholders} for now.
  *
  * @param dataFolder where Boar keeps its config
  */
@@ -55,17 +59,17 @@ record BoariumPlatform(Path dataFolder, BoarPlayerManager<?> playerManager) impl
 
     @Override
     public BlockMappings loadBlockMappings() {
-        return Placeholders.BLOCK_MAPPINGS;
+        return new TableBlockMappings();
     }
 
     @Override
     public BlockStateFactory blockStateFactory() {
-        return Placeholders.BLOCK_STATES;
+        return TableBlockState.FACTORY;
     }
 
     @Override
     public PropertyProvider propertyProvider() {
-        return Placeholders.PROPERTIES;
+        return TableProperties.INSTANCE;
     }
 
     @Override
@@ -90,7 +94,7 @@ record BoariumPlatform(Path dataFolder, BoarPlayerManager<?> playerManager) impl
 
     @Override
     public void finalizeBlockMappings(ReferencePopulator<Block> populator) {
-        Placeholders.populateBlocks(populator);
+        TableBlock.populate(populator);
     }
 
     @Override

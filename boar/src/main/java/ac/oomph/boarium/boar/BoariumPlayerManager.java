@@ -16,6 +16,7 @@ import ac.boar.mappings.entity.Entity;
 import ac.boar.protocol.BoarBatchAcknowledger;
 import ac.boar.protocol.BoarConnection;
 import ac.oomph.boarium.Boarium;
+import ac.oomph.boarium.boar.blocks.TablePalette;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.session.Session;
 import io.netty.channel.Channel;
@@ -24,6 +25,7 @@ import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.data.BuildPlatform;
 import org.cloudburstmc.protocol.bedrock.netty.codec.packet.BedrockPacketCodec;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
+import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket;
 import org.jose4j.json.JsonUtil;
 import org.jose4j.lang.JoseException;
@@ -33,6 +35,7 @@ import org.slf4j.LoggerFactory;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -42,6 +45,24 @@ import java.util.concurrent.TimeUnit;
  */
 final class BoariumPlayerManager extends BoarPlayerManager<Session> {
     private static final Logger LOG = LoggerFactory.getLogger(BoariumPlayerManager.class);
+
+    // The block mapping of each player being added, which Boar asks for while it makes the player.
+    private final Map<Session, BlockMappingInfo> adding = new ConcurrentHashMap<>();
+
+    // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs.
+    BoarPlayer add(Session session, StartGamePacket startGame) {
+        BlockMappingInfo mappingInfo = TablePalette.mappingInfo(startGame);
+        if (mappingInfo == null) {
+            LOG.warn("The server adds custom blocks for {}, so Boar sees every block as air", session.client().identity().displayName());
+            mappingInfo = Placeholders.MAPPING_INFO;
+        }
+        this.adding.put(session, mappingInfo);
+        try {
+            return this.add(session);
+        } finally {
+            this.adding.remove(session);
+        }
+    }
 
     @Override
     public BoarPlayer add(Session session) {
@@ -68,7 +89,11 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected BlockMappingInfo getMappingInfo(Session session) {
-        return Placeholders.MAPPING_INFO;
+        BlockMappingInfo mappingInfo = this.adding.get(session);
+        if (mappingInfo == null) {
+            throw new IllegalStateException("A player is added only with its StartGame");
+        }
+        return mappingInfo;
     }
 
     @Override
@@ -119,7 +144,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         player.setPacketInjector(session::sendToServer);
     }
 
-    // Boar must not change what players do while it has no real block data.
+    // Boar must not change what players do while some of its block, item and entity data are placeholders.
     @Override
     protected boolean shouldDisableMitigations(Session session) {
         return true;

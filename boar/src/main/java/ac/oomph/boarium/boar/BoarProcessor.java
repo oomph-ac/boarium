@@ -118,7 +118,7 @@ final class BoarProcessor implements Processor {
         }
         BoarPlayer player;
         try {
-            player = this.players.add(session);
+            player = this.players.add(session, startGame);
         } catch (Throwable e) {
             LOG.error("Boar could not add {}", session.client().identity().displayName(), e);
             return;

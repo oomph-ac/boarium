@@ -1,6 +1,7 @@
 package ac.oomph.boarium.session;
 
 import ac.boar.anticheat.Boar;
+import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.mappings.block.Blocks;
 import ac.boar.mappings.entity.EntityDefinitions;
@@ -9,18 +10,22 @@ import ac.boar.protocol.PacketEvents;
 import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
 import ac.oomph.boarium.Boarium;
-import ac.oomph.boarium.boar.BoariumBoar;
+import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.client.TestClient;
 import ac.oomph.boarium.server.packet.Flush;
 import ac.oomph.boarium.transport.TcpTransport;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
+import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
+import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
@@ -36,23 +41,26 @@ import org.cloudburstmc.protocol.bedrock.packet.RequestChunkRadiusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetEntityMotionPacket;
 import org.cloudburstmc.protocol.bedrock.packet.SetLocalPlayerAsInitializedPacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
+import org.cloudburstmc.protocol.common.util.VarInts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayOutputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -66,9 +74,10 @@ class BoarSessionTest {
     private static final BedrockCodec CODEC = Boarium.CODEC;
     // Every packet Boar's listeners see, after them.
     private static final Recorder RECORDER = new Recorder();
+    // The 1.26.30 runtime IDs of air and stone when StartGame does not ask for hashed IDs
+    private static final int AIR_RUNTIME_ID = 13094;
+    private static final int STONE_RUNTIME_ID = 2706;
 
-    @TempDir
-    static Path dataFolder;
     private static Function<ClientLogin, Processor> processors;
 
     private EventLoopGroup group;
@@ -78,11 +87,11 @@ class BoarSessionTest {
     private final CompletableFuture<CompletableFuture<Session>> session = new CompletableFuture<>();
     private PrintStream stderr;
     private final ByteArrayOutputStream logged = new ByteArrayOutputStream();
+    private StartGamePacket startGame;
 
-    // Boar starts once in a JVM.
     @BeforeAll
     static void startBoar() throws Exception {
-        processors = BoariumBoar.start(dataFolder);
+        processors = TestBoar.start();
         PacketEvents.getApi().register(RECORDER);
     }
 
@@ -176,7 +185,78 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    @Test
+    void readsTheBlocksOfAChunk() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(stoneFloor());
+        this.server.send(chunk);
+        this.server.send(new Flush());
+
+        int x = (chunkX << 4) + 3;
+        int z = (chunkZ << 4) + 5;
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0).intermediaryId() != 0);
+        BoarBlockState floor = onLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0));
+        assertEquals("minecraft:stone", floor.block().toString());
+        assertTrue(floor.isFaceSturdy(player));
+        assertEquals(STONE_RUNTIME_ID, floor.definition(player).getRuntimeId());
+        assertTrue(onLoop(session, () -> player.compensatedWorld.getBlockState(x, 1, z, 0).isAir()));
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void seesOnlyAirWhenTheServerAddsCustomBlocks() throws Exception {
+        Session session = this.spawn(login -> new AddsCustomBlock(processors.apply(login)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertEquals(1, player.mappingInfo.airIds().size());
+        assertEquals(0, player.mappingInfo.toIntermediary().applyAsInt(STONE_RUNTIME_ID));
+        assertTrue(this.logged.toString(StandardCharsets.UTF_8).contains("The server adds custom blocks for Tester"));
+        this.assertNothingFailed();
+    }
+
+    // A sub-chunk at Y 0 to 15 with stone at Y 0 and air above.
+    private static ByteBuf stoneFloor() {
+        ByteBuf data = Unpooled.buffer();
+        // Sub-chunk version 9, one layer, at sub-chunk Y 0
+        data.writeByte(9).writeByte(1).writeByte(0);
+        // One bit per block, with runtime IDs in the palette
+        data.writeByte(1 << 1 | 1);
+        // Blocks are indexed x << 8 | z << 4 | y, so in each 32-block word the blocks at Y 0 are bits 0 and 16.
+        for (int word = 0; word < 4096 / 32; word++) {
+            data.writeIntLE(1 | 1 << 16);
+        }
+        VarInts.writeInt(data, 2);
+        VarInts.writeInt(data, AIR_RUNTIME_ID);
+        VarInts.writeInt(data, STONE_RUNTIME_ID);
+        return data;
+    }
+
+    // Boar's world is read on the client's event loop, where Boar changes it.
+    private static <T> T onLoop(Session session, Callable<T> read) throws Exception {
+        return session.client().session().getPeer().getChannel().eventLoop().submit(read).get(10, TimeUnit.SECONDS);
+    }
+
+    private static void awaitOnLoop(Session session, BooleanSupplier condition) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!onLoop(session, condition::getAsBoolean) && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+    }
+
     private Session spawn() throws Exception {
+        return this.spawn(processors);
+    }
+
+    private Session spawn(Function<ClientLogin, Processor> processors) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         String addr = this.server.address();
@@ -187,6 +267,7 @@ class BoarSessionTest {
         this.client.loginDone.get(10, TimeUnit.SECONDS);
 
         StartGamePacket startGame = this.client.await(StartGamePacket.class);
+        this.startGame = startGame;
         RequestChunkRadiusPacket request = new RequestChunkRadiusPacket();
         request.setRadius(8);
         this.client.session.get().sendPacket(request);
@@ -219,6 +300,60 @@ class BoarSessionTest {
     private void assertNothingFailed() {
         String log = this.logged.toString(StandardCharsets.UTF_8);
         assertFalse(log.contains(" ERROR ") || log.contains("Exception"), log);
+    }
+
+    // Boar's processor, with a custom block added to the StartGame the client is sent
+    private record AddsCustomBlock(Processor boar) implements Processor {
+        @Override
+        public Set<Integer> clientDecode() {
+            return this.boar.clientDecode();
+        }
+
+        @Override
+        public Set<Integer> serverDecode() {
+            return this.boar.serverDecode();
+        }
+
+        @Override
+        public boolean clientCache() {
+            return this.boar.clientCache();
+        }
+
+        @Override
+        public void startGame(Session session, StartGamePacket startGame) {
+            startGame.getBlockProperties().add(new BlockPropertyData("cubecraft:custom_block", NbtMap.EMPTY));
+            this.boar.startGame(session, startGame);
+        }
+
+        @Override
+        public void spawned(Session session) {
+            this.boar.spawned(session);
+        }
+
+        @Override
+        public void client(Session session, List<PacketContext> batch) {
+            this.boar.client(session, batch);
+        }
+
+        @Override
+        public void server(Session session, PacketContext packet) {
+            this.boar.server(session, packet);
+        }
+
+        @Override
+        public void preTransfer(Session session, String origin, String target) {
+            this.boar.preTransfer(session, origin, target);
+        }
+
+        @Override
+        public void flush(Session session) {
+            this.boar.flush(session);
+        }
+
+        @Override
+        public void disconnect(Session session) {
+            this.boar.disconnect(session);
+        }
     }
 
     private static final class Recorder implements PacketListener {

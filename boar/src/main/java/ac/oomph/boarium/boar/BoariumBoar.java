@@ -4,6 +4,8 @@ import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.ack.BoarDefaultAcknowledgments;
 import ac.boar.anticheat.check.api.BoarDefaultChecks;
 import ac.boar.protocol.BoarDefaultPacketListeners;
+import ac.oomph.boarium.Boarium;
+import ac.oomph.boarium.boar.blocks.BlockTable;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.session.Processor;
 
@@ -43,6 +45,11 @@ public final class BoariumBoar {
                 }
                 Files.copy(defaults, config);
             }
+        }
+        // A block table that cannot load fails here with its cause; later uses would only see NoClassDefFoundError.
+        BlockTable table = BlockTable.get();
+        if (table.protocol() != Boarium.CODEC.getProtocolVersion()) {
+            throw new IllegalStateException("The block table is for protocol " + table.protocol() + ", but boarium speaks " + Boarium.CODEC.getProtocolVersion());
         }
         started = true;
         BoariumPlayerManager players = new BoariumPlayerManager();
