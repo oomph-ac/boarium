@@ -15,7 +15,7 @@ public final class SpectrumPackets {
     public static final int TRANSFER = 504;
     public static final int UPDATE_CACHE = 505;
 
-    private static final int PACKET_ID_MASK = 0x3ff;
+    public static final int PACKET_ID_MASK = 0x3ff;
 
     private SpectrumPackets() {
     }
