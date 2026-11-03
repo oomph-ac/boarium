@@ -34,6 +34,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -465,11 +466,21 @@ class BedrockStateTest {
         assertInstanceOf(SlimeBlockState.class, state(table.firstIndex("minecraft:slime")));
         assertInstanceOf(BedBlockState.class, state(table.firstIndex("minecraft:bed") + 5));
         assertInstanceOf(VanillaBoarBlockState.class, state(table.firstIndex("minecraft:stone")));
-        // A custom ID keeps its ID and is air; an ID past them is air.
-        assertEquals(table.paletteSize(), state(table.paletteSize()).intermediaryId());
-        assertTrue(state(table.paletteSize()).isAir());
-        assertTrue(state(table.paletteSize()).getCollisionBoxes().isEmpty());
-        assertEquals(table.firstIndex("minecraft:air"), state(table.paletteSize() + BedrockPalette.MAX_CUSTOM_IDS).intermediaryId());
+        // An ID past the vanilla palette keeps its ID and is a full cube of a block that is not air; an ID past those BedrockPalette gives is air.
+        for (int id : new int[]{table.paletteSize(), BedrockPalette.UNKNOWN_ID, BedrockPalette.END_ID - 1}) {
+            BoarBlockState unknown = state(id);
+            assertInstanceOf(VanillaBoarBlockState.class, unknown);
+            assertEquals(id, unknown.intermediaryId());
+            assertFalse(unknown.isAir());
+            assertSame(BedrockState.UNKNOWN_BLOCK, unknown.block());
+            assertArrayEquals(new float[]{0, 0, 0, 1, 1, 1}, flatten(unknown.getCollisionBoxes()));
+            assertTrue(unknown.isFaceSturdy(null));
+            assertFalse(unknown.isReplaceable(null));
+            assertFalse(unknown.isWaterlogged());
+            assertNull(unknown.get(BedrockProperties.INSTANCE.<Boolean>get("waterlogged")));
+            assertNull(delegate(id).connectionCollisionOverride(null, POS));
+        }
+        assertEquals(table.firstIndex("minecraft:air"), state(BedrockPalette.END_ID).intermediaryId());
         assertEquals(table.firstIndex("minecraft:air"), state(-1).intermediaryId());
     }
 

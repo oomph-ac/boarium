@@ -11,6 +11,7 @@ import ac.boar.anticheat.data.vanilla.StatusEffect;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.player.data.VehicleType;
 import ac.boar.anticheat.util.MathUtil;
+import ac.boar.anticheat.util.block.BlockUtil;
 import ac.boar.anticheat.util.math.Box;
 import ac.boar.anticheat.util.math.Vec3;
 import ac.boar.anticheat.violation.Violation;
@@ -27,6 +28,7 @@ import ac.boar.protocol.api.PacketListener;
 import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.client.TestClient;
@@ -366,13 +368,14 @@ class BoarSessionTest {
         // Without custom blocks, stone has another ID.
         assertNotEquals(floor.intermediaryId(), player.mappingInfo.toIntermediary().applyAsInt(STONE_RUNTIME_ID));
 
-        // The pipe's states are air with IDs of their own, which Boar sends back as the pipe.
+        // The pipe's states are full cubes with IDs of their own, which Boar sends back as the pipe.
         int pipes = 0;
         for (int runtimeId = 0; runtimeId < AIR_RUNTIME_ID + 2; runtimeId++) {
             int id = player.mappingInfo.toIntermediary().applyAsInt(runtimeId);
             BoarBlockState state = BoarBlockState.create(id, Vector3i.ZERO, 0);
             if (id >= BedrockBlockTable.get().paletteSize()) {
-                assertTrue(state.isAir());
+                assertFalse(state.isAir());
+                assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(state.getCollisionBoxes()));
                 assertEquals(runtimeId, state.definition(player).getRuntimeId());
                 pipes++;
             }
@@ -1056,13 +1059,26 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // With hashed IDs, Boar keeps the runtime ID of each block it cannot read, so it can send the block back.
     @Test
-    void runsWithoutMitigationsWhenItCannotReadTheCustomBlocks() throws Exception {
+    void keepsMitigationsOnWhenItCannotReadTheCustomBlocks() throws Exception {
         TestBoar.mitigations(true);
         Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), true, List.of(pipe(), pipe())));
         assertTrue(this.startGame.isBlockNetworkIdsHashed());
-        assertTrue(Boar.getInstance().getPlayerManager().get(session).disableMitigations());
-        assertTrue(this.logged.toString(StandardCharsets.UTF_8).contains("Boar runs without mitigations for Tester and later players with this block palette, since it cannot send some of the server's custom blocks back as themselves"));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+
+        this.readItemsOnTheClient();
+        BedrockBlockTable table = BedrockBlockTable.get();
+        int unread = 0x5EEDF00E;
+        assertTrue(table.indexOfHash(unread) < 0);
+        Vector3i floor = this.standOnAFloor(session, table.networkHash(table.firstIndex("minecraft:air")), unread, 1).sub(0, 1, 0);
+        this.client.received.clear();
+        onLoop(session, () -> {
+            BlockUtil.syncBlock(player, floor);
+            return null;
+        });
+        assertEquals(unread, this.resentLayerZero(floor).getDefinition().getRuntimeId());
     }
 
     @Test
@@ -1071,7 +1087,102 @@ class BoarSessionTest {
         Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe())));
         assertFalse(Boar.getInstance().getPlayerManager().get(session).disableMitigations());
         this.assertNothingFailed();
-        assertFalse(this.logged.toString(StandardCharsets.UTF_8).contains("without mitigations"));
+    }
+
+    // Boar does not know the shape of a custom block, and takes it for a full cube.
+    @Test
+    void standsOnACustomBlockFloor() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(plainBlock("cubecraft:tiles"))));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        int tiles = this.customRuntimeId(session, player);
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, AIR_RUNTIME_ID, tiles, 20));
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("Boar does not know the shape of custom block cubecraft:tiles, so it treats it as a full 1x1x1 block", -1).length - 1, log);
+        this.assertNothingFailed();
+    }
+
+    // Boar takes the custom block for a full cube, so a click on it places the stone above it.
+    @Test
+    void placesABlockOnACustomBlock() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(plainBlock("cubecraft:lamp"))));
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+        int lamp = this.customRuntimeId(session, player);
+        Vector3i feet = this.standOnAFloor(session, AIR_RUNTIME_ID, lamp, 5);
+
+        Vector3i clicked = feet.add(2, -1, 0);
+        this.client.session.get().sendPacket(place(clicked, eyes(feet), stones(64, 1)));
+        InventoryTransactionPacket placed = null;
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        for (BedrockPacket packet; placed == null && (packet = this.server.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
+            if (packet instanceof InventoryTransactionPacket transaction && transaction.getTransactionType() == InventoryTransactionType.ITEM_USE) {
+                placed = transaction;
+            }
+        }
+        assertNotNull(placed, "the placement did not reach the server");
+        assertEquals(clicked, placed.getBlockPosition());
+        assertEquals("minecraft:stone", onLoop(session, () -> player.compensatedWorld.getBlockState(clicked.add(0, 1, 0), 0).block().toString()));
+        this.assertNothingFailed();
+    }
+
+    // A hashed runtime ID that is no state of the palette, such as a block of a newer Bedrock version, is a full cube that Boar can send back.
+    @Test
+    void standsOnABlockItDoesNotKnow() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), true, List.of()));
+        BoarPlayer player = this.withMitigations(session);
+        this.readItemsOnTheClient();
+        BedrockBlockTable table = BedrockBlockTable.get();
+        int air = table.networkHash(table.firstIndex("minecraft:air"));
+        int unknown = 0x5EEDF00D;
+        assertTrue(table.indexOfHash(unknown) < 0);
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, air, unknown, 20));
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+
+        // Boar's undo of the floor sends the client the same block.
+        Vector3i floor = Vector3i.from((this.startGame.getPlayerPosition().getFloorX() & ~15) + 3, 0, (this.startGame.getPlayerPosition().getFloorZ() & ~15) + 5);
+        this.client.received.clear();
+        onLoop(session, () -> {
+            BlockUtil.syncBlock(player, floor);
+            return null;
+        });
+        assertEquals(unknown, this.resentLayerZero(floor).getDefinition().getRuntimeId());
+        this.assertNothingFailed();
+    }
+
+    // UNKNOWN_ID is a block Boar has no runtime ID for, so it cannot undo it.
+    @Test
+    void doesNotResendABlockWithoutARuntimeId() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        this.readItemsOnTheClient();
+        Vector3i unknown = this.startGame.getPlayerPosition().toInt().add(5, 0, 0);
+        Vector3i stone = unknown.add(1, 0, 0);
+        this.client.received.clear();
+        onLoop(session, () -> {
+            BlockUtil.syncBlock(player, unknown, BoarBlockState.create(BedrockPalette.UNKNOWN_ID, unknown, 0));
+            BlockUtil.syncBlock(player, stone, BoarBlockState.create(BedrockBlockTable.get().firstIndex("minecraft:stone"), stone, 0));
+            return null;
+        });
+        // Boar writes the client both blocks in order, so every packet before the stone's is kept.
+        List<BedrockPacket> received = new ArrayList<>();
+        while (received.stream().noneMatch(packet -> packet instanceof UpdateBlockPacket update && update.getBlockPosition().equals(stone) && update.getDataLayer() == 0)) {
+            BedrockPacket packet = this.client.received.poll(10, TimeUnit.SECONDS);
+            assertNotNull(packet, "no UpdateBlock at " + stone + " after " + received);
+            received.add(packet);
+        }
+        assertTrue(received.stream().noneMatch(packet -> packet instanceof UpdateBlockPacket update && update.getBlockPosition().equals(unknown) && update.getDataLayer() == 0), received.toString());
+        this.assertNothingFailed();
     }
 
     @Test
@@ -1181,8 +1292,12 @@ class BoarSessionTest {
         awaitOnLoop(session, () -> !player.compensatedInventory.inventoryContainer.get(slot).isEmpty());
     }
 
-    // Sends the chunk under the StartGame position with a stone floor, and inputs standing on it. Returns the block of the player's feet.
     private Vector3i standOnAStoneFloor(Session session) throws Exception {
+        return this.standOnAFloor(session, AIR_RUNTIME_ID, STONE_RUNTIME_ID, 5);
+    }
+
+    // Sends the chunk under the StartGame position with a floor of this block at Y 0, and inputs standing on it for this many ticks. Returns the block of the player's feet.
+    private Vector3i standOnAFloor(Session session, int air, int floor, int ticks) throws Exception {
         int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
         int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
         LevelChunkPacket chunk = new LevelChunkPacket();
@@ -1190,23 +1305,64 @@ class BoarSessionTest {
         chunk.setChunkZ(chunkZ);
         chunk.setDimension(0);
         chunk.setSubChunksLength(1);
-        chunk.setData(stoneFloor(AIR_RUNTIME_ID, STONE_RUNTIME_ID));
+        chunk.setData(stoneFloor(air, floor));
         this.server.send(chunk);
         this.server.send(new Flush());
         Vector3i feet = Vector3i.from((chunkX << 4) + 3, 1, (chunkZ << 4) + 5);
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
-        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(feet.sub(0, 1, 0), 0).block().toString().equals("minecraft:stone"));
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(feet.sub(0, 1, 0), 0).isAir());
         long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
-        for (int tick = 1; tick <= 5; tick++) {
+        for (int tick = 1; tick <= ticks; tick++) {
             this.answerLatency();
             PlayerAuthInputPacket input = authInput();
             input.setPosition(eyes(feet));
+            // The gravity that the floor stops in the next tick
+            input.setDelta(Vector3f.from(0, -0.0784F, 0));
             input.setTick(tick);
             this.client.session.get().sendPacket(input);
             Thread.sleep(50);
         }
-        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + 5);
+        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + ticks);
         return feet;
+    }
+
+    // The violations of this player that Boar flags while this runs, each as its check and details
+    private List<String> violationsWhile(BoarPlayer player, Callable<?> run) throws Exception {
+        List<String> violations = new CopyOnWriteArrayList<>();
+        ViolationListener listener = violation -> {
+            if (violation.player() == player) {
+                violations.add(violation.check().getClass().getSimpleName() + " " + violation.verbose());
+            }
+        };
+        Boar.getInstance().getViolationRegistry().register(listener);
+        try {
+            run.call();
+        } finally {
+            Boar.getInstance().getViolationRegistry().unregister(listener);
+        }
+        return violations;
+    }
+
+    // The first runtime ID of a custom state in the player's palette
+    private int customRuntimeId(Session session, BoarPlayer player) throws Exception {
+        return onLoop(session, () -> {
+            for (int runtimeId = 0; ; runtimeId++) {
+                if (player.mappingInfo.toIntermediary().applyAsInt(runtimeId) >= BedrockBlockTable.get().paletteSize()) {
+                    return runtimeId;
+                }
+            }
+        });
+    }
+
+    // The next layer 0 UpdateBlock the client gets at this position
+    private UpdateBlockPacket resentLayerZero(Vector3i position) throws Exception {
+        while (true) {
+            BedrockPacket packet = this.client.received.poll(10, TimeUnit.SECONDS);
+            assertNotNull(packet, "no UpdateBlock at " + position);
+            if (packet instanceof UpdateBlockPacket update && update.getBlockPosition().equals(position) && update.getDataLayer() == 0) {
+                return update;
+            }
+        }
     }
 
     // Places a block far out of reach while holding this slot, which Boar undoes, and returns the slot it sends the client then.
@@ -1559,6 +1715,11 @@ class BoarSessionTest {
     private void assertNothingFailed() {
         String log = this.logged.toString(StandardCharsets.UTF_8);
         assertFalse(log.contains(" ERROR ") || log.contains("Exception"), log);
+    }
+
+    // A custom block of 1 state. cubecraft:tiles and cubecraft:lamp sort after stone and air by name hash, so they move neither.
+    private static BlockPropertyData plainBlock(String name) {
+        return new BlockPropertyData(name, NbtMap.EMPTY);
     }
 
     // A custom block of 2 states

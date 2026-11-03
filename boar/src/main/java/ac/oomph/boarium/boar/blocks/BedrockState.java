@@ -8,6 +8,7 @@ import ac.boar.anticheat.data.block.impl.BedBlockState;
 import ac.boar.anticheat.data.block.impl.HoneyBlockState;
 import ac.boar.anticheat.data.block.impl.SlimeBlockState;
 import ac.boar.anticheat.player.BoarPlayer;
+import ac.boar.anticheat.util.Reference;
 import ac.boar.anticheat.util.math.Box;
 import ac.boar.mappings.block.Block;
 import ac.boar.mappings.block.Property;
@@ -25,15 +26,18 @@ import java.util.Set;
 
 /**
  * A Bedrock block state for Boar, answered from the Bedrock block table.
- * A custom block's state is air to Boar, but keeps its custom ID so that Boar can send it back to the client.
+ * A state past the vanilla palette, such as a custom block's, is a full solid 1x1x1 block of UNKNOWN_BLOCK, and keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
  *
- * @param intermediaryId the palette index, or a custom ID from {@link BedrockPalette}
+ * @param intermediaryId the palette index, or an ID past it from {@link BedrockPalette}
  */
 public record BedrockState(int intermediaryId, Vector3i getPosition, int getLayer) implements BoarBlockStateDelegate {
     private static final BedrockBlockTable TABLE = BedrockBlockTable.get();
     private static final BedrockProperty<Boolean> WATERLOGGED = BedrockProperties.INSTANCE.get("waterlogged");
     private static final int AIR = TABLE.firstIndex("minecraft:air");
     private static final float[] FULL_CUBE = {0, 0, 0, 1, 1, 1};
+    private static final List<Box> FULL_CUBE_BOXES = toBoxes(FULL_CUBE, 0);
+    // Boar's checks name no such block, so it is never air.
+    static final Block UNKNOWN_BLOCK = new UnknownBlock();
     private static final float FLOOR_BELL_DROP = 0.1875F;
     // The client builds a piston arm's boxes from the piston's block entity, so the BDS data has none. These are the client's boxes for a fully extended arm (PistonArmBlock::_getCollisions in the 1.26.30 client), by facing_direction; a moving arm is not covered.
     private static final float[][] PISTON_ARM = {
@@ -80,15 +84,18 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         }
     }
 
-    // Like Geyser, an ID outside the palette and the custom IDs is air.
+    // Like Geyser, an ID that BedrockPalette never gives is air.
     public BedrockState {
-        intermediaryId = intermediaryId >= 0 && intermediaryId - BedrockPalette.FIRST_CUSTOM_ID < BedrockPalette.MAX_CUSTOM_IDS ? intermediaryId : AIR;
+        intermediaryId = intermediaryId >= 0 && intermediaryId < BedrockPalette.END_ID ? intermediaryId : AIR;
     }
 
     // Honey, slime and beds get Boar's own state classes.
     private static BoarBlockState create(int id, Vector3i position, int layer) {
         BedrockState delegate = new BedrockState(id, position, layer);
-        return switch (CLASSES[delegate.index()]) {
+        if (!delegate.isVanilla()) {
+            return new VanillaBoarBlockState(delegate);
+        }
+        return switch (CLASSES[delegate.intermediaryId]) {
             case HONEY -> new HoneyBlockState(delegate);
             case SLIME -> new SlimeBlockState(delegate);
             case BED -> new BedBlockState(delegate);
@@ -118,14 +125,13 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         return List.copyOf(list);
     }
 
-    // The palette index, which is air for a custom state
-    private int index() {
-        return this.intermediaryId < TABLE.paletteSize() ? this.intermediaryId : AIR;
+    private boolean isVanilla() {
+        return this.intermediaryId < TABLE.paletteSize();
     }
 
     @Override
     public Block block() {
-        return BedrockBlock.of(this.index());
+        return this.isVanilla() ? BedrockBlock.of(this.intermediaryId) : UNKNOWN_BLOCK;
     }
 
     @Override
@@ -135,16 +141,16 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
 
     @Override
     public boolean is(Block block) {
-        return BedrockBlock.of(this.index()).is(block);
+        return this.block().is(block);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T extends Comparable<T>> BoarBlockState with(Property<T> property, T value) {
         BedrockProperty<T> bound = (BedrockProperty<T>) property;
-        int changed = bound.with(this.index(), value);
+        int changed = this.isVanilla() ? bound.with(this.intermediaryId, value) : -1;
         if (changed < 0) {
-            throw new IllegalArgumentException(TABLE.name(this.index()) + " has no " + bound.key() + " " + value);
+            throw new IllegalArgumentException(this.block() + " has no " + bound.key() + " " + value);
         }
         return create(changed, this.getPosition, this.getLayer);
     }
@@ -153,37 +159,65 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
     @Override
     @SuppressWarnings("unchecked")
     public <T extends Comparable<T>> T get(Property<T> property) {
-        return ((BedrockProperty<T>) property).get(this.index());
+        return this.isVanilla() ? ((BedrockProperty<T>) property).get(this.intermediaryId) : null;
     }
 
     @Override
     public boolean isWaterlogged() {
-        return Boolean.TRUE.equals(WATERLOGGED.get(this.index()));
+        return this.isVanilla() && Boolean.TRUE.equals(WATERLOGGED.get(this.intermediaryId));
     }
 
     @Override
     public List<Box> getCollisionBoxes() {
-        return BOXES[this.index()];
+        return this.isVanilla() ? BOXES[this.intermediaryId] : FULL_CUBE_BOXES;
     }
 
     @Override
     public boolean isFaceSturdy(BoarPlayer player) {
-        return FACE_STURDY.get(this.index());
+        return !this.isVanilla() || FACE_STURDY.get(this.intermediaryId);
     }
 
     @Override
     public boolean isReplaceable(BoarPlayer player) {
-        return REPLACEABLE.get(this.index());
+        return this.isVanilla() && REPLACEABLE.get(this.intermediaryId);
     }
 
     @Override
     public List<Box> connectionCollisionOverride(BoarPlayer player, Vector3i pos) {
-        return BedrockConnections.collisionOverride(player, this.index(), pos.getX(), pos.getY(), pos.getZ());
+        return this.isVanilla() ? BedrockConnections.collisionOverride(player, this.intermediaryId, pos.getX(), pos.getY(), pos.getZ()) : null;
     }
 
     // The 1.26.30 states of fences, panes, bars, chorus plants and stairs hold no connections, so connectionCollisionOverride builds those shapes instead.
     @Override
     public BoarBlockState applyConnectionShape(BoarPlayer player, BoarBlockState self, Vector3i pos) {
         return self;
+    }
+
+    // The block of every state past the vanilla palette. Its hardness of 0 only tells Boar that it can be broken.
+    private static final class UnknownBlock implements Block {
+        @Override
+        public boolean is(Block value) {
+            return value == this;
+        }
+
+        @Override
+        public boolean is(Reference<Block> reference) {
+            return reference.find().map(this::is).orElse(false);
+        }
+
+        @Override
+        public float destroyTime() {
+            return 0;
+        }
+
+        @Override
+        public BoarBlockState defaultBlockState(Vector3i position, int layer) {
+            return create(BedrockPalette.UNKNOWN_ID, position, layer);
+        }
+
+        @Override
+        public String toString() {
+            return "unknown block";
+        }
     }
 }
