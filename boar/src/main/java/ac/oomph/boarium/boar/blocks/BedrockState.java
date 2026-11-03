@@ -26,7 +26,8 @@ import java.util.Set;
 
 /**
  * A Bedrock block state for Boar, answered from the Bedrock block table.
- * A state past the vanilla palette, such as a custom block's, is a full solid 1x1x1 block of UNKNOWN_BLOCK, and keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
+ * A state past the vanilla palette is a block of UNKNOWN_BLOCK, and keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
+ * A custom state has its block's collision boxes from {@link BedrockPalette}, and any other ID past the palette is a full solid 1x1x1 block.
  *
  * @param intermediaryId the palette index, or an ID past it from {@link BedrockPalette}
  */
@@ -169,12 +170,18 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
 
     @Override
     public List<Box> getCollisionBoxes() {
-        return this.isVanilla() ? BOXES[this.intermediaryId] : FULL_CUBE_BOXES;
+        if (this.isVanilla()) {
+            return BOXES[this.intermediaryId];
+        }
+        return this.intermediaryId < BedrockPalette.UNKNOWN_ID ? BedrockPalette.customBoxes(this.intermediaryId) : FULL_CUBE_BOXES;
     }
 
     @Override
     public boolean isFaceSturdy(BoarPlayer player) {
-        return !this.isVanilla() || FACE_STURDY.get(this.intermediaryId);
+        if (this.isVanilla()) {
+            return FACE_STURDY.get(this.intermediaryId);
+        }
+        return this.intermediaryId >= BedrockPalette.UNKNOWN_ID || BedrockPalette.customFaceSturdy(this.intermediaryId);
     }
 
     @Override

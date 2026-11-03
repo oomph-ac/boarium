@@ -2,6 +2,7 @@ package ac.oomph.boarium.boar.blocks;
 
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.player.data.BlockMappingInfo;
+import ac.boar.anticheat.util.math.Box;
 import ac.boar.mappings.block.FallingFlowMaterial;
 import ac.boar.mappings.block.FallingFlowMaterials;
 import ac.boar.mappings.block.HorseJumpMaterial;
@@ -34,7 +35,8 @@ import java.util.function.IntUnaryOperator;
  * The Bedrock block palette of one client: the vanilla palette and the custom blocks its server adds in StartGame, with the runtime IDs the client uses.
  * A runtime ID is the index in the palette sorted by the hash of the block name, or the network hash when StartGame sets blockNetworkIdsHashed.
  * Boar's intermediary ID of a vanilla state is its palette index. A custom state's is a custom ID past the palette, which every player shares.
- * Boar cannot read the shape of a custom block, or of a runtime ID the palette does not define, so it treats both as a full 1x1x1 block.
+ * A custom state has the collision boxes of its block's minecraft:collision_box components, which {@link #customBoxes(int)} gives by custom ID.
+ * Boar treats a custom state it cannot read the boxes of, or a runtime ID the palette does not define, as a full 1x1x1 block.
  */
 public final class BedrockPalette {
     private static final Logger LOG = LoggerFactory.getLogger(BedrockPalette.class);
@@ -186,6 +188,7 @@ public final class BedrockPalette {
     private static BedrockPalette build(Key key) {
         List<CustomBlock> blocks = new ArrayList<>();
         Set<String> names = new HashSet<>();
+        CustomCollision.Budget budget = new CustomCollision.Budget();
         int states = TABLE.paletteSize();
         try {
             for (BlockPropertyData data : key.blocks()) {
@@ -195,7 +198,7 @@ public final class BedrockPalette {
                 if (!names.add(data.getName())) {
                     throw new IllegalArgumentException(data.getName() + " is listed twice");
                 }
-                CustomBlock block = CustomBlock.of(data);
+                CustomBlock block = CustomBlock.of(data, budget);
                 states += block.stateCount();
                 if (states > MAX_STATES) {
                     throw new IllegalArgumentException("the palette would have more than " + MAX_STATES + " states");
@@ -247,9 +250,22 @@ public final class BedrockPalette {
         return block < 0 ? UNKNOWN_DEFINITION : this.customDefinitions.computeIfAbsent(id, custom -> this.customDefinition(block, custom - this.customStarts[block]));
     }
 
-    // Logs the custom block at this index in customBlocks, then in cappedBlocks, the first time it is read.
+    // The collision boxes of a custom ID, or a full cube when no custom block has it
+    static List<Box> customBoxes(int id) {
+        return CUSTOM_IDS.boxes(id);
+    }
+
+    static boolean customFaceSturdy(int id) {
+        return CUSTOM_IDS.faceSturdy(id);
+    }
+
+    // Logs the custom block at this index in customBlocks, then in cappedBlocks, the first time it is read, when Boar takes some of its states for full cubes.
     private void warnBlock(int index) {
         if (this.warnedBlocks[index] || this.warnedNames >= MAX_WARNED_NAMES) {
+            return;
+        }
+        String guess = index < this.customBlocks.length ? this.customBlocks[index].collision().guess() : "Boar has no custom IDs left for it";
+        if (guess == null) {
             return;
         }
         synchronized (this.warnedBlocks) {
@@ -259,7 +275,7 @@ public final class BedrockPalette {
             this.warnedBlocks[index] = true;
             this.warnedNames++;
             CustomBlock block = index < this.customBlocks.length ? this.customBlocks[index] : this.cappedBlocks[index - this.customBlocks.length];
-            LOG.warn("Boar does not know the shape of custom block {}, so it treats it as a full 1x1x1 block{}", block.name(), this.warnedNames == MAX_WARNED_NAMES ? ", and logs no more custom blocks of this palette" : "");
+            LOG.warn("Boar does not know the shape of custom block {} ({}), so it treats the states it cannot read as full 1x1x1 blocks{}", block.name(), guess, this.warnedNames == MAX_WARNED_NAMES ? ", and logs no more custom blocks of this palette" : "");
         }
     }
 
@@ -368,6 +384,8 @@ public final class BedrockPalette {
         private final int max;
         private int next;
         private boolean full;
+        // The blocks by first custom ID, which BedrockState reads without the lock
+        private volatile Assigned assigned = new Assigned(new int[0], new CustomBlock[0], 0, 0);
 
         CustomIds(int first, int max) {
             this.first = first;
@@ -389,8 +407,42 @@ public final class BedrockPalette {
                 return -1;
             }
             this.firstIds.put(block, this.next);
+            Assigned assigned = this.assigned;
+            int[] starts = assigned.starts();
+            CustomBlock[] blocks = assigned.blocks();
+            if (assigned.count() == starts.length) {
+                starts = Arrays.copyOf(starts, Math.max(16, starts.length * 2));
+                blocks = Arrays.copyOf(blocks, starts.length);
+            }
+            starts[assigned.count()] = this.next;
+            blocks[assigned.count()] = block;
             this.next += block.stateCount();
+            this.assigned = new Assigned(starts, blocks, assigned.count() + 1, this.next);
             return this.firstIds.get(block);
+        }
+
+        List<Box> boxes(int id) {
+            Assigned assigned = this.assigned;
+            int i = assigned.blockOf(id);
+            return i < 0 ? CustomCollision.FULL_CUBE : assigned.blocks()[i].collision().boxes(id - assigned.starts()[i]);
+        }
+
+        boolean faceSturdy(int id) {
+            Assigned assigned = this.assigned;
+            int i = assigned.blockOf(id);
+            return i < 0 || assigned.blocks()[i].collision().faceSturdy(id - assigned.starts()[i]);
+        }
+
+        // Each block's IDs end where the next block's start, and the last block's at end.
+        private record Assigned(int[] starts, CustomBlock[] blocks, int count, int end) {
+            // The index of the block with this custom ID, or -1
+            int blockOf(int id) {
+                int i = Arrays.binarySearch(this.starts, 0, this.count, id);
+                if (i < 0) {
+                    i = -i - 2;
+                }
+                return i >= 0 && id < this.end ? i : -1;
+            }
         }
     }
 

@@ -147,6 +147,7 @@ class BoarSessionTest {
     private static final int AIR_RUNTIME_ID = 13094;
     private static final int STONE_RUNTIME_ID = 2706;
     private static final int FENCE_Z = 8;
+    private static final int WALL_X = 5;
     private static final long BOAT_RUNTIME_ID = 20;
     private static final long BOAT_UNIQUE_ID = -20;
     private static final long HORSE_RUNTIME_ID = 21;
@@ -1089,7 +1090,7 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
-    // Boar does not know the shape of a custom block, and takes it for a full cube.
+    // Without minecraft:collision_box, a custom block is a full cube to the client, and so to Boar.
     @Test
     void standsOnACustomBlockFloor() throws Exception {
         TestBoar.mitigations(true);
@@ -1103,8 +1104,151 @@ class BoarSessionTest {
         assertTrue(onLoop(session, () -> player.onGround));
         assertEquals(List.of(), violations);
         String log = this.logged.toString(StandardCharsets.UTF_8);
-        assertEquals(1, log.split("Boar does not know the shape of custom block cubecraft:tiles, so it treats it as a full 1x1x1 block", -1).length - 1, log);
+        assertFalse(log.contains("cubecraft:tiles"), log);
         this.assertNothingFailed();
+    }
+
+    // A custom block whose collision_box is half a block high holds the player at half a block.
+    @Test
+    void standsOnACustomSlab() throws Exception {
+        TestBoar.mitigations(true);
+        BlockPropertyData shelf = customBlock("cubecraft:shelf", null, collisionBox(0, 0, 0, 16, 8, 16), null);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(shelf)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        int shelfId = this.customRuntimeId(session, player);
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, AIR_RUNTIME_ID, shelfId, 20, 0.5F));
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertFalse(log.contains("cubecraft:shelf"), log);
+        this.assertNothingFailed();
+    }
+
+    // A custom block whose collision_box is disabled lets the player walk through it, where a full cube would stop them.
+    @Test
+    void walksThroughACustomBlockWithoutCollision() throws Exception {
+        TestBoar.mitigations(true);
+        BlockPropertyData ghost = customBlock("cubecraft:ghost", null, NbtMap.builder().putBoolean("enabled", false).putList("boxes", NbtType.COMPOUND).build(), null);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(ghost)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        int ghostId = this.customRuntimeId(session, player);
+        this.walksThroughAWall(session, player, ghostId, -1);
+    }
+
+    // A permutation's collision_box applies to the states its condition matches: an open portcullis lets the player through, and a closed one is a full cube.
+    @Test
+    void walksThroughAnOpenCustomGate() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, (byte) 0, (byte) 1).build();
+        NbtMap opened = NbtMap.builder().putString("condition", "q.block_state('open') == true")
+                .putCompound("components", NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).build()).build()).build();
+        BlockPropertyData portcullis = customBlock("cubecraft:portcullis", open, null, opened);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(portcullis)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        // The first state is closed and the second open, since open is the only property.
+        int closedId = this.customRuntimeId(session, player);
+        Vector3i closed = this.walksThroughAWall(session, player, closedId + 1, closedId);
+        assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(onLoop(session, () -> player.compensatedWorld.getBlockState(closed, 0).getCollisionBoxes())));
+        assertTrue(onLoop(session, () -> player.compensatedWorld.getBlockState(closed, 0).isFaceSturdy(player)));
+    }
+
+    // An open gate as Geyser 2.12 sends a block of its custom mappings: string properties, molangVersion 1 and a q.block_property condition (BlockMappingsReader_v1).
+    @Test
+    void walksThroughAnOpenGeyserMappedGate() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.STRING, "false", "true").build();
+        NbtMap opened = NbtMap.builder().putString("condition", "q.block_property('open') == 'true'")
+                .putCompound("components", NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).putList("boxes", NbtType.COMPOUND).build()).build()).build();
+        BlockPropertyData built = customBlock("geyser:gate", open, collisionBox(0, 0, 0, 16, 16, 16), opened);
+        BlockPropertyData gate = new BlockPropertyData(built.getName(), built.getProperties().toBuilder().putInt("molangVersion", 1).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(gate)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        // The first state is "false" and the second "true", in the order of the values.
+        int closedId = this.customRuntimeId(session, player);
+        Vector3i closed = this.walksThroughAWall(session, player, closedId + 1, closedId);
+        assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(onLoop(session, () -> player.compensatedWorld.getBlockState(closed, 0).getCollisionBoxes())));
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertFalse(log.contains("geyser:gate"), log);
+    }
+
+    // Sends a chunk with a stone floor at Y 0 and a wall of this block across the player's way at local X WALL_X and Y 1 and 2, and walks east through it with no violations.
+    // A block of the other ID, unless it is -1, stands away from the way, and its position is returned.
+    private Vector3i walksThroughAWall(Session session, BoarPlayer player, int wall, int other) throws Exception {
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        int[] blocks = new int[4096];
+        Arrays.fill(blocks, AIR_RUNTIME_ID);
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                blocks[x << 8 | z << 4] = STONE_RUNTIME_ID;
+                if (x == WALL_X) {
+                    blocks[x << 8 | z << 4 | 1] = wall;
+                    blocks[x << 8 | z << 4 | 2] = wall;
+                }
+            }
+        }
+        Vector3i away = Vector3i.from((chunkX << 4) + 12, 1, (chunkZ << 4) + 2);
+        if (other != -1) {
+            blocks[12 << 8 | 2 << 4 | 1] = other;
+        }
+        this.sendChunk(chunkX, chunkZ, subChunk(0, blocks));
+        Vector3i wallPos = Vector3i.from((chunkX << 4) + WALL_X, 1, (chunkZ << 4) + FENCE_Z);
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(wallPos, 0).isAir());
+
+        List<Violation> violations = new CopyOnWriteArrayList<>();
+        ViolationListener listener = violation -> {
+            if (violation.player() == player) {
+                violations.add(violation);
+            }
+        };
+        Boar.getInstance().getViolationRegistry().register(listener);
+        try {
+            float x = (chunkX << 4) + 2.5F;
+            float z = wallPos.getZ() + 0.5F;
+            Vec3 velocity = Vec3.ZERO.clone();
+            long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
+            int ticks = 90;
+            for (int tick = 1; tick <= ticks; tick++) {
+                boolean walking = tick > 10;
+                if (walking) {
+                    Vec3 input = MathUtil.getInputVector(new Vec3(0, 0, 0.3F * 0.98F), 0.1F, -90);
+                    velocity = velocity.add(input);
+                    x += velocity.x;
+                    z += velocity.z;
+                    velocity = velocity.multiply(0.546F, 1, 0.546F);
+                }
+                this.answerLatency();
+                PlayerAuthInputPacket input = authInput();
+                input.setRotation(Vector3f.from(0, -90, -90));
+                input.setPosition(Vector3f.from(x, 1 + 1.62001F, z));
+                if (walking) {
+                    input.getInputData().add(PlayerAuthInputData.UP);
+                    input.setMotion(Vector2f.from(0, 0.3F));
+                    input.setRawMoveVector(Vector2f.from(0, 0.3F));
+                    input.setAnalogMoveVector(Vector2f.from(0, 0.3F));
+                }
+                input.setDelta(Vector3f.from(velocity.x, -0.0784F, velocity.z));
+                input.setTick(tick);
+                this.client.session.get().sendPacket(input);
+                Thread.sleep(50);
+            }
+            awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + ticks);
+            // The player's whole width went past the wall, and Boar predicted every step.
+            assertTrue(x - 0.3F > wallPos.getX() + 1, "x " + x);
+            assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+            assertTrue(onLoop(session, () -> player.onGround));
+            assertEquals(List.of(), violations.stream().map(violation -> violation.check().getClass().getSimpleName() + " " + violation.verbose()).toList());
+        } finally {
+            Boar.getInstance().getViolationRegistry().unregister(listener);
+        }
+        this.assertNothingFailed();
+        return away;
     }
 
     // Boar takes the custom block for a full cube, so a click on it places the stone above it.
@@ -1298,6 +1442,11 @@ class BoarSessionTest {
 
     // Sends the chunk under the StartGame position with a floor of this block at Y 0, and inputs standing on it for this many ticks. Returns the block of the player's feet.
     private Vector3i standOnAFloor(Session session, int air, int floor, int ticks) throws Exception {
+        return this.standOnAFloor(session, air, floor, ticks, 1);
+    }
+
+    // As above, on a floor whose top is this high above Y 0
+    private Vector3i standOnAFloor(Session session, int air, int floor, int ticks, float top) throws Exception {
         int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
         int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
         LevelChunkPacket chunk = new LevelChunkPacket();
@@ -1315,7 +1464,7 @@ class BoarSessionTest {
         for (int tick = 1; tick <= ticks; tick++) {
             this.answerLatency();
             PlayerAuthInputPacket input = authInput();
-            input.setPosition(eyes(feet));
+            input.setPosition(eyes(feet).sub(0, 1 - top, 0));
             // The gravity that the floor stops in the next tick
             input.setDelta(Vector3f.from(0, -0.0784F, 0));
             input.setTick(tick);
@@ -1720,6 +1869,25 @@ class BoarSessionTest {
     // A custom block of 1 state. cubecraft:tiles and cubecraft:lamp sort after stone and air by name hash, so they move neither.
     private static BlockPropertyData plainBlock(String name) {
         return new BlockPropertyData(name, NbtMap.EMPTY);
+    }
+
+    // A custom block with this property, or none, and this base minecraft:collision_box and permutation, each of which may be null
+    private static BlockPropertyData customBlock(String name, NbtMap property, NbtMap collisionBox, NbtMap permutation) {
+        NbtMapBuilder properties = NbtMap.builder();
+        if (property != null) {
+            properties.putList("properties", NbtType.COMPOUND, property);
+        }
+        properties.putCompound("components", collisionBox == null ? NbtMap.EMPTY : NbtMap.builder().putCompound("minecraft:collision_box", collisionBox).build());
+        if (permutation != null) {
+            properties.putList("permutations", NbtType.COMPOUND, permutation);
+        }
+        return new BlockPropertyData(name, properties.build());
+    }
+
+    // A minecraft:collision_box of one box, with corners in 1/16 of a block, as Geyser 2.12 writes it
+    private static NbtMap collisionBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
+        NbtMap box = NbtMap.builder().putFloat("minX", minX).putFloat("minY", minY).putFloat("minZ", minZ).putFloat("maxX", maxX).putFloat("maxY", maxY).putFloat("maxZ", maxZ).build();
+        return NbtMap.builder().putBoolean("enabled", true).putList("boxes", NbtType.COMPOUND, box).build();
     }
 
     // A custom block of 2 states

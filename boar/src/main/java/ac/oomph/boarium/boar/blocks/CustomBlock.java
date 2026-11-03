@@ -19,14 +19,19 @@ import java.util.TreeMap;
  *
  * @param keys the property names, in the order of the block properties
  * @param values each property's values
+ * @param collision each state's collision boxes
  */
-record CustomBlock(String name, List<String> keys, List<NbtList<?>> values) {
+record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, CustomCollision collision) {
     // BlockType::createBlockPermutations keeps only 16 bits of property values for a block.
     private static final int MAX_BITS = 16;
     private static final Set<NbtType<?>> VALUE_TYPES = Set.of(NbtType.STRING, NbtType.INT, NbtType.BYTE);
 
-    // Throws IllegalArgumentException when the client could not make the block's states as written.
     static CustomBlock of(BlockPropertyData data) {
+        return of(data, new CustomCollision.Budget());
+    }
+
+    // Throws IllegalArgumentException when the client could not make the block's states as written.
+    static CustomBlock of(BlockPropertyData data, CustomCollision.Budget budget) {
         String name = data.getName();
         List<String> keys = new ArrayList<>();
         Set<String> seen = new HashSet<>();
@@ -57,7 +62,11 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values) {
                 values.add(enumValues);
             }
         }
-        return new CustomBlock(name, List.copyOf(keys), List.copyOf(values));
+        int states = 1;
+        for (NbtList<?> list : values) {
+            states *= list.size();
+        }
+        return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), CustomCollision.of(keys, values, states, data.getProperties(), budget));
     }
 
     int stateCount() {

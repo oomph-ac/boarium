@@ -466,8 +466,8 @@ class BedrockStateTest {
         assertInstanceOf(SlimeBlockState.class, state(table.firstIndex("minecraft:slime")));
         assertInstanceOf(BedBlockState.class, state(table.firstIndex("minecraft:bed") + 5));
         assertInstanceOf(VanillaBoarBlockState.class, state(table.firstIndex("minecraft:stone")));
-        // An ID past the vanilla palette keeps its ID and is a full cube of a block that is not air; an ID past those BedrockPalette gives is air.
-        for (int id : new int[]{table.paletteSize(), BedrockPalette.UNKNOWN_ID, BedrockPalette.END_ID - 1}) {
+        // An ID past the vanilla palette without a custom block keeps its ID and is a full cube of a block that is not air; an ID past those BedrockPalette gives is air.
+        for (int id : new int[]{BedrockPalette.UNKNOWN_ID - 1, BedrockPalette.UNKNOWN_ID, BedrockPalette.END_ID - 1}) {
             BoarBlockState unknown = state(id);
             assertInstanceOf(VanillaBoarBlockState.class, unknown);
             assertEquals(id, unknown.intermediaryId());

@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -48,6 +49,13 @@ class BedrockPaletteTest {
     // 8 states; its name sorts before stone and air
     private static BlockPropertyData pipe() {
         return block("cubecraft:pipe", property("facing", NbtType.STRING, List.of("north", "east", "south", "west")), property("lit", NbtType.BYTE, List.of((byte) 0, (byte) 1)));
+    }
+
+    // pipe, with a permutation that sets its collision under a condition Boar cannot read
+    private static BlockPropertyData unreadPipe() {
+        NbtMap disabled = NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).build()).build();
+        NbtMap permutation = NbtMap.builder().putString("condition", "q.cardinal_facing == 2").putCompound("components", disabled).build();
+        return new BlockPropertyData("cubecraft:pipe", pipe().getProperties().toBuilder().putList("permutations", NbtType.COMPOUND, permutation).build());
     }
 
     // 3 states; its name sorts after stone and air
@@ -276,6 +284,35 @@ class BedrockPaletteTest {
         });
     }
 
+    // A custom state's intermediary ID gives Boar its block's boxes, with sorted and hashed IDs.
+    @Test
+    void customStatesHaveTheirBlocksBoxes() throws IOException {
+        NbtMap disabled = NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).build()).build();
+        NbtMap slab = NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", true)
+                .putList("boxes", NbtType.COMPOUND, NbtMap.builder().putFloat("maxX", 16).putFloat("maxY", 8).putFloat("maxZ", 16).build()).build()).build();
+        NbtMap open = NbtMap.builder().putString("condition", "q.block_state('open') == true").putCompound("components", disabled).build();
+        BlockPropertyData gate = new BlockPropertyData("cubecraft:gate", NbtMap.builder()
+                .putList("properties", NbtType.COMPOUND, property("open", NbtType.BYTE, List.of((byte) 0, (byte) 1)))
+                .putCompound("components", slab)
+                .putList("permutations", NbtType.COMPOUND, open)
+                .build());
+        for (boolean hashed : new boolean[]{false, true}) {
+            BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(hashed, gate));
+            List<Integer> runtimeIds = hashed
+                    ? List.of(referenceHash("cubecraft:gate", NbtMap.builder().putByte("open", (byte) 0).build()), referenceHash("cubecraft:gate", NbtMap.builder().putByte("open", (byte) 1).build()))
+                    : customRuntimeIds(info);
+            BoarBlockState closed = BedrockState.FACTORY.create(info.toIntermediary().applyAsInt(runtimeIds.get(0)), null, 0);
+            BoarBlockState opened = BedrockState.FACTORY.create(info.toIntermediary().applyAsInt(runtimeIds.get(1)), null, 0);
+            assertEquals(1, closed.getCollisionBoxes().size());
+            Box box = closed.getCollisionBoxes().getFirst();
+            assertArrayEquals(new float[]{0, 0, 0, 1, 0.5F, 1}, new float[]{box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ});
+            assertFalse(closed.isFaceSturdy(null));
+            assertEquals(List.of(), opened.getCollisionBoxes());
+            assertFalse(opened.isFaceSturdy(null));
+            assertFalse(opened.isAir());
+        }
+    }
+
     // The nth runtime ID from 0x5EED0000 up that is no vanilla network hash
     private static int unknownHash(int n) {
         int hash = 0x5EED0000 - 1;
@@ -306,7 +343,7 @@ class BedrockPaletteTest {
         System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
         try {
             for (boolean hashed : new boolean[] {false, true}) {
-                BedrockPalette palette = new BedrockPalette(hashed, List.of(CustomBlock.of(pipe())), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, BedrockPalette.MAX_CUSTOM_IDS));
+                BedrockPalette palette = new BedrockPalette(hashed, List.of(CustomBlock.of(unreadPipe())), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, BedrockPalette.MAX_CUSTOM_IDS));
                 BlockMappingInfo info = palette.mappingInfo();
                 int pipe = hashed ? referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 1).build()) : customRuntimeIds(info).getFirst();
                 int unknown = hashed ? unknownHash(1) : table.paletteSize() + 20;
@@ -320,9 +357,17 @@ class BedrockPaletteTest {
                 other.toIntermediary().applyAsInt(unknown);
                 String log = logged.toString(StandardCharsets.UTF_8);
                 logged.reset();
-                assertEquals(1, log.split("Boar does not know the shape of custom block cubecraft:pipe, so it treats it as a full 1x1x1 block", -1).length - 1, log);
+                assertEquals(1, log.split(Pattern.quote("Boar does not know the shape of custom block cubecraft:pipe (Boar cannot read the permutation condition \"q.cardinal_facing == 2\"), so it treats the states it cannot read as full 1x1x1 blocks"), -1).length - 1, log);
                 assertEquals(2, log.split("Boar does not know block runtime ID " + unknown + ", so it treats it as a full 1x1x1 block", -1).length - 1, log);
             }
+
+            // A custom block whose boxes Boar reads is not logged.
+            BedrockPalette readable = new BedrockPalette(false, List.of(CustomBlock.of(pipe())), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, BedrockPalette.MAX_CUSTOM_IDS));
+            BlockMappingInfo readableInfo = readable.mappingInfo();
+            readableInfo.toIntermediary().applyAsInt(customRuntimeIds(readableInfo).getFirst());
+            String readableLog = logged.toString(StandardCharsets.UTF_8);
+            logged.reset();
+            assertFalse(readableLog.contains("cubecraft:pipe"), readableLog);
 
             // Past its cap, a player's mapping logs no more unknown IDs.
             BlockMappingInfo info = new BedrockPalette(true, List.of(), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, 1)).mappingInfo();
