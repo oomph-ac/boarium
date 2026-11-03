@@ -5,6 +5,7 @@ import ac.boar.protocol.PacketEvents;
 import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
 import ac.oomph.boarium.Boarium;
+import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.session.PacketContext;
 import ac.oomph.boarium.session.Processor;
@@ -196,8 +197,11 @@ final class BoarProcessor implements Processor {
     @Override
     public void disconnect(Session session) {
         BoarPlayer player = this.players.remove(session);
-        if (player != null && player.future != null) {
-            player.future.cancel(false);
+        if (player != null) {
+            if (player.future != null) {
+                player.future.cancel(false);
+            }
+            BedrockPalette.release(player.mappingInfo);
         }
     }
 

@@ -232,13 +232,13 @@ class BedrockPaletteTest {
         ByteArrayOutputStream logged = new ByteArrayOutputStream();
         System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
         try {
-            assertEquals(100, ids.of(CustomBlock.of(pipe())));
+            assertEquals(100, ids.of(List.of(CustomBlock.of(pipe())), Long.MAX_VALUE)[0]);
             // 8 + 3 states are past the cap of 10.
-            assertEquals(-1, ids.of(CustomBlock.of(lamp())));
-            assertEquals(-1, ids.of(CustomBlock.of(lamp())));
-            // Once the cap is reached, a block that would fit gets none either, and a block with IDs keeps them.
-            assertEquals(-1, ids.of(CustomBlock.of(block("cubecraft:plain"))));
-            assertEquals(100, ids.of(CustomBlock.of(pipe())));
+            assertEquals(-1, ids.of(List.of(CustomBlock.of(lamp())), Long.MAX_VALUE)[0]);
+            assertEquals(-1, ids.of(List.of(CustomBlock.of(lamp())), Long.MAX_VALUE)[0]);
+            // A block that fits still gets IDs, and a block with IDs keeps them.
+            assertEquals(108, ids.of(List.of(CustomBlock.of(block("cubecraft:plain"))), Long.MAX_VALUE)[0]);
+            assertEquals(100, ids.of(List.of(CustomBlock.of(pipe())), Long.MAX_VALUE)[0]);
         } finally {
             System.setErr(stderr);
         }

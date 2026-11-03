@@ -22,6 +22,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -31,8 +32,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.function.IntUnaryOperator;
+import java.util.function.LongSupplier;
+import java.util.stream.IntStream;
 
 /**
  * The Bedrock block palette of one client: the vanilla palette and the custom blocks its server adds in StartGame, with the runtime IDs the client uses.
@@ -48,16 +53,20 @@ public final class BedrockPalette {
     private static final int MAX_STATES = 1 << 20;
     // Bounds the work of building one palette, which other logins wait for.
     static final Limits LIMITS = new Limits(MAX_STATES, 1L << 27, 4L * MAX_STATES);
-    // Many players on one server get the same block properties.
+    // Many players on one server get the same block properties. The cache counts as a holder of each palette in it.
     private static final int CACHED_PALETTES = 8;
     private static final Map<Key, BedrockPalette> CACHE = new LinkedHashMap<>(16, 0.75F, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<Key, BedrockPalette> eldest) {
-            return this.size() > CACHED_PALETTES;
+            if (this.size() <= CACHED_PALETTES) {
+                return false;
+            }
+            eldest.getValue().drop();
+            return true;
         }
     };
 
-    // Custom IDs are never freed, so their number is capped.
+    // A server can send new custom blocks with each StartGame, so the custom IDs of blocks that no palette has any more are freed, and their number is capped.
     static final int FIRST_CUSTOM_ID = TABLE.paletteSize();
     static final int MAX_CUSTOM_IDS = 1 << 22;
     private static final CustomIds CUSTOM_IDS = new CustomIds(FIRST_CUSTOM_ID, MAX_CUSTOM_IDS);
@@ -105,6 +114,11 @@ public final class BedrockPalette {
     // Whether each custom block in customBlocks that Boar does not place was logged; these count against the same limit as warnedBlocks
     private final boolean[] warnedPlacements;
     private int warnedNames;
+    // The blocks customIds gave IDs to for this palette, which it gets back once nothing holds the palette: the cache, or a player's mapping until BedrockPalette.release.
+    private final CustomIds customIds;
+    private final CustomBlock[] heldBlocks;
+    private int holders;
+    private boolean released;
 
     private BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread) {
         this(hashedIds, blocks, customBlocksUnread, CUSTOM_IDS, LIMITS);
@@ -119,25 +133,33 @@ public final class BedrockPalette {
         this.hashedIds = hashedIds;
         this.idsUnknown = customBlocksUnread && !hashedIds;
         // A block with no custom IDs gets CUSTOM minus its index in cappedBlocks. One palette takes no more than its share of the custom IDs, so that it leaves some for other servers.
+        int[] firsts = customIds.of(blocks, limits.customIds());
+        this.customIds = customIds;
+        this.heldBlocks = IntStream.range(0, firsts.length).filter(i -> firsts[i] >= 0).mapToObj(blocks::get).toArray(CustomBlock[]::new);
         Map<CustomBlock, Integer> firstIds = new HashMap<>();
         List<CustomBlock> capped = new ArrayList<>();
-        long taken = 0;
-        for (CustomBlock block : blocks) {
-            int first = taken + block.stateCount() <= limits.customIds() ? customIds.of(block) : -1;
-            taken += first < 0 ? 0 : block.stateCount();
-            if (first < 0) {
-                first = CUSTOM - capped.size();
-                capped.add(block);
+        for (int i = 0; i < firsts.length; i++) {
+            if (firsts[i] < 0) {
+                firstIds.put(blocks.get(i), CUSTOM - capped.size());
+                capped.add(blocks.get(i));
+            } else {
+                firstIds.put(blocks.get(i), firsts[i]);
             }
-            firstIds.put(block, first);
         }
         this.cappedBlocks = capped.toArray(CustomBlock[]::new);
         Map<CustomBlock, Integer> firstRuntimeIds = new HashMap<>();
-        Runs runs = Runs.of(blocks, firstIds, firstRuntimeIds);
+        this.movedCustomIds = new Int2ObjectOpenHashMap<>();
+        Runs runs;
+        Int2ObjectOpenHashMap<Owner> owners;
+        try {
+            runs = Runs.of(blocks, firstIds, firstRuntimeIds);
+            owners = hashedIds ? hashedIds(runs, this.movedCustomIds, limits) : null;
+        } catch (RuntimeException e) {
+            customIds.release(this.heldBlocks);
+            throw e;
+        }
         if (hashedIds) {
             this.sortedRuns = null;
-            this.movedCustomIds = new Int2ObjectOpenHashMap<>();
-            Int2ObjectOpenHashMap<Owner> owners = hashedIds(runs, this.movedCustomIds, limits);
             this.nonVanillaHashes = owners.int2ObjectEntrySet().stream()
                     .filter(owner -> !isVanilla(owner.getValue().entry()) || TABLE.networkHash(owner.getValue().entry()) != owner.getIntKey())
                     .mapToInt(Int2ObjectMap.Entry::getIntKey).sorted().toArray();
@@ -155,7 +177,6 @@ public final class BedrockPalette {
             this.sortedRuns = runs;
             this.nonVanillaHashes = new int[0];
             this.nonVanillaHashIds = new int[0];
-            this.movedCustomIds = new Int2ObjectOpenHashMap<>();
             this.definitions = new SimpleBlockDefinition[TABLE.paletteSize()];
             for (int run = 0; run < runs.starts().length; run++) {
                 int first = runs.entries()[run];
@@ -185,17 +206,49 @@ public final class BedrockPalette {
      */
     public static BlockMappingInfo mappingInfo(StartGamePacket startGame) {
         Key key = new Key(startGame.isBlockNetworkIdsHashed(), List.copyOf(startGame.getBlockProperties()));
-        BedrockPalette palette;
+        // The mapping holds its palette before the lock is let go, so that the cache cannot drop the palette's blocks first.
         synchronized (CACHE) {
-            palette = CACHE.computeIfAbsent(key, BedrockPalette::build);
+            BedrockPalette palette = CACHE.get(key);
+            if (palette == null) {
+                palette = build(key);
+                palette.hold();
+                CACHE.put(key, palette);
+            }
+            return palette.mappingInfo();
         }
-        return palette.mappingInfo();
     }
 
-    // A new block mapping of this palette. Boar only guesses the shape of a block that is not a vanilla state, so rawIdDefined is false for it.
+    /**
+     * Lets go of the palette of a mapping that {@link #mappingInfo(StartGamePacket)} made, once its player has left. Releasing a mapping again does nothing.
+     * Its custom blocks keep their IDs while another mapping or the cache holds the palette.
+     */
+    public static void release(BlockMappingInfo info) {
+        ((PlayerIds) info.fromIntermediary()).release();
+    }
+
+    // Public for tests
+    public static boolean released(BlockMappingInfo info) {
+        return ((PlayerIds) info.fromIntermediary()).released;
+    }
+
+    private synchronized void hold() {
+        if (this.released) {
+            throw new IllegalStateException("The custom blocks of this palette may have other IDs now");
+        }
+        this.holders++;
+    }
+
+    private synchronized void drop() {
+        if (--this.holders == 0 && this.heldBlocks.length > 0) {
+            this.released = true;
+            this.customIds.release(this.heldBlocks);
+        }
+    }
+
+    // A new block mapping of this palette, which holds it until it is released. Boar only guesses the shape of a block that is not a vanilla state, so rawIdDefined is false for it.
     BlockMappingInfo mappingInfo() {
         PlayerIds ids = new PlayerIds(this);
-        return new BlockMappingInfo(
+        BlockMappingInfo info = new BlockMappingInfo(
                 this.definition(AIR),
                 this.definition(TABLE.defaultIndex("minecraft:water")),
                 this.definition(TABLE.defaultIndex("minecraft:lava")),
@@ -217,6 +270,8 @@ public final class BedrockPalette {
                     return isVanilla(entry) ? Vanilla.JUMPS[entry] : HorseJumpMaterial.NONE;
                 },
                 runtimeId -> isVanilla(this.entry(runtimeId)));
+        this.hold();
+        return info;
     }
 
     // When Boar cannot read the custom blocks, their runtime IDs are unknown. With sorted IDs they also move the vanilla IDs, so every ID is unknown.
@@ -588,53 +643,159 @@ public final class BedrockPalette {
     }
 
     /**
-     * The custom IDs every palette shares: a custom block gets one for each state, in the client's order, the first time any palette has it.
-     * Past the cap, a block gets none, so a player's mapping keeps its states by runtime ID instead.
+     * The custom IDs every palette shares: a custom block gets one for each state, in the client's order, while any palette has it.
+     * A block that no palette has keeps its IDs for a quarantine time, so that a state Boar made before its last player left still reads that block. Then they go to the first later block that fits.
+     * Past the cap, or when no free range fits it, a block gets none, so a player's mapping keeps its states by runtime ID instead.
+     * Freed IDs wait out the quarantine, so more new states than the cap within one quarantine time leave later blocks without IDs until it passes.
      */
     static final class CustomIds {
-        private final Map<CustomBlock, Integer> firstIds = new HashMap<>();
-        private final int first;
+        static final long QUARANTINE = TimeUnit.MINUTES.toNanos(1);
+        private final Map<CustomBlock, Assignment> assignments = new HashMap<>();
+        private final TreeMap<Integer, Assignment> byFirstId = new TreeMap<>();
+        // The ranges of free IDs, from each first ID to its end
+        private final TreeMap<Integer, Integer> free = new TreeMap<>();
+        // The blocks that no palette had any more, in the order they were released
+        private final ArrayDeque<Release> releases = new ArrayDeque<>();
         private final int max;
-        private int next;
-        private boolean full;
+        private final long quarantine;
+        private final LongSupplier clock;
+        private int quarantinedIds;
+        // The fewest states of a block that found no free range since IDs were last freed, so that blocks with as many states or more fail without a scan, and the warning is logged once
+        private int smallestMiss = Integer.MAX_VALUE;
+        // The free ranges assign has looked at, for tests
+        int scannedRanges;
         // The blocks by first custom ID, which BedrockState reads without the lock
-        private volatile Assigned assigned = new Assigned(new int[0], new CustomBlock[0], new CustomBlockType[0], 0, 0);
+        private volatile Assigned assigned = new Assigned(new int[0], new CustomBlock[0], new CustomBlockType[0]);
 
         CustomIds(int first, int max) {
-            this.first = first;
-            this.max = max;
-            this.next = first;
+            this(first, max, QUARANTINE, System::nanoTime);
         }
 
-        // The first custom ID of a block, or -1 once the IDs have run out
-        synchronized int of(CustomBlock block) {
-            Integer id = this.firstIds.get(block);
-            if (id != null) {
-                return id;
-            }
-            if (this.full || this.next - this.first > this.max - block.stateCount()) {
-                if (!this.full) {
-                    this.full = true;
-                    LOG.warn("Boar has used its {} custom block IDs, so it treats the custom blocks it sees from now on, starting with {}, as blocks it does not know", this.max, block.name());
+        CustomIds(int first, int max, long quarantine, LongSupplier clock) {
+            this.max = max;
+            this.quarantine = quarantine;
+            this.clock = clock;
+            this.free.put(first, first + max);
+        }
+
+        /**
+         * The first custom ID of each block, or -1 for a block past the IDs left, or past {@code limit} IDs for the list. Each block with IDs keeps them until {@link #release} gives it back as many times.
+         */
+        synchronized int[] of(List<CustomBlock> blocks, long limit) {
+            boolean changed = this.freeQuarantined();
+            int[] firsts = new int[blocks.size()];
+            long taken = 0;
+            for (int i = 0; i < firsts.length; i++) {
+                CustomBlock block = blocks.get(i);
+                Assignment assignment = null;
+                if (taken + block.stateCount() <= limit) {
+                    assignment = this.assignments.get(block);
+                    if (assignment == null) {
+                        assignment = this.assign(block);
+                        changed |= assignment != null;
+                    } else if (assignment.palettes == 0) {
+                        this.quarantinedIds -= block.stateCount();
+                    }
                 }
-                return -1;
+                if (assignment == null) {
+                    firsts[i] = -1;
+                    continue;
+                }
+                assignment.palettes++;
+                firsts[i] = assignment.first;
+                taken += block.stateCount();
             }
-            this.firstIds.put(block, this.next);
-            Assigned assigned = this.assigned;
-            int[] starts = assigned.starts();
-            CustomBlock[] blocks = assigned.blocks();
-            CustomBlockType[] types = assigned.types();
-            if (assigned.count() == starts.length) {
-                starts = Arrays.copyOf(starts, Math.max(16, starts.length * 2));
-                blocks = Arrays.copyOf(blocks, starts.length);
-                types = Arrays.copyOf(types, starts.length);
+            if (changed) {
+                this.publish();
             }
-            starts[assigned.count()] = this.next;
-            blocks[assigned.count()] = block;
-            types[assigned.count()] = new CustomBlockType(block, this.next);
-            this.next += block.stateCount();
-            this.assigned = new Assigned(starts, blocks, types, assigned.count() + 1, this.next);
-            return this.firstIds.get(block);
+            return firsts;
+        }
+
+        synchronized void release(CustomBlock[] blocks) {
+            long now = this.clock.getAsLong();
+            for (CustomBlock block : blocks) {
+                Assignment assignment = this.assignments.get(block);
+                if (--assignment.palettes == 0) {
+                    assignment.release = new Release(assignment, now);
+                    this.releases.add(assignment.release);
+                    this.quarantinedIds += block.stateCount();
+                }
+            }
+        }
+
+        // The block's new IDs, from the first free range that fits it, or null when no free range fits it
+        private Assignment assign(CustomBlock block) {
+            if (block.stateCount() >= this.smallestMiss) {
+                return null;
+            }
+            for (Map.Entry<Integer, Integer> range : this.free.entrySet()) {
+                this.scannedRanges++;
+                int first = range.getKey();
+                int end = range.getValue();
+                if (end - first >= block.stateCount()) {
+                    this.free.remove(first);
+                    if (end > first + block.stateCount()) {
+                        this.free.put(first + block.stateCount(), end);
+                    }
+                    Assignment assignment = new Assignment(block, first, new CustomBlockType(block, first));
+                    this.assignments.put(block, assignment);
+                    this.byFirstId.put(first, assignment);
+                    block.collision().holdShapes();
+                    return assignment;
+                }
+            }
+            if (this.smallestMiss == Integer.MAX_VALUE) {
+                LOG.warn("Boar's {} custom block IDs have no free range for custom block {}, so it treats it, and each block that does not fit until IDs are freed, as a block it does not know{}", this.max, block.name(),
+                        this.quarantinedIds == 0 ? "" : ". " + this.quarantinedIds + " of them are held for a time after the last player of their block left");
+            }
+            this.smallestMiss = block.stateCount();
+            return null;
+        }
+
+        // Frees the IDs of each block that no palette has had for the quarantine time, and returns whether it freed any
+        private boolean freeQuarantined() {
+            long now = this.clock.getAsLong();
+            boolean freed = false;
+            for (Release release; (release = this.releases.peek()) != null; this.releases.poll()) {
+                Assignment assignment = release.assignment();
+                // A block that a palette took again, or that was released again later
+                if (assignment.palettes > 0 || assignment.release != release) {
+                    continue;
+                }
+                if (now - release.time() < this.quarantine) {
+                    break;
+                }
+                int first = assignment.first;
+                int end = first + assignment.block.stateCount();
+                this.assignments.remove(assignment.block);
+                this.byFirstId.remove(first);
+                assignment.block.collision().releaseShapes();
+                this.quarantinedIds -= end - first;
+                Map.Entry<Integer, Integer> before = this.free.lowerEntry(first);
+                if (before != null && before.getValue() == first) {
+                    first = before.getKey();
+                }
+                Integer after = this.free.remove(end);
+                this.free.put(first, after != null ? after : end);
+                freed = true;
+            }
+            if (freed) {
+                this.smallestMiss = Integer.MAX_VALUE;
+            }
+            return freed;
+        }
+
+        private void publish() {
+            int[] starts = new int[this.byFirstId.size()];
+            CustomBlock[] blocks = new CustomBlock[starts.length];
+            CustomBlockType[] types = new CustomBlockType[starts.length];
+            int i = 0;
+            for (Assignment assignment : this.byFirstId.values()) {
+                starts[i] = assignment.first;
+                blocks[i] = assignment.block;
+                types[i++] = assignment.type;
+            }
+            this.assigned = new Assigned(starts, blocks, types);
         }
 
         List<Box> boxes(int id) {
@@ -674,22 +835,41 @@ public final class BedrockPalette {
             return i < 0 ? null : assigned.types()[i];
         }
 
-        // Each block's IDs end where the next block's start, and the last block's at end.
-        private record Assigned(int[] starts, CustomBlock[] blocks, CustomBlockType[] types, int count, int end) {
+        // Freed IDs leave gaps between blocks.
+        private record Assigned(int[] starts, CustomBlock[] blocks, CustomBlockType[] types) {
             // The index of the block with this custom ID, or -1
             int blockOf(int id) {
-                int i = Arrays.binarySearch(this.starts, 0, this.count, id);
+                int i = Arrays.binarySearch(this.starts, id);
                 if (i < 0) {
                     i = -i - 2;
                 }
-                return i >= 0 && id < this.end ? i : -1;
+                return i >= 0 && id - this.starts[i] < this.blocks[i].stateCount() ? i : -1;
             }
+        }
+
+        // A block's IDs, and how many palettes have it
+        private static final class Assignment {
+            final CustomBlock block;
+            final int first;
+            final CustomBlockType type;
+            int palettes;
+            // The latest release, which is in releases
+            Release release;
+
+            Assignment(CustomBlock block, int first, CustomBlockType type) {
+                this.block = block;
+                this.first = first;
+                this.type = type;
+            }
+        }
+
+        private record Release(Assignment assignment, long time) {
         }
     }
 
     /**
      * One player's mapping of runtime IDs that are not a state with an intermediary ID of their own: it keeps each under an ID from FIRST_KEPT_ID, so that Boar can send it back, and logs it.
-     * A server's unknown IDs then reach only its own players. Only the player's event loop uses it, as with Boar's world, so it takes no lock.
+     * A server's unknown IDs then reach only its own players. Only the player's event loop uses it, as with Boar's world, so it takes no lock but to release its palette.
      */
     private static final class PlayerIds implements IntUnaryOperator {
         private final BedrockPalette palette;
@@ -699,9 +879,19 @@ public final class BedrockPalette {
         // The unknown runtime IDs logged so far, which stop at MAX_WARNED_IDS
         private final int[] warnedIds = new int[MAX_WARNED_IDS];
         private int warnedCount;
+        private volatile boolean released;
 
         PlayerIds(BedrockPalette palette) {
             this.palette = palette;
+        }
+
+        void release() {
+            synchronized (this.palette) {
+                if (!this.released) {
+                    this.released = true;
+                    this.palette.drop();
+                }
+            }
         }
 
         int intermediaryId(int runtimeId) {

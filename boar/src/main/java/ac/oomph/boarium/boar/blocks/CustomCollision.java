@@ -6,6 +6,9 @@ import org.cloudburstmc.nbt.NbtList;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtType;
 
+import java.lang.ref.Reference;
+import java.lang.ref.ReferenceQueue;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -25,10 +28,13 @@ final class CustomCollision {
     // The client has no cap on boxes from the network; Boar stops at 16, the cap for resource packs (BlockCollisionBoxComponentDescriptor::fromCollisionBoxes).
     static final int MAX_BOXES = 16;
     static final int MAX_PERMUTATIONS = 1024;
-    // Custom blocks keep their shapes for as long as their custom IDs, so the distinct shapes of all of them are capped, and one StartGame may add only a part of them.
+    // Custom blocks share their shapes, which last while a block has them. The distinct shapes of blocks with custom IDs are capped, and one StartGame may add only a part of them.
     static final int MAX_SHAPES = 1 << 16;
     static final int MAX_NEW_SHAPES = MAX_SHAPES / 16;
-    private static final Map<Corners, List<Box>> SHAPES = new ConcurrentHashMap<>();
+    private static final Map<Corners, SharedShape> SHAPES = new ConcurrentHashMap<>();
+    private static final ReferenceQueue<List<Box>> UNUSED_SHAPES = new ReferenceQueue<>();
+    // The shapes of blocks with custom IDs, and how many such blocks have each
+    private static final Map<List<Box>, Integer> HELD_SHAPES = new IdentityHashMap<>();
     private static final String COLLISION = "minecraft:collision_box";
     private static final String TRANSFORMATION = "minecraft:transformation";
     private static final float[] CUBE_CORNERS = {0, 0, 0, 1, 1, 1};
@@ -42,8 +48,8 @@ final class CustomCollision {
     static final String SPENT = "Boar has spent its time on the custom blocks of this StartGame";
 
     static {
-        SHAPES.put(new Corners(new float[]{0, 0, 0, 1, 1, 1}), FULL_CUBE);
-        SHAPES.put(new Corners(new float[0]), NONE);
+        share(new Corners(new float[]{0, 0, 0, 1, 1, 1}), FULL_CUBE);
+        share(new Corners(new float[0]), NONE);
     }
 
     private final List<StateCollision> shapes;
@@ -270,11 +276,15 @@ final class CustomCollision {
             }
         }
         Corners key = new Corners(Arrays.copyOf(solid, length));
-        List<Box> shape = SHAPES.get(key);
+        for (Reference<? extends List<Box>> unused; (unused = UNUSED_SHAPES.poll()) != null; ) {
+            SHAPES.remove(((SharedShape) unused).key, unused);
+        }
+        SharedShape shared = SHAPES.get(key);
+        List<Box> shape = shared == null ? null : shared.get();
         if (shape != null) {
             return new Shape(shape, null);
         }
-        if (SHAPES.size() >= MAX_SHAPES) {
+        if (heldShapes() >= MAX_SHAPES) {
             return new Shape(null, "Boar keeps no more than " + MAX_SHAPES + " custom block shapes");
         }
         if (budget.newShapes == MAX_NEW_SHAPES) {
@@ -285,7 +295,48 @@ final class CustomCollision {
         for (int i = 0; i < length; i += 6) {
             boxes.add(new Box(solid[i], solid[i + 1], solid[i + 2], solid[i + 3], solid[i + 4], solid[i + 5]));
         }
-        return new Shape(SHAPES.computeIfAbsent(key, k -> List.copyOf(boxes)), null);
+        return new Shape(share(key, List.copyOf(boxes)), null);
+    }
+
+    // The shared list of these boxes, which is this one unless another thread shared them first
+    private static List<Box> share(Corners key, List<Box> boxes) {
+        SharedShape added = new SharedShape(key, boxes);
+        while (true) {
+            SharedShape old = SHAPES.putIfAbsent(key, added);
+            List<Box> shape = old == null ? boxes : old.get();
+            if (shape != null) {
+                return shape;
+            }
+            SHAPES.remove(key, old);
+        }
+    }
+
+    // The shapes shared now, for tests
+    static int sharedShapes() {
+        return (int) SHAPES.values().stream().filter(shape -> shape.get() != null).count();
+    }
+
+    static int heldShapes() {
+        synchronized (HELD_SHAPES) {
+            return HELD_SHAPES.size();
+        }
+    }
+
+    // Counts this collision's shapes against MAX_SHAPES while its block has custom IDs; releaseShapes undoes it
+    void holdShapes() {
+        synchronized (HELD_SHAPES) {
+            for (StateCollision shape : this.shapes) {
+                HELD_SHAPES.merge(shape.boxes(), 1, Integer::sum);
+            }
+        }
+    }
+
+    void releaseShapes() {
+        synchronized (HELD_SHAPES) {
+            for (StateCollision shape : this.shapes) {
+                HELD_SHAPES.computeIfPresent(shape.boxes(), (boxes, blocks) -> blocks == 1 ? null : blocks - 1);
+            }
+        }
     }
 
     // A minecraft:transformation as BlockTransformationDescription::initializeFromNetwork reads it, as the matrix that moves collision boxes. Null when the client has no such component.
@@ -508,6 +559,15 @@ final class CustomCollision {
     }
 
     private record Permutation(BlockCondition condition, Component collision, Transformation transformation, Component unread, Transformation unreadTransformation) {
+    }
+
+    private static final class SharedShape extends WeakReference<List<Box>> {
+        private final Corners key;
+
+        SharedShape(Corners key, List<Box> boxes) {
+            super(boxes, UNUSED_SHAPES);
+            this.key = key;
+        }
     }
 
     private record Corners(float[] values) {

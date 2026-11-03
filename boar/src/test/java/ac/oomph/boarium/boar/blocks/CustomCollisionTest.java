@@ -557,7 +557,7 @@ class CustomCollisionTest {
     void oneStartGameAddsABoundedNumberOfShapes() {
         CustomCollision.Budget budget = new CustomCollision.Budget();
         float[] known = {0, 0, 0, 16, 8, 16};
-        CustomBlock.of(new BlockPropertyData("cubecraft:known", NbtMap.builder().putCompound("components", components(collision(known))).build()), new CustomCollision.Budget());
+        CustomBlock knownBlock = CustomBlock.of(new BlockPropertyData("cubecraft:known", NbtMap.builder().putCompound("components", components(collision(known))).build()), new CustomCollision.Budget());
         String guess = null;
         int added = 0;
         // Heights in steps of 1/1024 of a sixteenth, so no other test has made these shapes
@@ -568,7 +568,9 @@ class CustomCollisionTest {
         }
         assertEquals(CustomCollision.MAX_NEW_SHAPES, added);
         assertEquals("Boar keeps no more than " + CustomCollision.MAX_NEW_SHAPES + " new custom block shapes from one StartGame", guess);
-        assertNull(CustomBlock.of(new BlockPropertyData("cubecraft:again", NbtMap.builder().putCompound("components", components(collision(known))).build()), budget).collision().guess());
+        CustomBlock again = CustomBlock.of(new BlockPropertyData("cubecraft:again", NbtMap.builder().putCompound("components", components(collision(known))).build()), budget);
+        assertNull(again.collision().guess());
+        assertSame(knownBlock.collision().boxes(0), again.collision().boxes(0));
         // The next StartGame has its own share.
         assertNull(CustomBlock.of(new BlockPropertyData("cubecraft:next", NbtMap.builder().putCompound("components", components(collision(new float[]{0, 0, 0, 16, 1 / 4096F, 16}))).build()), new CustomCollision.Budget()).collision().guess());
     }

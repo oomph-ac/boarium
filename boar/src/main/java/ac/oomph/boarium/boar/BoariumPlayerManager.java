@@ -70,11 +70,18 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         // Boar would read every block, even air, as a full cube.
         if (BedrockPalette.runtimeIdsUnknown(mappingInfo)) {
             LOG.warn("Boar does not check {}, since it does not know the client's block runtime IDs", session.client().identity().displayName());
+            BedrockPalette.release(mappingInfo);
             return null;
         }
         this.adding.put(session, mappingInfo);
         try {
             return this.add(session);
+        } catch (Throwable e) {
+            // A player that Boar added before it failed keeps its mapping until BoarProcessor.disconnect removes the player.
+            if (!this.containsKey(session)) {
+                BedrockPalette.release(mappingInfo);
+            }
+            throw e;
         } finally {
             this.adding.remove(session);
         }

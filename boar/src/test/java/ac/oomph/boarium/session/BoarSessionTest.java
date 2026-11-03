@@ -139,6 +139,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // In the session package to reach the fake server's own sends.
@@ -1220,6 +1221,40 @@ class BoarSessionTest {
         String log = this.logged.toString(StandardCharsets.UTF_8);
         assertFalse(log.contains("cubecraft:shelf"), log);
         this.assertNothingFailed();
+    }
+
+    // A transfer sends the client no new StartGame, so the player keeps the custom blocks of its first server until it leaves.
+    @Test
+    void keepsThePaletteOverATransferAndReleasesItAtDisconnect() throws Exception {
+        TestBoar.mitigations(true);
+        BlockPropertyData shelf = customBlock("cubecraft:transfer_shelf", null, collisionBox(0, 0, 0, 16, 8, 16), null);
+        FakeSpectrumServer next = new FakeSpectrumServer(this.group, CODEC);
+        next.items = ITEMS;
+        try {
+            Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(shelf)));
+            BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+            session.transfer(next.address()).get(10, TimeUnit.SECONDS);
+            assertSame(player, Boar.getInstance().getPlayerManager().get(session));
+            assertFalse(BedrockPalette.released(player.mappingInfo));
+
+            // The next server sends the chunks now, and tearDown closes the first.
+            FakeSpectrumServer first = this.server;
+            this.server = next;
+            next = first;
+            int shelfId = this.customRuntimeId(session, player);
+            Vector3i feet = this.standOnAFloor(session, AIR_RUNTIME_ID, shelfId, 1, 0.5F);
+            assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 0.5F, 1))), corners(onLoop(session, () -> player.compensatedWorld.getBlockState(feet.sub(0, 1, 0), 0).getCollisionBoxes())));
+
+            this.client.session.get().disconnect();
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (Boar.getInstance().getPlayerManager().containsKey(session) && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertTrue(BedrockPalette.released(player.mappingInfo));
+            this.assertNothingFailed();
+        } finally {
+            next.close();
+        }
     }
 
     // A custom block whose collision_box is disabled lets the player walk through it, where a full cube would stop them.
