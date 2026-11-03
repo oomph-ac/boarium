@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -190,20 +191,294 @@ class CustomCollisionTest {
         assertNull(block(components(disabled()), permutation("q.block_state('open')", components(slab))).collision().guess());
     }
 
+    // A minecraft:transformation as Geyser 2.12 writes it (CustomBlockRegistryPopulator): quarter turns as ints, scale and translation as floats, and no pivots
+    private static NbtMap geyser(int rx, int ry, int rz, float sx, float sy, float sz, float tx, float ty, float tz) {
+        return NbtMap.builder().putInt("RX", rx).putInt("RY", ry).putInt("RZ", rz).putFloat("SX", sx).putFloat("SY", sy).putFloat("SZ", sz).putFloat("TX", tx).putFloat("TY", ty).putFloat("TZ", tz).build();
+    }
+
+    private static NbtMap turn(int rx, int ry, int rz) {
+        return geyser(rx, ry, rz, 1, 1, 1, 0, 0, 0);
+    }
+
+    private static NbtMap components(NbtMap collision, NbtMap transformation) {
+        NbtMapBuilder components = NbtMap.builder();
+        if (collision != null) {
+            components.putCompound("minecraft:collision_box", collision);
+        }
+        components.putCompound("minecraft:transformation", transformation);
+        return components.build();
+    }
+
+    // The boxes of a block with this collision_box and transformation, as every state has them
+    private static float[] moved(NbtMap collision, NbtMap transformation) {
+        return readComponents(components(collision, transformation));
+    }
+
+    private static float[] readComponents(NbtMap components) {
+        CustomBlock block = block(components);
+        float[] corners = corners(block.collision().boxes(0));
+        for (int s = 1; s < block.stateCount(); s++) {
+            assertArrayEquals(corners, corners(block.collision().boxes(s)));
+        }
+        assertNull(block.collision().guess());
+        return corners;
+    }
+
+    /**
+     * The box, in blocks, that the client's formula gives, worked out here from the 8 moved corners with exact quarter turns: each corner p becomes R(S(p - c - sp) + sp - rp) + rp + t + c, where c is the block's centre (0.5, 0.5, 0.5).
+     * R turns a point about X first, then Y, then Z, each quarter turn right-handed: about X, y goes to z and z to -y; about Y, z goes to x and x to -z; about Z, x goes to y and y to -x.
+     *
+     * @param pivots the rotation pivot, then the scale pivot
+     */
+    private static float[] expected(float[] box, int[] turns, float[] scale, float[] translation, float[]... pivots) {
+        float[] rp = pivots.length > 0 ? pivots[0] : new float[3];
+        float[] sp = pivots.length > 1 ? pivots[1] : new float[3];
+        double[] low = {Double.MAX_VALUE, Double.MAX_VALUE, Double.MAX_VALUE};
+        double[] high = {-Double.MAX_VALUE, -Double.MAX_VALUE, -Double.MAX_VALUE};
+        for (int corner = 0; corner < 8; corner++) {
+            double[] p = new double[3];
+            for (int axis = 0; axis < 3; axis++) {
+                double at = (corner >> axis & 1) == 0 ? box[axis] : box[3 + axis];
+                p[axis] = scale[axis] * (at - 0.5 - sp[axis]) + sp[axis] - rp[axis];
+            }
+            for (int i = 0; i < Math.max(0, turns[0]) % 4; i++) {
+                p = new double[]{p[0], -p[2], p[1]};
+            }
+            for (int i = 0; i < Math.max(0, turns[1]) % 4; i++) {
+                p = new double[]{p[2], p[1], -p[0]};
+            }
+            for (int i = 0; i < Math.max(0, turns[2]) % 4; i++) {
+                p = new double[]{-p[1], p[0], p[2]};
+            }
+            for (int axis = 0; axis < 3; axis++) {
+                double at = p[axis] + rp[axis] + translation[axis] + 0.5;
+                low[axis] = Math.min(low[axis], at);
+                high[axis] = Math.max(high[axis], at);
+            }
+        }
+        return new float[]{(float) low[0], (float) low[1], (float) low[2], (float) high[0], (float) high[1], (float) high[2]};
+    }
+
+    // The client's quarter turns go through a quaternion, so they are off by a few float steps.
+    private static void assertNear(float[] expected, float[] actual) {
+        assertEquals(expected.length, actual.length);
+        for (int i = 0; i < expected.length; i++) {
+            assertEquals(expected[i], actual[i], 1e-6F, Arrays.toString(actual));
+        }
+    }
+
+    // An off-centre box: in 1/16 it is 0 to 4 on X, 0 to 8 on Y and 0 to 12 on Z, and the client mirrors X.
+    private static final float[] OFF_CENTRE_PIXELS = {0, 0, 0, 4, 8, 12};
+    private static final float[] OFF_CENTRE = {0.75F, 0, 0, 1, 0.5F, 0.75F};
+    private static final float[] ONE = {1, 1, 1};
+    private static final float[] ZERO = {0, 0, 0};
+
     @Test
-    void aTransformationMakesItsBoxesUnknown() {
-        NbtMap transformation = NbtMap.builder().putInt("RX", 1).build();
+    void aTranslationMovesTheBoxesWithoutClamping() {
         NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
-        CustomBlock block = block(NbtMap.builder().putCompound("minecraft:collision_box", slab).putCompound("minecraft:transformation", transformation).build());
-        assertArrayEquals(CUBE, corners(block.collision().boxes(0)));
-        assertEquals("minecraft:transformation moves its boxes", block.collision().guess());
-        // From a permutation too, but a block without collision stays without.
-        CustomBlock turned = block(components(slab), permutation("q.block_state('open')", NbtMap.builder().putCompound("minecraft:transformation", transformation).build()));
-        assertArrayEquals(CUBE, corners(turned.collision().boxes(state(1, 0, "red"))));
-        assertArrayEquals(new float[]{0, 0, 0, 1, 0.5F, 1}, corners(turned.collision().boxes(state(0, 0, "red"))));
-        CustomBlock ghost = block(NbtMap.builder().putCompound("minecraft:collision_box", disabled()).putCompound("minecraft:transformation", transformation).build());
-        assertArrayEquals(new float[0], corners(ghost.collision().boxes(0)));
-        assertNull(ghost.collision().guess());
+        assertArrayEquals(new float[]{0.25F, 0.5F, -0.125F, 1.25F, 1, 0.875F}, moved(slab, geyser(0, 0, 0, 1, 1, 1, 0.25F, 0.5F, -0.125F)));
+        // The 1/16 corners are still clamped first, to 24 on Y, and the moved box is not clamped again.
+        assertArrayEquals(new float[]{0, 1, 0, 1, 2.5F, 1}, moved(collision(new float[]{0, 0, 0, 16, 40, 16}), geyser(0, 0, 0, 1, 1, 1, 0, 1, 0)));
+    }
+
+    @Test
+    void aScaleWorksAboutTheBlockCentreAndItsPivot() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        assertArrayEquals(new float[]{0.25F, 0, -0.5F, 0.75F, 0.5F, 1.5F}, moved(slab, geyser(0, 0, 0, 0.5F, 1, 2, 0, 0, 0)));
+        NbtMap pivoted = geyser(0, 0, 0, 0.5F, 0.5F, 0.5F, 0, 0, 0).toBuilder().putFloat("SXP", 0.5F).putFloat("SYP", -0.5F).putFloat("SZP", 0.25F).build();
+        assertArrayEquals(expected(new float[]{0, 0, 0, 1, 0.5F, 1}, new int[3], new float[]{0.5F, 0.5F, 0.5F}, ZERO, ZERO, new float[]{0.5F, -0.5F, 0.25F}), moved(slab, pivoted));
+        // By hand: the scale pivot is 0.5 east of the centre, at X 1, so X runs from 1 + 0.5 * (0 - 1) = 0.5 to 1 + 0.5 * (1 - 1) = 1.
+        assertArrayEquals(new float[]{0.5F, 0, 0.375F, 1, 0.25F, 0.875F}, moved(slab, pivoted));
+    }
+
+    @Test
+    void eachQuarterTurnOfEachAxis() {
+        NbtMap box = collision(OFF_CENTRE_PIXELS);
+        for (int axis = 0; axis < 3; axis++) {
+            for (int count = 1; count <= 5; count++) {
+                int[] turns = new int[3];
+                turns[axis] = count;
+                assertNear(expected(OFF_CENTRE, turns, ONE, ZERO), moved(box, turn(turns[0], turns[1], turns[2])));
+            }
+        }
+        // By hand, one turn about X: from the centre, Y -0.5 to 0 and Z -0.5 to 0.25 become Z -0.5 to 0 and Y -0.25 to 0.5.
+        assertNear(new float[]{0.75F, 0.25F, 0, 1, 1, 0.5F}, moved(box, turn(1, 0, 0)));
+        // Turns about every axis, where the order matters: a point turns about X first, then Y, then Z.
+        int[] turns = {1, 2, 3};
+        assertNear(expected(OFF_CENTRE, turns, ONE, ZERO), moved(box, turn(1, 2, 3)));
+    }
+
+    // Worked by hand through the client's float steps: a quarter turn about Z holds 5.96e-8 and 0.99999994 where 0 and 1 belong, and still gives these exact corners.
+    @Test
+    void aSlabTurnedAboutZIsAnUprightHalfBlock() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        CustomBlock block = block(components(slab, turn(0, 0, 1)));
+        assertArrayEquals(new float[]{0.5F, 0, 0, 1, 1, 1}, corners(block.collision().boxes(0)));
+        assertFalse(block.collision().faceSturdy(0));
+        // A full cube stays an exact full cube, so it is sturdy.
+        CustomBlock cube = block(components(collision(CUBE_PIXELS), turn(0, 1, 0)));
+        assertSame(CustomCollision.FULL_CUBE, cube.collision().boxes(0));
+        assertTrue(cube.collision().faceSturdy(0));
+    }
+
+    // Worked out through the client's float steps: the off-centre box turned a quarter about Y keeps an error of 2^-24 and -2^-26 at two corners.
+    @Test
+    void theQuaternionErrorIsKeptBitForBit() {
+        assertArrayEquals(new float[]{0x1p-24F, 0, -0x1p-26F, 0.75F, 0.5F, 0.25F}, moved(collision(OFF_CENTRE_PIXELS), turn(0, 1, 0)));
+    }
+
+    // A quarter turn gives a flat floor plate a thickness of 5.96e-8, which the client loses at every block but those within 2 of 0, so the plate has no boxes.
+    @Test
+    void aSliverFromATurnHasNoBoxes() {
+        assertArrayEquals(new float[0], moved(collision(new float[]{0, 0, 0, 16, 0, 16}), turn(1, 0, 0)));
+        assertArrayEquals(new float[0], moved(collision(new float[]{0, 0, 0, 0, 16, 16}), turn(0, 0, 1)));
+    }
+
+    @Test
+    void aNegativeTurnCountIsNoTurn() {
+        NbtMap box = collision(OFF_CENTRE_PIXELS);
+        CustomBlock plain = block(components(box));
+        for (NbtMap transformation : List.of(turn(-1, 0, 0), turn(0, -3, 0), turn(0, 0, Integer.MIN_VALUE))) {
+            assertSame(plain.collision().boxes(0), block(components(box, transformation)).collision().boxes(0));
+        }
+    }
+
+    @Test
+    void theRotationPivot() {
+        NbtMap box = collision(OFF_CENTRE_PIXELS);
+        float[] pivot = {0.5F, 0, -0.25F};
+        NbtMap transformation = turn(0, 1, 0).toBuilder().putFloat("RXP", pivot[0]).putFloat("RYP", pivot[1]).putFloat("RZP", pivot[2]).build();
+        assertNear(expected(OFF_CENTRE, new int[]{0, 1, 0}, ONE, ZERO, pivot), moved(box, transformation));
+        // By hand: a half turn about a pivot 0.5 east of the centre puts X 0.25 to 0.5 from the centre at 0.5 to 0.75 from it.
+        assertNear(new float[]{1, 0, 0.25F, 1.25F, 0.5F, 1}, moved(box, turn(0, 2, 0).toBuilder().putFloat("RXP", 0.5F).build()));
+    }
+
+    @Test
+    void everyPartAtOnce() {
+        NbtMap box = collision(OFF_CENTRE_PIXELS);
+        float[] scale = {0.5F, 2, 1.5F};
+        float[] translation = {0.125F, -0.25F, 0.5F};
+        float[] rotationPivot = {0.25F, -0.125F, 0.5F};
+        float[] scalePivot = {-0.5F, 0.25F, 0.125F};
+        NbtMap transformation = geyser(1, 3, 2, scale[0], scale[1], scale[2], translation[0], translation[1], translation[2]).toBuilder()
+                .putFloat("RXP", rotationPivot[0]).putFloat("RYP", rotationPivot[1]).putFloat("RZP", rotationPivot[2])
+                .putFloat("SXP", scalePivot[0]).putFloat("SYP", scalePivot[1]).putFloat("SZP", scalePivot[2])
+                .build();
+        assertNear(expected(OFF_CENTRE, new int[]{1, 3, 2}, scale, translation, rotationPivot, scalePivot), moved(box, transformation));
+    }
+
+    // Each value is 0 when it is missing or of another tag type, so a missing scale flattens every box and leaves no collision.
+    @Test
+    void missingOrMistypedValuesAreZero() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        assertArrayEquals(new float[0], moved(slab, NbtMap.EMPTY));
+        assertArrayEquals(new float[0], moved(slab, NbtMap.builder().putInt("RX", 1).build()));
+        NbtMapBuilder noY = turn(0, 0, 0).toBuilder();
+        noY.remove("SY");
+        assertArrayEquals(new float[0], moved(slab, noY.build()));
+        assertArrayEquals(new float[0], moved(slab, turn(0, 0, 0).toBuilder().putInt("SX", 1).build()));
+        // A turn count that is a float is no turn, and a translation that is a double does not move.
+        assertArrayEquals(new float[]{0, 0, 0, 1, 0.5F, 1}, moved(slab, turn(0, 0, 0).toBuilder().putFloat("RX", 1).putDouble("TY", 1).build()));
+        // A transformation that is no compound is no component.
+        assertArrayEquals(new float[]{0, 0, 0, 1, 0.5F, 1}, readComponents(NbtMap.builder().putCompound("minecraft:collision_box", slab).putInt("minecraft:transformation", 1).build()));
+        assertFalse(block(components(slab, NbtMap.EMPTY)).collision().faceSturdy(0));
+    }
+
+    @Test
+    void onlyACollisionBoxIsMoved() {
+        // Without a collision_box the block is a full cube that the transformation does not move, and a disabled one stays without collision.
+        assertArrayEquals(CUBE, moved(null, geyser(0, 0, 0, 1, 1, 1, 0, 1, 0)));
+        assertArrayEquals(new float[0], moved(disabled(), geyser(0, 0, 0, 1, 1, 1, 0, 1, 0)));
+        // An enabled collision_box without boxes is a full cube that the transformation moves.
+        assertArrayEquals(new float[]{0, 1, 0, 1, 2, 1}, moved(NbtMap.builder().putBoolean("enabled", true).build(), geyser(0, 0, 0, 1, 1, 1, 0, 1, 0)));
+        // A box without volume stays without after a translation.
+        assertArrayEquals(new float[]{0, 1, 0, 1, 2, 1}, moved(collision(new float[]{0, 0, 0, 16, 0, 16}, CUBE_PIXELS), geyser(0, 0, 0, 1, 1, 1, 0, 1, 0)));
+    }
+
+    @Test
+    void valuesPastTheFloatRangeAreAFullCubeWithAGuess() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        for (NbtMap transformation : List.of(geyser(0, 0, 0, 1, 1, 1, Float.NaN, 0, 0), geyser(0, 0, 0, Float.POSITIVE_INFINITY, 1, 1, 0, 0, 0), geyser(0, 0, 0, 1, 1, Float.MAX_VALUE, 0, 0, Float.MAX_VALUE))) {
+            CustomCollision collision = block(components(slab, transformation)).collision();
+            assertArrayEquals(CUBE, corners(collision.boxes(0)));
+            assertEquals("a minecraft:transformation moves its boxes past the float range", collision.guess());
+        }
+    }
+
+    // A state's collision_box from its permutations is moved by the last transformation among its permutations, else by the block's. The block's own collision_box is moved only by the block's transformation.
+    @Test
+    void permutationsAndTheBlocksTransformation() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        NbtMap post = collision(new float[]{6, 0, 6, 10, 16, 10});
+        NbtMap up = geyser(0, 0, 0, 1, 1, 1, 0, 1, 0);
+        NbtMap east = geyser(0, 0, 0, 1, 1, 1, 0.25F, 0, 0);
+        float[] slabUp = {0, 1, 0, 1, 1.5F, 1};
+        float[] slabEast = {0.25F, 0, 0, 1.25F, 0.5F, 1};
+        float[] postUp = {0.375F, 1, 0.375F, 0.625F, 2, 0.625F};
+        float[] postEast = {0.625F, 0, 0.375F, 0.875F, 1, 0.625F};
+        CustomBlock block = block(components(slab, up),
+                // Only a collision_box: moved by the block's transformation
+                permutation("q.block_state('age') == 1", components(post)),
+                // Only a transformation: the block's collision_box does not move with it
+                permutation("q.block_state('open') == true", NbtMap.builder().putCompound("minecraft:transformation", east).build()),
+                // Both: its own transformation
+                permutation("q.block_state('age') == 2", components(post, east)));
+        CustomCollision collision = block.collision();
+        assertArrayEquals(slabUp, corners(collision.boxes(state(0, 0, "red"))));
+        assertArrayEquals(postUp, corners(collision.boxes(state(0, 1, "red"))));
+        assertArrayEquals(slabUp, corners(collision.boxes(state(1, 0, "red"))));
+        // A collision_box of one permutation is moved by the transformation of a later one.
+        assertArrayEquals(postEast, corners(collision.boxes(state(1, 1, "red"))));
+        assertArrayEquals(postEast, corners(collision.boxes(state(0, 2, "red"))));
+        assertNull(collision.guess());
+
+        // A permutation's transformation leaves the block's collision_box where it is when the block has no transformation too.
+        CustomBlock plain = block(components(slab), permutation("q.block_state('age') == 1", components(post)), permutation("q.block_state('open') == true", NbtMap.builder().putCompound("minecraft:transformation", east).build()));
+        assertArrayEquals(new float[]{0, 0, 0, 1, 0.5F, 1}, corners(plain.collision().boxes(state(1, 0, "red"))));
+        assertArrayEquals(postEast, corners(plain.collision().boxes(state(1, 1, "red"))));
+        assertArrayEquals(new float[]{0.375F, 0, 0.375F, 0.625F, 1, 0.625F}, corners(plain.collision().boxes(state(0, 1, "red"))));
+        assertArrayEquals(slabEast, corners(block(components(slab, east)).collision().boxes(0)));
+    }
+
+    // An unknown condition on a transformation matters only for the states whose collision_box it could move.
+    @Test
+    void unknownTransformationConditions() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        NbtMap up = geyser(0, 0, 0, 1, 1, 1, 0, 1, 0);
+        NbtMap unknown = NbtMap.builder().putString("condition", "q.cardinal_facing == 2").putCompound("components", NbtMap.builder().putCompound("minecraft:transformation", up).build()).build();
+        CustomBlock baseBoxes = block(components(slab), unknown);
+        assertArrayEquals(new float[]{0, 0, 0, 1, 0.5F, 1}, corners(baseBoxes.collision().boxes(0)));
+        assertNull(baseBoxes.collision().guess());
+        CustomBlock ownBoxes = block(NbtMap.EMPTY, permutation("q.block_state('open') == true", components(slab)), unknown);
+        assertArrayEquals(CUBE, corners(ownBoxes.collision().boxes(state(0, 0, "red"))));
+        assertArrayEquals(CUBE, corners(ownBoxes.collision().boxes(state(1, 0, "red"))));
+        assertEquals("Boar cannot read the permutation condition \"q.cardinal_facing == 2\"", ownBoxes.collision().guess());
+    }
+
+    @Test
+    void movedShapesAreSharedAndChargedToTheBudget() {
+        NbtMap slab = collision(new float[]{0, 0, 0, 16, 8, 16});
+        assertSame(block(components(slab, turn(0, 0, 1))).collision().boxes(0), block(components(collision(new float[]{0, 0, 0, 8, 16, 16}))).collision().boxes(0));
+        // One state, one box read (2), and one box moved (2)
+        BlockPropertyData moving = new BlockPropertyData("cubecraft:moving", NbtMap.builder().putCompound("components", components(slab, turn(0, 0, 1))).build());
+        assertEquals("Boar has spent its time on the custom blocks of this StartGame", CustomBlock.of(moving, new CustomCollision.Budget(4)).collision().guess());
+        assertNull(CustomBlock.of(moving, new CustomCollision.Budget(5)).collision().guess());
+    }
+
+    // Boar keeps only each state's final shape, so a moved block takes one of the MAX_NEW_SHAPES of a StartGame, as a block that is not moved does.
+    @Test
+    void aMovedBlockAddsOneShape() {
+        CustomCollision.Budget budget = new CustomCollision.Budget();
+        NbtMap up = geyser(0, 0, 0, 1, 1, 1, 0, 0.25F, 0);
+        String guess = null;
+        int added = 0;
+        for (int i = 1; guess == null; i++) {
+            float[] box = {0, 0, 0, 16, 16 - i / 1024F, 16};
+            guess = CustomBlock.of(new BlockPropertyData("cubecraft:moved_" + i, NbtMap.builder().putCompound("components", components(collision(box), up)).build()), budget).collision().guess();
+            added = guess == null ? i : added;
+        }
+        assertEquals(CustomCollision.MAX_NEW_SHAPES, added);
+        assertEquals("Boar keeps no more than " + CustomCollision.MAX_NEW_SHAPES + " new custom block shapes from one StartGame", guess);
     }
 
     @Test

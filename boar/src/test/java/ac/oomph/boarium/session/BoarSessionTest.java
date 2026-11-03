@@ -1255,9 +1255,55 @@ class BoarSessionTest {
         assertFalse(log.contains("geyser:gate"), log);
     }
 
+    // A slab whose transformation turns it a quarter about Z, as Geyser 2.12 writes it, stands upright in the east half of its block. The player walks east against it with no violations, and a client that walks through it is flagged.
+    @Test
+    void walksAgainstACustomSlabTurnedUpright() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap turned = NbtMap.builder().putInt("RX", 0).putInt("RY", 0).putInt("RZ", 1)
+                .putFloat("SX", 1).putFloat("SY", 1).putFloat("SZ", 1).putFloat("TX", 0).putFloat("TY", 0).putFloat("TZ", 0).build();
+        BlockPropertyData built = customBlock("cubecraft:shelf", null, collisionBox(0, 0, 0, 16, 8, 16), null);
+        BlockPropertyData panel = new BlockPropertyData(built.getName(), built.getProperties().toBuilder()
+                .putCompound("components", built.getProperties().getCompound("components").toBuilder().putCompound("minecraft:transformation", turned).build()).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(panel)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        int panelId = this.customRuntimeId(session, player);
+        Vector3i wall = this.sendAWall(session, player, panelId, -1);
+        assertArrayEquals(corners(List.of(new Box(0.5F, 0, 0, 1, 1, 1))), corners(onLoop(session, () -> player.compensatedWorld.getBlockState(wall, 0).getCollisionBoxes())));
+        assertFalse(onLoop(session, () -> player.compensatedWorld.getBlockState(wall, 0).isFaceSturdy(player)));
+
+        Walk walk = this.walkEast(session, player, wall, wall.getX() + 0.5F);
+        // The player's front stopped at the slab's face, half a block into the wall's block.
+        assertEquals(wall.getX() + 0.5F - 0.3F, walk.x(), 1e-6F);
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertEquals(List.of(), walk.violations());
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertFalse(log.contains("cubecraft:shelf"), log);
+        this.assertNothingFailed();
+
+        // The same steps again, from where the player stands, by a client that walks through the slab
+        Walk lie = this.walkEast(session, player, wall, Float.POSITIVE_INFINITY, walk.x(), 0, walk.nextTick());
+        assertTrue(lie.x() - 0.3F > wall.getX() + 1, "x " + lie.x());
+        assertNotEquals(List.of(), lie.violations());
+    }
+
     // Sends a chunk with a stone floor at Y 0 and a wall of this block across the player's way at local X WALL_X and Y 1 and 2, and walks east through it with no violations.
     // A block of the other ID, unless it is -1, stands away from the way, and its position is returned.
     private Vector3i walksThroughAWall(Session session, BoarPlayer player, int wall, int other) throws Exception {
+        Vector3i wallPos = this.sendAWall(session, player, wall, other);
+        Walk walk = this.walkEast(session, player, wallPos, Float.POSITIVE_INFINITY);
+        // The player's whole width went past the wall, and Boar predicted every step.
+        assertTrue(walk.x() - 0.3F > wallPos.getX() + 1, "x " + walk.x());
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), walk.violations());
+        this.assertNothingFailed();
+        return wallPos.add(12 - WALL_X, 0, 2 - FENCE_Z);
+    }
+
+    // Sends a chunk with a stone floor at Y 0 and a wall of this block across the player's way at local X WALL_X and Y 1 and 2, and returns the wall's block on the player's way.
+    // A block of the other ID, unless it is -1, stands at local (12, 1, 2), away from the way.
+    private Vector3i sendAWall(Session session, BoarPlayer player, int wall, int other) throws Exception {
         int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
         int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
         int[] blocks = new int[4096];
@@ -1271,14 +1317,25 @@ class BoarSessionTest {
                 }
             }
         }
-        Vector3i away = Vector3i.from((chunkX << 4) + 12, 1, (chunkZ << 4) + 2);
         if (other != -1) {
             blocks[12 << 8 | 2 << 4 | 1] = other;
         }
         this.sendChunk(chunkX, chunkZ, subChunk(0, blocks));
         Vector3i wallPos = Vector3i.from((chunkX << 4) + WALL_X, 1, (chunkZ << 4) + FENCE_Z);
         awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(wallPos, 0).isAir());
+        return wallPos;
+    }
 
+    private record Walk(float x, int nextTick, List<String> violations) {
+    }
+
+    // Stands still for 10 ticks, then walks east for 80, as the client moves on stone, from 2.5 into the chunk on the wall's line.
+    private Walk walkEast(Session session, BoarPlayer player, Vector3i wall, float face) throws Exception {
+        return this.walkEast(session, player, wall, face, ((wall.getX() >> 4) << 4) + 2.5F, 10, 1);
+    }
+
+    // The client stops the player's front at the face, at this X, where it collides: its X velocity becomes 0 and it says HORIZONTAL_COLLISION. Returns where it ended and the violations Boar flagged.
+    private Walk walkEast(Session session, BoarPlayer player, Vector3i wall, float face, float x, int still, int firstTick) throws Exception {
         List<Violation> violations = new CopyOnWriteArrayList<>();
         ViolationListener listener = violation -> {
             if (violation.player() == player) {
@@ -1287,18 +1344,23 @@ class BoarSessionTest {
         };
         Boar.getInstance().getViolationRegistry().register(listener);
         try {
-            float x = (chunkX << 4) + 2.5F;
-            float z = wallPos.getZ() + 0.5F;
+            float z = wall.getZ() + 0.5F;
             Vec3 velocity = Vec3.ZERO.clone();
             long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
-            int ticks = 90;
+            int ticks = still + 80;
             for (int tick = 1; tick <= ticks; tick++) {
-                boolean walking = tick > 10;
+                boolean walking = tick > still;
+                boolean collided = false;
                 if (walking) {
                     Vec3 input = MathUtil.getInputVector(new Vec3(0, 0, 0.3F * 0.98F), 0.1F, -90);
                     velocity = velocity.add(input);
                     x += velocity.x;
                     z += velocity.z;
+                    if (x + 0.3F > face) {
+                        x = face - 0.3F;
+                        velocity = new Vec3(0, velocity.y, velocity.z);
+                        collided = true;
+                    }
                     velocity = velocity.multiply(0.546F, 1, 0.546F);
                 }
                 this.answerLatency();
@@ -1311,22 +1373,19 @@ class BoarSessionTest {
                     input.setRawMoveVector(Vector2f.from(0, 0.3F));
                     input.setAnalogMoveVector(Vector2f.from(0, 0.3F));
                 }
+                if (collided) {
+                    input.getInputData().add(PlayerAuthInputData.HORIZONTAL_COLLISION);
+                }
                 input.setDelta(Vector3f.from(velocity.x, -0.0784F, velocity.z));
-                input.setTick(tick);
+                input.setTick(firstTick + tick - 1);
                 this.client.session.get().sendPacket(input);
                 Thread.sleep(50);
             }
             awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + ticks);
-            // The player's whole width went past the wall, and Boar predicted every step.
-            assertTrue(x - 0.3F > wallPos.getX() + 1, "x " + x);
-            assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
-            assertTrue(onLoop(session, () -> player.onGround));
-            assertEquals(List.of(), violations.stream().map(violation -> violation.check().getClass().getSimpleName() + " " + violation.verbose()).toList());
         } finally {
             Boar.getInstance().getViolationRegistry().unregister(listener);
         }
-        this.assertNothingFailed();
-        return away;
+        return new Walk(x, firstTick + still + 80, violations.stream().map(violation -> violation.check().getClass().getSimpleName() + " " + violation.verbose()).toList());
     }
 
     // Boar takes the custom block for a full cube, so a click on it places the stone above it.
