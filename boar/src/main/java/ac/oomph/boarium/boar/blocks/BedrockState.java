@@ -170,7 +170,12 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         return REPLACEABLE.get(this.intermediaryId);
     }
 
-    // The palette's boxes, without the shapes that neighbours give fences, panes, bars and stair corners
+    @Override
+    public List<Box> connectionCollisionOverride(BoarPlayer player, Vector3i pos) {
+        return BedrockConnections.collisionOverride(player, this.intermediaryId, pos.getX(), pos.getY(), pos.getZ());
+    }
+
+    // The 1.26.30 states of fences, panes, bars, chorus plants and stairs hold no connections, so connectionCollisionOverride builds those shapes instead.
     @Override
     public BoarBlockState applyConnectionShape(BoarPlayer player, BoarBlockState self, Vector3i pos) {
         return self;

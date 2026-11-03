@@ -1,0 +1,537 @@
+# Which kinds of block (fence, nether_fence, wall, thin) the 1.26.30 client lets join each of these Bedrock blocks, on any side; none means no kind.
+# Traced from the disassembly of each BlockConnectionRuleDescription initializeComponentFromCode call in VanillaBlockTypes::registerBlocks (Minecraft Education 1.26.30.1 client, macOS arm64); the copper bar, chain, lantern and lightning rod rules come from its lambdas, and air's from the registerBlocks that registers air.
+# Blocks not listed here let every kind join, except fence gates, trapdoors, stairs, slabs, top snow, shelves and piston arms, whose rule depends on their state.
+minecraft:acacia_button none
+minecraft:acacia_door none
+minecraft:acacia_fence fence
+minecraft:acacia_hanging_sign none
+minecraft:acacia_leaves none
+minecraft:acacia_pressure_plate none
+minecraft:acacia_sapling none
+minecraft:acacia_standing_sign none
+minecraft:acacia_wall_sign none
+minecraft:activator_rail none
+minecraft:air none
+minecraft:allium none
+minecraft:amethyst_cluster none
+minecraft:andesite_wall wall thin
+minecraft:anvil none
+minecraft:azalea none
+minecraft:azalea_leaves none
+minecraft:azalea_leaves_flowered none
+minecraft:azure_bluet none
+minecraft:bamboo none
+minecraft:bamboo_button none
+minecraft:bamboo_door none
+minecraft:bamboo_fence fence
+minecraft:bamboo_hanging_sign none
+minecraft:bamboo_pressure_plate none
+minecraft:bamboo_sapling none
+minecraft:bamboo_standing_sign none
+minecraft:bamboo_wall_sign none
+minecraft:barrier none
+minecraft:bed none
+minecraft:beetroot none
+minecraft:bell none
+minecraft:big_dripleaf none
+minecraft:birch_button none
+minecraft:birch_door none
+minecraft:birch_fence fence
+minecraft:birch_hanging_sign none
+minecraft:birch_leaves none
+minecraft:birch_pressure_plate none
+minecraft:birch_sapling none
+minecraft:birch_standing_sign none
+minecraft:birch_wall_sign none
+minecraft:black_candle none
+minecraft:black_candle_cake none
+minecraft:black_carpet none
+minecraft:black_shulker_box none
+minecraft:black_stained_glass_pane wall thin
+minecraft:blackstone_wall wall thin
+minecraft:blue_candle none
+minecraft:blue_candle_cake none
+minecraft:blue_carpet none
+minecraft:blue_orchid none
+minecraft:blue_shulker_box none
+minecraft:blue_stained_glass_pane wall thin
+minecraft:border_block wall thin
+minecraft:brain_coral none
+minecraft:brain_coral_fan none
+minecraft:brain_coral_wall_fan none
+minecraft:brewing_stand none
+minecraft:brick_wall wall thin
+minecraft:brown_candle none
+minecraft:brown_candle_cake none
+minecraft:brown_carpet none
+minecraft:brown_mushroom none
+minecraft:brown_shulker_box none
+minecraft:brown_stained_glass_pane wall thin
+minecraft:bubble_column none
+minecraft:bubble_coral none
+minecraft:bubble_coral_fan none
+minecraft:bubble_coral_wall_fan none
+minecraft:bush none
+minecraft:cactus none
+minecraft:cactus_flower none
+minecraft:cake none
+minecraft:calibrated_sculk_sensor none
+minecraft:camera none
+minecraft:campfire none
+minecraft:candle none
+minecraft:candle_cake none
+minecraft:carrots none
+minecraft:carved_pumpkin none
+minecraft:cauldron none
+minecraft:cave_vines none
+minecraft:cave_vines_body_with_berries none
+minecraft:cave_vines_head_with_berries none
+minecraft:chalkboard none
+minecraft:cherry_button none
+minecraft:cherry_door none
+minecraft:cherry_fence fence
+minecraft:cherry_hanging_sign none
+minecraft:cherry_leaves none
+minecraft:cherry_pressure_plate none
+minecraft:cherry_sapling none
+minecraft:cherry_standing_sign none
+minecraft:cherry_wall_sign none
+minecraft:chest none
+minecraft:chipped_anvil none
+minecraft:chorus_flower none
+minecraft:chorus_plant none
+minecraft:cinnabar_brick_wall wall thin
+minecraft:cinnabar_wall wall thin
+minecraft:closed_eyeblossom none
+minecraft:cobbled_deepslate_wall wall thin
+minecraft:cobblestone_wall wall thin
+minecraft:cocoa none
+minecraft:colored_torch_blue none
+minecraft:colored_torch_green none
+minecraft:colored_torch_purple none
+minecraft:colored_torch_red none
+minecraft:conduit none
+minecraft:copper_bars wall thin
+minecraft:copper_chain none
+minecraft:copper_chest none
+minecraft:copper_door none
+minecraft:copper_golem_statue none
+minecraft:copper_lantern none
+minecraft:copper_torch none
+minecraft:cornflower none
+minecraft:creeper_head none
+minecraft:crimson_button none
+minecraft:crimson_door none
+minecraft:crimson_fence fence
+minecraft:crimson_fungus none
+minecraft:crimson_hanging_sign none
+minecraft:crimson_pressure_plate none
+minecraft:crimson_roots none
+minecraft:crimson_standing_sign none
+minecraft:crimson_wall_sign none
+minecraft:cyan_candle none
+minecraft:cyan_candle_cake none
+minecraft:cyan_carpet none
+minecraft:cyan_shulker_box none
+minecraft:cyan_stained_glass_pane wall thin
+minecraft:damaged_anvil none
+minecraft:dandelion none
+minecraft:dark_oak_button none
+minecraft:dark_oak_door none
+minecraft:dark_oak_fence fence
+minecraft:dark_oak_hanging_sign none
+minecraft:dark_oak_leaves none
+minecraft:dark_oak_pressure_plate none
+minecraft:dark_oak_sapling none
+minecraft:darkoak_standing_sign none
+minecraft:darkoak_wall_sign none
+minecraft:daylight_detector none
+minecraft:daylight_detector_inverted none
+minecraft:dead_brain_coral none
+minecraft:dead_brain_coral_fan none
+minecraft:dead_brain_coral_wall_fan none
+minecraft:dead_bubble_coral none
+minecraft:dead_bubble_coral_fan none
+minecraft:dead_bubble_coral_wall_fan none
+minecraft:dead_fire_coral none
+minecraft:dead_fire_coral_fan none
+minecraft:dead_fire_coral_wall_fan none
+minecraft:dead_horn_coral none
+minecraft:dead_horn_coral_fan none
+minecraft:dead_horn_coral_wall_fan none
+minecraft:dead_tube_coral none
+minecraft:dead_tube_coral_fan none
+minecraft:dead_tube_coral_wall_fan none
+minecraft:deadbush none
+minecraft:decorated_pot none
+minecraft:deepslate_brick_wall wall thin
+minecraft:deepslate_tile_wall wall thin
+minecraft:deprecated_anvil none
+minecraft:detector_rail none
+minecraft:diorite_wall wall thin
+minecraft:dragon_egg none
+minecraft:dragon_head none
+minecraft:dried_ghast none
+minecraft:enchanting_table none
+minecraft:end_gateway none
+minecraft:end_portal none
+minecraft:end_portal_frame none
+minecraft:end_rod none
+minecraft:end_stone_brick_wall wall thin
+minecraft:ender_chest none
+minecraft:exposed_copper_bars wall thin
+minecraft:exposed_copper_chain none
+minecraft:exposed_copper_chest none
+minecraft:exposed_copper_door none
+minecraft:exposed_copper_golem_statue none
+minecraft:exposed_copper_lantern none
+minecraft:exposed_lightning_rod none
+minecraft:farmland none
+minecraft:fern none
+minecraft:fire none
+minecraft:fire_coral none
+minecraft:fire_coral_fan none
+minecraft:fire_coral_wall_fan none
+minecraft:firefly_bush none
+minecraft:flower_pot none
+minecraft:flowering_azalea none
+minecraft:flowing_lava none
+minecraft:flowing_water none
+minecraft:frame none
+minecraft:frog_spawn none
+minecraft:glass_pane wall thin
+minecraft:glow_frame none
+minecraft:glow_lichen none
+minecraft:golden_dandelion none
+minecraft:golden_rail none
+minecraft:granite_wall wall thin
+minecraft:grass_path none
+minecraft:gray_candle none
+minecraft:gray_candle_cake none
+minecraft:gray_carpet none
+minecraft:gray_shulker_box none
+minecraft:gray_stained_glass_pane wall thin
+minecraft:green_candle none
+minecraft:green_candle_cake none
+minecraft:green_carpet none
+minecraft:green_shulker_box none
+minecraft:green_stained_glass_pane wall thin
+minecraft:grindstone none
+minecraft:hanging_roots none
+minecraft:hard_black_stained_glass_pane wall thin
+minecraft:hard_blue_stained_glass_pane wall thin
+minecraft:hard_brown_stained_glass_pane wall thin
+minecraft:hard_cyan_stained_glass_pane wall thin
+minecraft:hard_glass_pane wall thin
+minecraft:hard_gray_stained_glass_pane wall thin
+minecraft:hard_green_stained_glass_pane wall thin
+minecraft:hard_light_blue_stained_glass_pane wall thin
+minecraft:hard_light_gray_stained_glass_pane wall thin
+minecraft:hard_lime_stained_glass_pane wall thin
+minecraft:hard_magenta_stained_glass_pane wall thin
+minecraft:hard_orange_stained_glass_pane wall thin
+minecraft:hard_pink_stained_glass_pane wall thin
+minecraft:hard_purple_stained_glass_pane wall thin
+minecraft:hard_red_stained_glass_pane wall thin
+minecraft:hard_white_stained_glass_pane wall thin
+minecraft:hard_yellow_stained_glass_pane wall thin
+minecraft:heavy_core none
+minecraft:heavy_weighted_pressure_plate none
+minecraft:hopper none
+minecraft:horn_coral none
+minecraft:horn_coral_fan none
+minecraft:horn_coral_wall_fan none
+minecraft:iron_bars wall thin
+minecraft:iron_chain none
+minecraft:iron_door none
+minecraft:jigsaw none
+minecraft:jungle_button none
+minecraft:jungle_door none
+minecraft:jungle_fence fence
+minecraft:jungle_hanging_sign none
+minecraft:jungle_leaves none
+minecraft:jungle_pressure_plate none
+minecraft:jungle_sapling none
+minecraft:jungle_standing_sign none
+minecraft:jungle_wall_sign none
+minecraft:kelp none
+minecraft:ladder none
+minecraft:lantern none
+minecraft:large_amethyst_bud none
+minecraft:large_fern none
+minecraft:lava none
+minecraft:leaf_litter none
+minecraft:lectern none
+minecraft:lever none
+minecraft:light_block_0 none
+minecraft:light_block_1 none
+minecraft:light_block_10 none
+minecraft:light_block_11 none
+minecraft:light_block_12 none
+minecraft:light_block_13 none
+minecraft:light_block_14 none
+minecraft:light_block_15 none
+minecraft:light_block_2 none
+minecraft:light_block_3 none
+minecraft:light_block_4 none
+minecraft:light_block_5 none
+minecraft:light_block_6 none
+minecraft:light_block_7 none
+minecraft:light_block_8 none
+minecraft:light_block_9 none
+minecraft:light_blue_candle none
+minecraft:light_blue_candle_cake none
+minecraft:light_blue_carpet none
+minecraft:light_blue_shulker_box none
+minecraft:light_blue_stained_glass_pane wall thin
+minecraft:light_gray_candle none
+minecraft:light_gray_candle_cake none
+minecraft:light_gray_carpet none
+minecraft:light_gray_shulker_box none
+minecraft:light_gray_stained_glass_pane wall thin
+minecraft:light_weighted_pressure_plate none
+minecraft:lightning_rod none
+minecraft:lilac none
+minecraft:lily_of_the_valley none
+minecraft:lime_candle none
+minecraft:lime_candle_cake none
+minecraft:lime_carpet none
+minecraft:lime_shulker_box none
+minecraft:lime_stained_glass_pane wall thin
+minecraft:lit_pumpkin none
+minecraft:magenta_candle none
+minecraft:magenta_candle_cake none
+minecraft:magenta_carpet none
+minecraft:magenta_shulker_box none
+minecraft:magenta_stained_glass_pane wall thin
+minecraft:mangrove_button none
+minecraft:mangrove_door none
+minecraft:mangrove_fence fence
+minecraft:mangrove_hanging_sign none
+minecraft:mangrove_leaves none
+minecraft:mangrove_pressure_plate none
+minecraft:mangrove_propagule none
+minecraft:mangrove_standing_sign none
+minecraft:mangrove_wall_sign none
+minecraft:medium_amethyst_bud none
+minecraft:melon_block none
+minecraft:melon_stem none
+minecraft:moss_carpet none
+minecraft:mossy_cobblestone_wall wall thin
+minecraft:mossy_stone_brick_wall wall thin
+minecraft:moving_block none
+minecraft:mud_brick_wall wall thin
+minecraft:nether_brick_fence nether_fence
+minecraft:nether_brick_wall wall thin
+minecraft:nether_sprouts none
+minecraft:nether_wart none
+minecraft:oak_fence fence
+minecraft:oak_hanging_sign none
+minecraft:oak_leaves none
+minecraft:oak_sapling none
+minecraft:open_eyeblossom none
+minecraft:orange_candle none
+minecraft:orange_candle_cake none
+minecraft:orange_carpet none
+minecraft:orange_shulker_box none
+minecraft:orange_stained_glass_pane wall thin
+minecraft:orange_tulip none
+minecraft:oxeye_daisy none
+minecraft:oxidized_copper_bars wall thin
+minecraft:oxidized_copper_chain none
+minecraft:oxidized_copper_chest none
+minecraft:oxidized_copper_door none
+minecraft:oxidized_copper_golem_statue none
+minecraft:oxidized_copper_lantern none
+minecraft:oxidized_lightning_rod none
+minecraft:pale_hanging_moss none
+minecraft:pale_moss_carpet none
+minecraft:pale_oak_button none
+minecraft:pale_oak_door none
+minecraft:pale_oak_fence fence
+minecraft:pale_oak_hanging_sign none
+minecraft:pale_oak_leaves none
+minecraft:pale_oak_pressure_plate none
+minecraft:pale_oak_sapling none
+minecraft:pale_oak_standing_sign none
+minecraft:pale_oak_wall_sign none
+minecraft:peony none
+minecraft:piglin_head none
+minecraft:pink_candle none
+minecraft:pink_candle_cake none
+minecraft:pink_carpet none
+minecraft:pink_petals none
+minecraft:pink_shulker_box none
+minecraft:pink_stained_glass_pane wall thin
+minecraft:pink_tulip none
+minecraft:pitcher_crop none
+minecraft:pitcher_plant none
+minecraft:player_head none
+minecraft:pointed_dripstone none
+minecraft:polished_blackstone_brick_wall wall thin
+minecraft:polished_blackstone_button none
+minecraft:polished_blackstone_pressure_plate none
+minecraft:polished_blackstone_wall wall thin
+minecraft:polished_cinnabar_wall wall thin
+minecraft:polished_deepslate_wall wall thin
+minecraft:polished_sulfur_wall wall thin
+minecraft:polished_tuff_wall wall thin
+minecraft:poppy none
+minecraft:portal none
+minecraft:potatoes none
+minecraft:powder_snow none
+minecraft:powered_comparator none
+minecraft:powered_repeater none
+minecraft:prismarine_wall wall thin
+minecraft:pumpkin none
+minecraft:pumpkin_stem none
+minecraft:purple_candle none
+minecraft:purple_candle_cake none
+minecraft:purple_carpet none
+minecraft:purple_shulker_box none
+minecraft:purple_stained_glass_pane wall thin
+minecraft:rail none
+minecraft:red_candle none
+minecraft:red_candle_cake none
+minecraft:red_carpet none
+minecraft:red_mushroom none
+minecraft:red_nether_brick_wall wall thin
+minecraft:red_sandstone_wall wall thin
+minecraft:red_shulker_box none
+minecraft:red_stained_glass_pane wall thin
+minecraft:red_tulip none
+minecraft:redstone_torch none
+minecraft:redstone_wire none
+minecraft:reeds none
+minecraft:resin_brick_wall wall thin
+minecraft:resin_clump none
+minecraft:rose_bush none
+minecraft:sandstone_wall wall thin
+minecraft:scaffolding none
+minecraft:sculk_sensor none
+minecraft:sculk_shrieker none
+minecraft:sculk_vein none
+minecraft:sea_pickle none
+minecraft:seagrass none
+minecraft:short_dry_grass none
+minecraft:short_grass none
+minecraft:skeleton_skull none
+minecraft:small_amethyst_bud none
+minecraft:small_dripleaf_block none
+minecraft:sniffer_egg none
+minecraft:soul_campfire none
+minecraft:soul_fire none
+minecraft:soul_lantern none
+minecraft:soul_torch none
+minecraft:spore_blossom none
+minecraft:spruce_button none
+minecraft:spruce_door none
+minecraft:spruce_fence fence
+minecraft:spruce_hanging_sign none
+minecraft:spruce_leaves none
+minecraft:spruce_pressure_plate none
+minecraft:spruce_sapling none
+minecraft:spruce_standing_sign none
+minecraft:spruce_wall_sign none
+minecraft:standing_banner none
+minecraft:standing_sign none
+minecraft:stone_brick_wall wall thin
+minecraft:stone_button none
+minecraft:stone_pressure_plate none
+minecraft:stonecutter_block none
+minecraft:structure_block none
+minecraft:sulfur_brick_wall wall thin
+minecraft:sulfur_spike none
+minecraft:sulfur_wall wall thin
+minecraft:sunflower none
+minecraft:sweet_berry_bush none
+minecraft:tall_dry_grass none
+minecraft:tall_grass none
+minecraft:torch none
+minecraft:torchflower none
+minecraft:torchflower_crop none
+minecraft:trapped_chest none
+minecraft:trip_wire none
+minecraft:tripwire_hook none
+minecraft:tube_coral none
+minecraft:tube_coral_fan none
+minecraft:tube_coral_wall_fan none
+minecraft:tuff_brick_wall wall thin
+minecraft:tuff_wall wall thin
+minecraft:turtle_egg none
+minecraft:twisting_vines none
+minecraft:underwater_torch none
+minecraft:undyed_shulker_box none
+minecraft:unlit_redstone_torch none
+minecraft:unpowered_comparator none
+minecraft:unpowered_repeater none
+minecraft:vine none
+minecraft:wall_banner none
+minecraft:wall_sign none
+minecraft:warped_button none
+minecraft:warped_door none
+minecraft:warped_fence fence
+minecraft:warped_fungus none
+minecraft:warped_hanging_sign none
+minecraft:warped_pressure_plate none
+minecraft:warped_roots none
+minecraft:warped_standing_sign none
+minecraft:warped_wall_sign none
+minecraft:water none
+minecraft:waterlily none
+minecraft:waxed_copper_bars wall thin
+minecraft:waxed_copper_chain none
+minecraft:waxed_copper_chest none
+minecraft:waxed_copper_door none
+minecraft:waxed_copper_golem_statue none
+minecraft:waxed_copper_lantern none
+minecraft:waxed_exposed_copper_bars wall thin
+minecraft:waxed_exposed_copper_chain none
+minecraft:waxed_exposed_copper_chest none
+minecraft:waxed_exposed_copper_door none
+minecraft:waxed_exposed_copper_golem_statue none
+minecraft:waxed_exposed_copper_lantern none
+minecraft:waxed_exposed_lightning_rod none
+minecraft:waxed_lightning_rod none
+minecraft:waxed_oxidized_copper_bars wall thin
+minecraft:waxed_oxidized_copper_chain none
+minecraft:waxed_oxidized_copper_chest none
+minecraft:waxed_oxidized_copper_door none
+minecraft:waxed_oxidized_copper_golem_statue none
+minecraft:waxed_oxidized_copper_lantern none
+minecraft:waxed_oxidized_lightning_rod none
+minecraft:waxed_weathered_copper_bars wall thin
+minecraft:waxed_weathered_copper_chain none
+minecraft:waxed_weathered_copper_chest none
+minecraft:waxed_weathered_copper_door none
+minecraft:waxed_weathered_copper_golem_statue none
+minecraft:waxed_weathered_copper_lantern none
+minecraft:waxed_weathered_lightning_rod none
+minecraft:weathered_copper_bars wall thin
+minecraft:weathered_copper_chain none
+minecraft:weathered_copper_chest none
+minecraft:weathered_copper_door none
+minecraft:weathered_copper_golem_statue none
+minecraft:weathered_copper_lantern none
+minecraft:weathered_lightning_rod none
+minecraft:web none
+minecraft:weeping_vines none
+minecraft:wheat none
+minecraft:white_candle none
+minecraft:white_candle_cake none
+minecraft:white_carpet none
+minecraft:white_shulker_box none
+minecraft:white_stained_glass_pane wall thin
+minecraft:white_tulip none
+minecraft:wildflowers none
+minecraft:wither_rose none
+minecraft:wither_skeleton_skull none
+minecraft:wooden_button none
+minecraft:wooden_door none
+minecraft:wooden_pressure_plate none
+minecraft:yellow_candle none
+minecraft:yellow_candle_cake none
+minecraft:yellow_carpet none
+minecraft:yellow_shulker_box none
+minecraft:yellow_stained_glass_pane wall thin
+minecraft:zombie_head none
