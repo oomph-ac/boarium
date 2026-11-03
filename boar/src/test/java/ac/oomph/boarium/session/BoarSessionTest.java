@@ -187,6 +187,7 @@ class BoarSessionTest {
 
     @AfterEach
     void tearDown() {
+        TestBoar.mitigations(false);
         System.setErr(this.stderr);
         if (this.listener != null) {
             this.listener.close().syncUninterruptibly();
@@ -337,7 +338,7 @@ class BoarSessionTest {
     // cubecraft:pipe sorts before stone and air by name hash, so its 2 states move both by 2.
     @Test
     void readsTheBlocksOfAChunkWhenTheServerAddsCustomBlocks() throws Exception {
-        Session session = this.spawn(login -> new AddsCustomBlock(processors.apply(login)));
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe())));
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
         assertFalse(this.startGame.isBlockNetworkIdsHashed());
         int air = AIR_RUNTIME_ID + 2;
@@ -1017,7 +1018,7 @@ class BoarSessionTest {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(200);
         List<Class<?>> toClient = new ArrayList<>();
         for (BedrockPacket packet; !toClient.contains(NetworkStackLatencyPacket.class) && (packet = this.client.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
-            // Skips Boar's keepalives from before the placement
+            // Skips Boar's latency packets from before the placement
             if (!toClient.isEmpty() || packet instanceof UpdateBlockPacket) {
                 toClient.add(packet.getClass());
             }
@@ -1025,6 +1026,52 @@ class BoarSessionTest {
         // Both blocks and the held slot, then Boar's acknowledgment
         assertEquals(List.of(UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, NetworkStackLatencyPacket.class), toClient);
         this.assertNothingFailed();
+    }
+
+    // Boar cannot read a block listed twice, so with sorted IDs it knows none of the client's runtime IDs.
+    @Test
+    void leavesThePlayerUncheckedWhenItsRuntimeIdsAreUnknown() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe(), pipe())));
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+        assertNull(Boar.getInstance().getPlayerManager().get(session));
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertTrue(log.contains("Boar does not check Tester, since it does not know the client's block runtime IDs"), log);
+        this.logged.reset();
+
+        this.readItemsOnTheClient();
+        SetPlayerGameTypePacket survival = new SetPlayerGameTypePacket();
+        survival.setGamemode(GameType.SURVIVAL.ordinal());
+        this.server.send(survival);
+        this.server.send(new Flush());
+        assertEquals(GameType.SURVIVAL.ordinal(), this.client.await(SetPlayerGameTypePacket.class).getGamemode());
+        Vector3f eyes = this.startGame.getPlayerPosition();
+        this.client.session.get().sendPacket(place(eyes.toInt().add(30, -2, 0), eyes, stones()));
+        while (!(this.server.await() instanceof InventoryTransactionPacket)) {
+            // The client's other packets.
+        }
+        // Boar's listeners saw no packet of either side, not even the StartGame.
+        assertTrue(RECORDER.received.isEmpty(), RECORDER.received.toString());
+        assertTrue(RECORDER.sent.isEmpty(), RECORDER.sent.toString());
+        this.assertNothingFailed();
+    }
+
+    @Test
+    void runsWithoutMitigationsWhenItCannotReadTheCustomBlocks() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), true, List.of(pipe(), pipe())));
+        assertTrue(this.startGame.isBlockNetworkIdsHashed());
+        assertTrue(Boar.getInstance().getPlayerManager().get(session).disableMitigations());
+        assertTrue(this.logged.toString(StandardCharsets.UTF_8).contains("Boar runs without mitigations for Tester and later players with this block palette, since it cannot send some of the server's custom blocks back as themselves"));
+    }
+
+    @Test
+    void keepsMitigationsOnWhenItReadsEveryCustomBlock() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe())));
+        assertFalse(Boar.getInstance().getPlayerManager().get(session).disableMitigations());
+        this.assertNothingFailed();
+        assertFalse(this.logged.toString(StandardCharsets.UTF_8).contains("without mitigations"));
     }
 
     @Test
@@ -1044,7 +1091,7 @@ class BoarSessionTest {
         SetTimePacket time = new SetTimePacket();
         time.setTime(6000);
         this.server.send(time);
-        this.assertOnlyKeepalivesFor(300);
+        this.assertOnlyLatencyPacketsFor(300);
 
         this.server.send(new Flush());
         assertEquals(List.of(SetPlayerGameTypePacket.class, UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, UpdateBlockPacket.class, UpdateBlockPacket.class, InventorySlotPacket.class, SetTimePacket.class,
@@ -1065,7 +1112,7 @@ class BoarSessionTest {
             TestBoar.openServerBatch(player);
             return null;
         });
-        this.assertOnlyKeepalivesFor(300);
+        this.assertOnlyLatencyPacketsFor(300);
 
         this.server.send(new Flush());
         assertEquals(List.of(InventorySlotPacket.class, NetworkStackLatencyPacket.class), this.receivedUntilAcknowledgment());
@@ -1396,8 +1443,8 @@ class BoarSessionTest {
         clientHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
     }
 
-    // Waits this long, and fails if the client gets any packet but Boar's keepalives.
-    private void assertOnlyKeepalivesFor(long millis) throws Exception {
+    // Waits this long, and fails if the client gets any packet but Boar's latency packets.
+    private void assertOnlyLatencyPacketsFor(long millis) throws Exception {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
         List<Class<?>> received = new ArrayList<>();
         for (BedrockPacket packet; (packet = this.client.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
@@ -1514,8 +1561,14 @@ class BoarSessionTest {
         assertFalse(log.contains(" ERROR ") || log.contains("Exception"), log);
     }
 
-    // Boar's processor, with a custom block of 2 states added to the StartGame the client is sent
-    private record AddsCustomBlock(Processor boar) implements Processor {
+    // A custom block of 2 states
+    private static BlockPropertyData pipe() {
+        NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, (byte) 0, (byte) 1).build();
+        return new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).build());
+    }
+
+    // Boar's processor, with these custom blocks added to the StartGame the client is sent, and its hashed IDs set
+    private record AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks) implements Processor {
         @Override
         public Set<Integer> clientDecode() {
             return this.boar.clientDecode();
@@ -1533,8 +1586,8 @@ class BoarSessionTest {
 
         @Override
         public void startGame(Session session, StartGamePacket startGame) {
-            NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, (byte) 0, (byte) 1).build();
-            startGame.getBlockProperties().add(new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).build()));
+            startGame.getBlockProperties().addAll(this.blocks);
+            startGame.setBlockNetworkIdsHashed(this.hashedIds);
             this.boar.startGame(session, startGame);
         }
 

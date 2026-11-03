@@ -25,6 +25,11 @@ public final class TestBoar {
         ((BoariumPlayerManager.AckTransport) player.getAckTransport()).serverBatchOpen = true;
     }
 
+    // Sets boarium's boar_mitigations for the players added from now on.
+    public static void mitigations(boolean on) {
+        ((BoariumPlayerManager) Boar.getInstance().getPlayerManager()).mitigations = on;
+    }
+
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {
         if (processors == null) {
             processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false);

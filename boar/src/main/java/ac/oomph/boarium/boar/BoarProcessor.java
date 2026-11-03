@@ -123,7 +123,9 @@ final class BoarProcessor implements Processor {
             LOG.error("Boar could not add {}", session.client().identity().displayName(), e);
             return;
         }
-        passes(player, startGame, false);
+        if (player != null) {
+            passes(player, startGame, false);
+        }
     }
 
     // Boar skips its movement checks while the player is in a loading screen, and the client's end of the join screen may never reach it, so it ends at spawn.

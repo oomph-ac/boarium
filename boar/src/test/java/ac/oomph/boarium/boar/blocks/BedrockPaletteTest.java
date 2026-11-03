@@ -207,6 +207,22 @@ class BedrockPaletteTest {
     }
 
     @Test
+    void customBlocksPastTheCapAreNotCovered() {
+        PrintStream stderr = System.err;
+        System.setErr(new PrintStream(new ByteArrayOutputStream(), true, StandardCharsets.UTF_8));
+        try {
+            for (boolean hashed : new boolean[] {false, true}) {
+                // The pipe's 2 states are past a cap of 1.
+                BlockMappingInfo info = new BedrockPalette(hashed, List.of(CustomBlock.of(pipe())), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, 1)).mappingInfo;
+                assertFalse(BedrockPalette.runtimeIdsUnknown(info));
+                assertFalse(BedrockPalette.coversEveryBlock(info));
+            }
+        } finally {
+            System.setErr(stderr);
+        }
+    }
+
+    @Test
     void hashedIdsAddTheCustomStates() throws IOException {
         int stone = table.firstIndex("minecraft:stone");
         assertEquals(table.networkHash(stone), referenceHash("minecraft:stone", table.states(stone)));
@@ -332,10 +348,13 @@ class BedrockPaletteTest {
         // Two values found by search, whose states have the same network hash
         BlockPropertyData clash = block("cubecraft:clash", property("n", NbtType.STRING, List.of("v37092", "v219640")));
         assertEquals(referenceHash("cubecraft:clash", NbtMap.builder().putString("n", "v37092").build()), referenceHash("cubecraft:clash", NbtMap.builder().putString("n", "v219640").build()));
-        assertSame(BedrockPalette.mappingInfo(startGame(true)), BedrockPalette.mappingInfo(startGame(true, clash)));
+        BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, clash));
+        assertTrue(hashed.isKnownRawId(hashed.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertFalse(BedrockPalette.coversEveryBlock(hashed));
         // Sorted IDs do not use the hash.
         BlockMappingInfo sorted = BedrockPalette.mappingInfo(startGame(false, clash));
         assertTrue(sorted.isKnownRawId(sorted.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(BedrockPalette.coversEveryBlock(sorted));
     }
 
     @Test
@@ -348,10 +367,16 @@ class BedrockPaletteTest {
         assertEquals(SORTED_AIR, sorted.toIntermediary().applyAsInt(stone));
         assertFalse(sorted.isKnownRawId(stone));
         assertFalse(sorted.isKnownRawId(sorted.airId()));
+        assertTrue(BedrockPalette.runtimeIdsUnknown(sorted));
+        assertFalse(BedrockPalette.coversEveryBlock(sorted));
         BlockMappingInfo twice = BedrockPalette.mappingInfo(startGame(false, pipe(), pipe()));
         assertFalse(twice.isKnownRawId(twice.fromIntermediary().applyAsInt(SORTED_STONE)));
 
         // With hashed IDs, custom blocks never move vanilla IDs.
-        assertSame(BedrockPalette.mappingInfo(startGame(true)), BedrockPalette.mappingInfo(startGame(true, noValues)));
+        BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, noValues));
+        assertTrue(hashed.isKnownRawId(hashed.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertFalse(BedrockPalette.runtimeIdsUnknown(hashed));
+        assertFalse(BedrockPalette.coversEveryBlock(hashed));
+        assertTrue(BedrockPalette.coversEveryBlock(BedrockPalette.mappingInfo(startGame(true, pipe()))));
     }
 }

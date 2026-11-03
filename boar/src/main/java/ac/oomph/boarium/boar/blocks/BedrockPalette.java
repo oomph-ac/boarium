@@ -59,6 +59,8 @@ public final class BedrockPalette {
 
     private final boolean hashedIds;
     private final boolean idsUnknown;
+    // False when Boar could not read the server's custom blocks, or some got no custom ID, so Boar cannot send those blocks back to the client as themselves.
+    private final boolean coversEveryBlock;
     // Each runtime ID's intermediary ID, or CUSTOM; null with hashed IDs
     private final int[] sortedEntries;
     // The runtime IDs of custom states, sorted, and the intermediary ID (or CUSTOM) of each; with hashed IDs only
@@ -71,15 +73,21 @@ public final class BedrockPalette {
     private final CustomBlock[] customBlocks;
     private final int[] customFirstRuntimeIds;
     private final Map<Integer, BlockDefinition> customDefinitions = new ConcurrentHashMap<>();
-    private final BlockMappingInfo mappingInfo;
+    final BlockMappingInfo mappingInfo;
 
-    private BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean idsUnknown) {
+    private BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread) {
+        this(hashedIds, blocks, customBlocksUnread, CUSTOM_IDS);
+    }
+
+    // Tests give a palette custom IDs of its own, so that it can run out of them.
+    BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread, CustomIds customIds) {
         this.hashedIds = hashedIds;
-        this.idsUnknown = idsUnknown;
+        this.idsUnknown = customBlocksUnread && !hashedIds;
         Map<CustomBlock, Integer> firstIds = new HashMap<>();
         for (CustomBlock block : blocks) {
-            firstIds.put(block, CUSTOM_IDS.of(block));
+            firstIds.put(block, customIds.of(block));
         }
+        this.coversEveryBlock = !customBlocksUnread && firstIds.values().stream().allMatch(id -> id >= 0);
         Map<CustomBlock, Integer> firstRuntimeIds = new HashMap<>();
         if (hashedIds) {
             this.sortedEntries = null;
@@ -170,13 +178,23 @@ public final class BedrockPalette {
             return blocks.isEmpty() ? of(key.hashed()) : new BedrockPalette(key.hashed(), blocks, false);
         } catch (IllegalArgumentException e) {
             LOG.error("StartGame has custom blocks Boar cannot read ({}), so Boar treats {} as unknown", e.getMessage(), key.hashed() ? "their block IDs" : "every block ID");
-            return key.hashed() ? of(true) : Vanilla.UNKNOWN;
+            return key.hashed() ? Vanilla.UNREAD_HASHED : Vanilla.UNKNOWN;
         }
     }
 
     // The palette without custom blocks
     static BedrockPalette of(boolean hashedIds) {
         return hashedIds ? Vanilla.HASHED : Vanilla.SORTED;
+    }
+
+    // Whether a mapping is for a client whose every block runtime ID is unknown
+    public static boolean runtimeIdsUnknown(BlockMappingInfo info) {
+        return of(info).idsUnknown;
+    }
+
+    // Whether Boar can send every block of a mapping's client back to it as itself
+    public static boolean coversEveryBlock(BlockMappingInfo info) {
+        return of(info).coversEveryBlock;
     }
 
     static BlockDefinition definition(BoarPlayer player, int id) {
@@ -361,5 +379,6 @@ public final class BedrockPalette {
         static final BedrockPalette SORTED = new BedrockPalette(false, List.of(), false);
         static final BedrockPalette HASHED = new BedrockPalette(true, List.of(), false);
         static final BedrockPalette UNKNOWN = new BedrockPalette(false, List.of(), true);
+        static final BedrockPalette UNREAD_HASHED = new BedrockPalette(true, List.of(), true);
     }
 }

@@ -34,10 +34,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
@@ -49,23 +51,32 @@ import java.util.concurrent.TimeUnit;
 final class BoariumPlayerManager extends BoarPlayerManager<Session> {
     private static final Logger LOG = LoggerFactory.getLogger(BoariumPlayerManager.class);
     private static final Set<List<String>> LOGGED_MISSING_ITEMS = ConcurrentHashMap.newKeySet();
+    // Weak, so that the palettes BedrockPalette no longer caches can be freed
+    private static final Set<BlockMappingInfo> LOGGED_WITHOUT_MITIGATIONS = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
 
     // The block mapping of each player being added, which Boar asks for while it makes the player.
     private final Map<Session, BlockMappingInfo> adding = new ConcurrentHashMap<>();
-    private final boolean mitigations;
+    // Not final, since the tests share one Boar and change it.
+    volatile boolean mitigations;
 
     BoariumPlayerManager(boolean mitigations) {
         this.mitigations = mitigations;
     }
 
-    // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs.
+    // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs, or returns null when Boar does not know them.
     BoarPlayer add(Session session, StartGamePacket startGame) {
         // Boar's checks of an item the server's list lacks never match; most likely the server runs an older Bedrock version.
         List<String> missing = BedrockItems.missingReferences(session.itemDefinitions());
         if (!missing.isEmpty() && LOGGED_MISSING_ITEMS.add(missing)) {
             LOG.warn("The server of {} lacks Boar's items {}", session.client().identity().displayName(), missing);
         }
-        this.adding.put(session, BedrockPalette.mappingInfo(startGame));
+        BlockMappingInfo mappingInfo = BedrockPalette.mappingInfo(startGame);
+        // Boar would read every block as air, and so predict a fall on any floor.
+        if (BedrockPalette.runtimeIdsUnknown(mappingInfo)) {
+            LOG.warn("Boar does not check {}, since it does not know the client's block runtime IDs", session.client().identity().displayName());
+            return null;
+        }
+        this.adding.put(session, mappingInfo);
         try {
             return this.add(session);
         } finally {
@@ -155,10 +166,20 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         player.setPacketInjector(session::sendToServer);
     }
 
-    // boarium's boar_mitigations decides, in place of disable-mitigations in Boar's own config.
+    // boarium's boar_mitigations decides, in place of disable-mitigations in Boar's own config. Boar's mitigations undo placements by resending blocks, so they stay off for a player with blocks Boar cannot resend as themselves.
     @Override
     protected boolean shouldDisableMitigations(Session session) {
-        return !this.mitigations;
+        if (!this.mitigations) {
+            return true;
+        }
+        BlockMappingInfo mappingInfo = this.getMappingInfo(session);
+        if (BedrockPalette.coversEveryBlock(mappingInfo)) {
+            return false;
+        }
+        if (LOGGED_WITHOUT_MITIGATIONS.add(mappingInfo)) {
+            LOG.warn("Boar runs without mitigations for {} and later players with this block palette, since it cannot send some of the server's custom blocks back as themselves", session.client().identity().displayName());
+        }
+        return true;
     }
 
     // The client data's DeviceOS, or 0 when it has none.
