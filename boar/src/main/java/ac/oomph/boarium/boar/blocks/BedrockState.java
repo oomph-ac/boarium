@@ -207,7 +207,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         return self;
     }
 
-    // Boar keeps friction in its state classes, not in the delegate.
+    // Boar keeps friction in its state classes, not in the delegate, and asks them for the boxes at a position.
     private static final class CustomState extends VanillaBoarBlockState {
         CustomState(BedrockState delegate) {
             super(delegate);
@@ -216,6 +216,23 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         @Override
         public float getFriction() {
             return BedrockPalette.customFriction(this.intermediaryId());
+        }
+
+        // A random offset moves the boxes as if the block stood that many blocks away. For a player it uses the 32-bit X seed that boarium's sessions always give Boar.
+        @Override
+        public List<Box> findCollision(BoarPlayer player, Vector3i pos, Box playerAABB, boolean checkAAB) {
+            CustomComponents.RandomOffset offset = BedrockPalette.customOffset(this.intermediaryId());
+            if (offset == null) {
+                return super.findCollision(player, pos, playerAABB, checkAAB);
+            }
+            boolean wideSeed = player == null || player.getSession().wideRandomOffsetSeed();
+            return super.findCollision(player, pos.add(offset.blocks(pos.getX(), pos.getZ(), wideSeed)), playerAABB, checkAAB);
+        }
+
+        // Boar's isSolid asks findCollision for the boxes at position 0, where a random offset would move them, so this asks for them in place.
+        @Override
+        public boolean isSolid(BoarPlayer player) {
+            return new VanillaBoarBlockState(this.delegate()).isSolid(player);
         }
     }
 

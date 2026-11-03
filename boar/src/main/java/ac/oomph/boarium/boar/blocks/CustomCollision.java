@@ -1,20 +1,23 @@
 package ac.oomph.boarium.boar.blocks;
 
 import ac.boar.anticheat.util.math.Box;
+import ac.oomph.boarium.boar.blocks.CustomComponents.RandomOffset;
 import org.cloudburstmc.nbt.NbtList;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtType;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * The collision boxes of each state of a custom block, as the 1.26.30 client builds them from the minecraft:collision_box and minecraft:transformation components in StartGame's block properties.
- * A state whose boxes Boar cannot tell is a full cube, and {@link #guess()} says why.
+ * The collision boxes of each state of a custom block, as the 1.26.30 client builds them from the minecraft:collision_box and minecraft:transformation components in StartGame's block properties, and the random offset that moves them by position.
+ * A state whose boxes Boar cannot tell is a full cube that does not move, and {@link #guess()} says why.
  */
 final class CustomCollision {
     static final List<Box> FULL_CUBE = List.of(new Box(0, 0, 0, 1, 1, 1));
@@ -43,12 +46,12 @@ final class CustomCollision {
         SHAPES.put(new Corners(new float[0]), NONE);
     }
 
-    private final List<List<Box>> shapes;
+    private final List<StateCollision> shapes;
     // Each state's index in shapes, or null when every state has the first
     private final char[] stateShapes;
     private final String guess;
 
-    private CustomCollision(List<List<Box>> shapes, char[] stateShapes, String guess) {
+    private CustomCollision(List<StateCollision> shapes, char[] stateShapes, String guess) {
         this.shapes = shapes;
         this.stateShapes = stateShapes;
         this.guess = guess;
@@ -60,14 +63,15 @@ final class CustomCollision {
      * @param keys the block's keys, as {@link CustomBlock} has them
      * @param values each key's values
      * @param radices how many permutations each key spans in the block's states, where the first key changes fastest from one state to the next
+     * @param components the block's components, which give each state's random offset
      */
-    static CustomCollision of(List<String> keys, List<NbtList<?>> values, int[] radices, int stateCount, NbtMap properties, Budget budget) {
+    static CustomCollision of(List<String> keys, List<NbtList<?>> values, int[] radices, int stateCount, NbtMap properties, Budget budget, CustomComponents components) {
         if (!budget.take(stateCount)) {
             return guessed(SPENT);
         }
-        NbtMap components = properties.get("components") instanceof NbtMap map ? map : NbtMap.EMPTY;
-        Component base = component(components.get(COLLISION), budget);
-        Transformation baseTransformation = transformation(components.get(TRANSFORMATION));
+        NbtMap baseComponents = properties.get("components") instanceof NbtMap map ? map : NbtMap.EMPTY;
+        Component base = component(baseComponents.get(COLLISION), budget);
+        Transformation baseTransformation = transformation(baseComponents.get(TRANSFORMATION));
         // The client reads molangVersion only from an int tag, and uses 0 when it is missing or not from 0 to 13 (digestServerBlockProperties).
         int molangVersion = properties.get("molangVersion") instanceof Integer version && version >= 0 && version <= 13 ? version : 0;
         List<Permutation> permutations = new ArrayList<>();
@@ -100,8 +104,8 @@ final class CustomCollision {
             }
         }
 
-        List<List<Box>> shapes = new ArrayList<>();
-        Map<List<Box>, Integer> indices = new IdentityHashMap<>();
+        List<StateCollision> shapes = new ArrayList<>();
+        Map<StateCollision, Integer> indices = new HashMap<>();
         // Each state's shape by its transformation, which may be null, and its collision_box
         Map<Transformation, Map<Component, Shape>> finished = new IdentityHashMap<>();
         char[] stateShapes = new char[stateCount];
@@ -136,11 +140,21 @@ final class CustomCollision {
             Shape shape = collision == null ? CUBE : finished.computeIfAbsent(transformation, t -> new IdentityHashMap<>()).computeIfAbsent(collision, c -> shape(c, transformation, budget));
             List<Box> boxes = shape.boxes();
             String why = shape.guess();
+            RandomOffset offset = components.offset(s);
+            if (offset != null && offset.unread() != null) {
+                boxes = null;
+                why = offset.unread();
+            } else if (offset != null && collision == null) {
+                // Without a collision_box, BlockType::addCollisionShapes moves the block's shape by the offset itself, not rounded down, which Boar does not follow.
+                boxes = null;
+                why = "it has a minecraft:random_offset without a minecraft:collision_box";
+            }
             if (boxes == null) {
                 boxes = FULL_CUBE;
+                offset = null;
                 guess = guess == null ? why : guess;
             }
-            stateShapes[s] = (char) (int) indices.computeIfAbsent(boxes, added -> {
+            stateShapes[s] = (char) (int) indices.computeIfAbsent(new StateCollision(boxes, boxes.isEmpty() ? null : offset), added -> {
                 shapes.add(added);
                 return shapes.size() - 1;
             });
@@ -150,21 +164,30 @@ final class CustomCollision {
 
     // Every state a full cube, for this reason
     static CustomCollision guessed(String why) {
-        return new CustomCollision(List.of(FULL_CUBE), null, why);
+        return new CustomCollision(List.of(new StateCollision(FULL_CUBE, null)), null, why);
     }
 
     List<Box> boxes(int state) {
-        return this.shapes.get(this.stateShapes == null ? 0 : this.stateShapes[state]);
+        return this.collision(state).boxes();
     }
 
-    // Each distinct shape is one list.
-    boolean sameBoxes(int state, int other) {
-        return this.boxes(state) == this.boxes(other);
+    // The random offset that moves the state's boxes, or null when they stay where they are
+    RandomOffset offset(int state) {
+        return this.collision(state).offset();
+    }
+
+    // Whether the two states have the same boxes and random offset
+    boolean sameCollision(int state, int other) {
+        return this.collision(state).equals(this.collision(other));
     }
 
     // Sturdy means one full-cube box, as for vanilla blocks.
     boolean faceSturdy(int state) {
         return this.boxes(state) == FULL_CUBE;
+    }
+
+    private StateCollision collision(int state) {
+        return this.shapes.get(this.stateShapes == null ? 0 : this.stateShapes[state]);
     }
 
     // Why Boar takes some states for full cubes, or null when it knows every state's boxes
@@ -423,27 +446,15 @@ final class CustomCollision {
         return intern(to, budget);
     }
 
-    // Equal when every state has the same boxes. Shapes are shared, so the same lists mean the same boxes.
+    // Equal when every state has the same boxes and random offset
     @Override
     public boolean equals(Object other) {
-        if (!(other instanceof CustomCollision collision) || collision.shapes.size() != this.shapes.size() || !Arrays.equals(collision.stateShapes, this.stateShapes)) {
-            return false;
-        }
-        for (int i = 0; i < this.shapes.size(); i++) {
-            if (collision.shapes.get(i) != this.shapes.get(i)) {
-                return false;
-            }
-        }
-        return true;
+        return other instanceof CustomCollision collision && collision.shapes.equals(this.shapes) && Arrays.equals(collision.stateShapes, this.stateShapes);
     }
 
     @Override
     public int hashCode() {
-        int hash = Arrays.hashCode(this.stateShapes);
-        for (List<Box> shape : this.shapes) {
-            hash = hash * 31 + System.identityHashCode(shape);
-        }
-        return hash;
+        return this.shapes.hashCode() * 31 + Arrays.hashCode(this.stateShapes);
     }
 
     @Override
@@ -477,6 +488,19 @@ final class CustomCollision {
 
     // A state's boxes, shared, or null and why Boar cannot tell them
     private record Shape(List<Box> boxes, String guess) {
+    }
+
+    // A state's shared boxes and its random offset, or null. Shapes are shared, so the same lists mean the same boxes.
+    private record StateCollision(List<Box> boxes, RandomOffset offset) {
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof StateCollision collision && collision.boxes == this.boxes && Objects.equals(collision.offset, this.offset);
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(this.boxes) * 31 + Objects.hashCode(this.offset);
+        }
     }
 
     // The matrix of a minecraft:transformation, or null and why Boar cannot tell it

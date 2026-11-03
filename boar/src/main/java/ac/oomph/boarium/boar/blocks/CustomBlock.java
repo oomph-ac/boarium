@@ -25,8 +25,8 @@ import java.util.TreeMap;
  * @param values each key's values, of any NBT type
  * @param traitStates how many of the keys its traits add
  * @param placementFilter whether it or any of its permutations has a minecraft:placement_filter component
- * @param collision each state's collision boxes
- * @param components each state's friction, replaceability and destroy time
+ * @param collision each state's collision boxes and the random offset that moves them
+ * @param components each state's friction, replaceability, destroy time and random offset
  */
 record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int traitStates, boolean placementFilter, int stateCount, CustomCollision collision, CustomComponents components) {
     // BlockType::createBlockPermutations makes a permutation for each value of the lowest 16 bits.
@@ -85,8 +85,8 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         for (int radix : radices) {
             states *= radix;
         }
-        CustomCollision collision = CustomCollision.of(keys, values, radices, states, data.getProperties(), collisionBudget);
         CustomComponents components = CustomComponents.of(keys, values, radices, states, data.getProperties(), componentsBudget);
+        CustomCollision collision = CustomCollision.of(keys, values, radices, states, data.getProperties(), collisionBudget, components);
         return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), traitStates, placementFilter(data.getProperties()), states, collision, components);
     }
 

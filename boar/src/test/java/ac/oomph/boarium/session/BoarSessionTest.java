@@ -1288,6 +1288,40 @@ class BoarSessionTest {
         assertNotEquals(List.of(), lie.violations());
     }
 
+    // A cube whose random_offset moves it -0.5 to -0.0625 blocks on X stands a whole block west of its position, since the client rounds the offset down for a collision_box. The player walks east against it with no violations, and a client that walks to the unmoved cube is flagged.
+    @Test
+    void walksAgainstACustomCubeMovedByItsRandomOffset() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap offset = NbtMap.builder().putCompound("x", offsetAxis(-8, -1)).putCompound("y", offsetAxis(0, 0)).putCompound("z", offsetAxis(0, 8)).build();
+        BlockPropertyData built = customBlock("cubecraft:reed", null, collisionBox(0, 0, 0, 16, 16, 16), null);
+        BlockPropertyData reed = new BlockPropertyData(built.getName(), built.getProperties().toBuilder()
+                .putCompound("components", built.getProperties().getCompound("components").toBuilder().putCompound("minecraft:random_offset", offset).build()).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(reed)));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        int reedId = this.customRuntimeId(session, player);
+        Vector3i wall = this.sendAWall(session, player, reedId, -1);
+        assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(onLoop(session, () -> player.compensatedWorld.getBlockState(wall, 0).getCollisionBoxes())));
+
+        Walk walk = this.walkEast(session, player, wall, wall.getX() - 1);
+        assertEquals(wall.getX() - 1 - 0.3F, walk.x(), 1e-6F);
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertEquals(List.of(), walk.violations());
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertFalse(log.contains("cubecraft:reed"), log);
+        this.assertNothingFailed();
+
+        // The same steps again, from where the player stands, by a client that walks on to where the cube would be without its offset
+        Walk lie = this.walkEast(session, player, wall, wall.getX(), walk.x(), 0, walk.nextTick());
+        assertEquals(wall.getX() - 0.3F, lie.x(), 1e-6F);
+        assertNotEquals(List.of(), lie.violations());
+    }
+
+    // One axis of a minecraft:random_offset as BlockRandomOffsetDescription's schema reads it: any value from min to max, in 1/16 of a block
+    private static NbtMap offsetAxis(float min, float max) {
+        return NbtMap.builder().putCompound("range", NbtMap.builder().putFloat("min", min).putFloat("max", max).build()).putInt("steps", 0).build();
+    }
+
     // Sends a chunk with a stone floor at Y 0 and a wall of this block across the player's way at local X WALL_X and Y 1 and 2, and walks east through it with no violations.
     // A block of the other ID, unless it is -1, stands away from the way, and its position is returned.
     private Vector3i walksThroughAWall(Session session, BoarPlayer player, int wall, int other) throws Exception {

@@ -307,6 +307,11 @@ public final class BedrockPalette {
         return CUSTOM_IDS.faceSturdy(id);
     }
 
+    // The random offset that moves the collision boxes of a custom ID, or null
+    static CustomComponents.RandomOffset customOffset(int id) {
+        return CUSTOM_IDS.offset(id);
+    }
+
     // The friction of a custom ID, or that of a block Boar does not know when no custom block has it
     static float customFriction(int id) {
         return CUSTOM_IDS.friction(id);
@@ -619,6 +624,12 @@ public final class BedrockPalette {
             Assigned assigned = this.assigned;
             int i = assigned.blockOf(id);
             return i < 0 || assigned.blocks()[i].collision().faceSturdy(id - assigned.starts()[i]);
+        }
+
+        CustomComponents.RandomOffset offset(int id) {
+            Assigned assigned = this.assigned;
+            int i = assigned.blockOf(id);
+            return i < 0 ? null : assigned.blocks()[i].collision().offset(id - assigned.starts()[i]);
         }
 
         float friction(int id) {

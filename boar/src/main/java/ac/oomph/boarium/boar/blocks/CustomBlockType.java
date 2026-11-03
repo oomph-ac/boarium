@@ -26,7 +26,7 @@ final class CustomBlockType implements Block {
 
     /**
      * Why Boar does not place the block when the client does, or null. BlockType::getPlacementBlock starts from BlockType::tryGetStateFromLegacyData, which gives the default state of a block outside the minecraft namespace whatever the item's data value, and then its placement_direction and placement_position traits set their states.
-     * BlockSource::updateConnectionsAt later sets a block's connection states when a block next to it changes. Boar keeps the default state, so it places a block with traits only when every combination of their states' values has the default state's boxes.
+     * BlockSource::updateConnectionsAt later sets a block's connection states when a block next to it changes. Boar keeps the default state, so it places a block with traits only when every combination of their states' values has the default state's boxes and random offset.
      */
     private static String unplaced(CustomBlock block) {
         int colon = block.name().indexOf(':');
@@ -47,11 +47,11 @@ final class CustomBlockType implements Block {
         for (int p = 0; p < traitStates.size(); p++) {
             span *= radices[p];
         }
-        boolean sameBoxes = span <= MAX_COMPARED_STATES;
-        for (int state = 1; sameBoxes && state < span; state++) {
-            sameBoxes = block.collision().sameBoxes(state, 0);
+        boolean sameCollision = span <= MAX_COMPARED_STATES;
+        for (int state = 1; sameCollision && state < span; state++) {
+            sameCollision = block.collision().sameCollision(state, 0);
         }
-        return sameBoxes ? null : "its traits add " + traitStates + ", which change its collision";
+        return sameCollision ? null : "its traits add " + traitStates + ", which change its collision";
     }
 
     @Override

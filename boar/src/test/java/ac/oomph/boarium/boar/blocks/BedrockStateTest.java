@@ -15,6 +15,8 @@ import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockProperties.BedrockProperty;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtType;
+import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -501,6 +503,29 @@ class BedrockStateTest {
             boxes[i] += i % 3 == 1 ? POS.getY() : i % 3 == 0 ? POS.getX() : POS.getZ();
         }
         return boxes;
+    }
+
+    // A custom state with a random offset gives Boar its boxes where the offset moves them. At X 8 and Z 8, bamboo's offset is 0.117 and -0.017, which a collision_box rounds down to 0 and -1 (expected values from the client's disassembly, as in CustomRandomOffsetTest).
+    @Test
+    void customStatesMoveTheirBoxesByTheirRandomOffset() {
+        NbtMap box = NbtMap.builder().putFloat("minX", 0).putFloat("minY", 0).putFloat("minZ", 0).putFloat("maxX", 16).putFloat("maxY", 8).putFloat("maxZ", 16).build();
+        NbtMap bamboo = NbtMap.builder().putCompound("range", NbtMap.builder().putFloat("min", -4).putFloat("max", 4).build()).putInt("steps", 16).build();
+        NbtMap still = NbtMap.builder().putCompound("range", NbtMap.builder().putFloat("min", 0).putFloat("max", 0).build()).putInt("steps", 0).build();
+        NbtMap components = NbtMap.builder()
+                .putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", true).putList("boxes", NbtType.COMPOUND, box).build())
+                .putCompound("minecraft:random_offset", NbtMap.builder().putCompound("x", bamboo).putCompound("y", still).putCompound("z", bamboo).build())
+                .build();
+        StartGamePacket startGame = new StartGamePacket();
+        startGame.getBlockProperties().add(new BlockPropertyData("cubecraft:shelf_on_a_stalk", NbtMap.builder().putCompound("components", components).putCompound("vanilla_block_data", NbtMap.builder().putInt("block_id", 0).build()).build()));
+        BoarBlockState shelf = BedrockPalette.placedBlock(BedrockPalette.mappingInfo(startGame), "cubecraft:shelf_on_a_stalk").defaultBlockState(POS, 0);
+        BoarPlayer player = player();
+        assertBoxes(shelf.getCollisionBoxes(), 0, 0, 0, 1, 0.5F, 1);
+        assertBoxes(shelf.findCollision(player, POS, Box.EMPTY, false), 8, 64, 7, 9, 64.5F, 8);
+        // At X 8 and Z 10 it is -0.25 and 0.05.
+        assertBoxes(shelf.findCollision(player, Vector3i.from(8, 64, 10), Box.EMPTY, false), 7, 64, 10, 8, 64.5F, 11);
+        // A filter by the player's box looks at the moved box.
+        assertTrue(shelf.findCollision(player, POS, new Box(8, 64, 8.5F, 9, 65, 9), true).isEmpty());
+        assertBoxes(shelf.findCollision(player, POS, new Box(8, 64, 7.5F, 9, 65, 7.9F), true), 8, 64, 7, 9, 64.5F, 8);
     }
 
     // Boar lowers a floor bell's box itself, so the final box of every bell is the BDS box.
