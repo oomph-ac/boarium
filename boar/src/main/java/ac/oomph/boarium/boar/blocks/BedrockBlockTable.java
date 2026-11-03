@@ -14,14 +14,14 @@ import java.util.Map;
 import java.util.zip.GZIPInputStream;
 
 /**
- * The Bedrock block palette with each state's collision boxes and block properties from Bedrock Dedicated Server, for the state alone with no world around it, read from the table the blockdata module generates from Bedrock data.
+ * The Bedrock block palette with each state's collision boxes and block properties from Bedrock Dedicated Server, for the state alone with no world around it, and each block's default state, read from the table the blockdata module generates from Bedrock data.
  * Entries with the same name are next to each other.
  * A palette index is the runtime ID a client uses when the server adds no custom blocks and StartGame does not ask for hashed IDs; with hashed IDs, the client uses the network hash instead.
  */
 public final class BedrockBlockTable {
     public static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/bedrock_blocks.26_30.bin.gz";
     private static final int MAGIC = 0x424E4254;
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
     private static final int JAVA_TABLE_MAGIC = 0x42425432;
 
     public static final int CAN_CONTAIN_LIQUID_SOURCE = 1;
@@ -50,6 +50,7 @@ public final class BedrockBlockTable {
     private final Map<Key, Integer> byNameAndStates;
     private final Map<String, Integer> firstByName;
     private final Map<String, Integer> countByName;
+    private final Map<String, Integer> defaultByName;
 
     private BedrockBlockTable(DataInputStream in) throws IOException {
         int magic = in.readInt();
@@ -128,6 +129,19 @@ public final class BedrockBlockTable {
                 }
             }
             countByName.merge(names[i], 1, Integer::sum);
+        }
+
+        // One default per name, in palette order, each one of its name's entries
+        if (count(in, 0xFFFF, "default states") != firstByName.size()) {
+            throw new IOException("Bedrock block table lists default states for a different number of blocks than its palette has");
+        }
+        defaultByName = new HashMap<>();
+        for (int i = 0; i < size; i += countByName.get(names[i])) {
+            int index = in.readUnsignedShort();
+            if (index < i || index >= i + countByName.get(names[i])) {
+                throw new IOException("The default state of " + names[i] + " is palette entry " + index + ", which is not one of its entries");
+            }
+            defaultByName.put(names[i], index);
         }
 
         long[] byHash = new long[size];
@@ -247,6 +261,12 @@ public final class BedrockBlockTable {
     public int firstIndex(String name) {
         Integer first = firstByName.get(name);
         return first == null ? -1 : first;
+    }
+
+    // The palette index of the default state of the block with this name, as Bedrock Dedicated Server gives it, or -1
+    public int defaultIndex(String name) {
+        Integer index = defaultByName.get(name);
+        return index == null ? -1 : index;
     }
 
     // How many entries have this name, or 0

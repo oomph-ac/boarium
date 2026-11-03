@@ -44,7 +44,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
             {0.75F, 0.3125F, 0.3125F, 1.25F, 0.6875F, 0.6875F, 0.25F, 0.375F, 0.375F, 0.75F, 0.625F, 0.625F, 0, 0, 0, 0.25F, 1, 1}};
     private static final Set<String> PISTON_ARMS = Set.of("minecraft:piston_arm_collision", "minecraft:sticky_piston_arm_collision");
 
-    // The Bedrock names of Java's minecraft:replaceable blocks, through Geyser's mapping, since the Bedrock dump has no such flag
+    // The Bedrock names of Java's minecraft:replaceable blocks, through Geyser's mapping, since Bedrock's block states, tags and types have no such flag
     private static final Set<String> REPLACEABLE_NAMES = Set.of(
             "minecraft:air", "minecraft:bubble_column", "minecraft:bush", "minecraft:crimson_roots", "minecraft:deadbush", "minecraft:fern", "minecraft:fire",
             "minecraft:flowing_lava", "minecraft:flowing_water", "minecraft:glow_lichen", "minecraft:hanging_roots", "minecraft:large_fern", "minecraft:lava",
@@ -119,7 +119,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
 
     @Override
     public Block block() {
-        throw new UnsupportedOperationException("Boar's blocks are not bound to Bedrock block names yet");
+        return BedrockBlock.of(this.intermediaryId);
     }
 
     @Override
@@ -129,7 +129,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
 
     @Override
     public boolean is(Block block) {
-        throw new UnsupportedOperationException("Boar's blocks are not bound to Bedrock block names yet");
+        return BedrockBlock.of(this.intermediaryId).is(block);
     }
 
     @Override

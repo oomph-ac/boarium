@@ -411,6 +411,32 @@ class BedrockStateTest {
         assertEquals(Set.of("minecraft:azalea", "minecraft:dragon_egg", "minecraft:flowering_azalea"), sturdyDiffers);
     }
 
+    // Every replaceable palette entry
+    @Test
+    void replaceableEntries() {
+        Set<String> names = new TreeSet<>(Set.of(
+                "air", "bubble_column", "bush", "crimson_roots", "deadbush", "fern", "fire", "flowing_lava", "flowing_water", "glow_lichen", "hanging_roots", "large_fern", "lava",
+                "leaf_litter", "nether_sprouts", "resin_clump", "seagrass", "short_dry_grass", "short_grass", "soul_fire", "structure_void", "tall_dry_grass", "tall_grass", "vine",
+                "warped_roots", "water"));
+        for (int level = 0; level < 16; level++) {
+            names.add("light_block_" + level);
+        }
+        Map<String, Integer> expected = new TreeMap<>();
+        for (String name : names) {
+            expected.put("minecraft:" + name, table.stateCount("minecraft:" + name));
+        }
+        // Only the thinnest snow layer, covered or not
+        expected.put("minecraft:snow_layer", 2);
+
+        Map<String, Integer> replaceable = new TreeMap<>();
+        for (int i = 0; i < table.paletteSize(); i++) {
+            if (delegate(i).isReplaceable(null)) {
+                replaceable.merge(table.name(i), 1, Integer::sum);
+            }
+        }
+        assertEquals(expected, replaceable);
+    }
+
     @Test
     void factoryPicksBoarsStateClasses() {
         assertInstanceOf(HoneyBlockState.class, state(table.firstIndex("minecraft:honey_block")));

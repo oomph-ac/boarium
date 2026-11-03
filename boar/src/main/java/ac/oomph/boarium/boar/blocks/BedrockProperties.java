@@ -101,7 +101,7 @@ public final class BedrockProperties implements PropertyProvider {
     }
 
     // Each single slab's double slab, such as oak_slab -> oak_double_slab and cut_copper_slab -> double_cut_copper_slab
-    private static Map<String, String> doubleSlabs(BedrockBlockTable table) {
+    static Map<String, String> doubleSlabs(BedrockBlockTable table) {
         Map<String, String> doubles = new HashMap<>();
         for (int i = 0; i < table.paletteSize(); i += table.stateCount(table.name(i))) {
             String name = table.name(i);

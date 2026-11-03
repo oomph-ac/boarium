@@ -163,6 +163,22 @@ class BedrockBlockTableTest {
         assertEquals(table.paletteSize(), total);
     }
 
+    // BDS's default is the block's first palette entry for all but 26 blocks.
+    @Test
+    void defaultStates() {
+        assertEquals(STONE, table.defaultIndex("minecraft:stone"));
+        assertEquals(-1, table.defaultIndex("minecraft:cave_air"));
+        int notFirst = 0;
+        for (int i = 0; i < table.paletteSize(); i += table.stateCount(table.name(i))) {
+            int index = table.defaultIndex(table.name(i));
+            assertTrue(i <= index && index < i + table.stateCount(table.name(i)), table.name(i));
+            if (index != i) {
+                notFirst++;
+            }
+        }
+        assertEquals(26, notFirst);
+    }
+
     @Test
     void unknownHasHashMinusTwo() {
         assertEquals("minecraft:unknown", table.name(UNKNOWN));
@@ -241,17 +257,32 @@ class BedrockBlockTableTest {
         try (InputStream in = new GZIPInputStream(new ByteArrayInputStream(gzip))) {
             data = in.readAllBytes();
         }
-        BedrockBlockTable.load(new ByteArrayInputStream(gzip(data)));
+        BedrockBlockTable loaded = BedrockBlockTable.load(new ByteArrayInputStream(gzip(data)));
 
         byte[] newerFormat = data.clone();
-        newerFormat[7] = 2;
+        newerFormat[7] = 3;
         IOException format = assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip(newerFormat))));
-        assertTrue(format.getMessage().contains("format 2"), format.getMessage());
+        assertTrue(format.getMessage().contains("format 3"), format.getMessage());
 
-        // The table ends with the last entry's shape, flags, hardness and friction.
+        // The table ends with the default states (a count, then a u16 per block name), after the last entry's shape, flags, hardness and friction.
+        int blocks = 0;
+        for (int i = 0; i < loaded.paletteSize(); i += loaded.stateCount(loaded.name(i))) {
+            blocks++;
+        }
+        int defaults = 4 + 2 * blocks;
         byte[] unknownFlag = data.clone();
-        unknownFlag[data.length - 9] = 4;
+        unknownFlag[data.length - defaults - 9] = 4;
         assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip(unknownFlag))));
+
+        // The last block's default set to palette entry 0, which is another block's
+        byte[] foreignDefault = data.clone();
+        foreignDefault[data.length - 2] = 0;
+        foreignDefault[data.length - 1] = 0;
+        assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip(foreignDefault))));
+
+        byte[] missingDefault = data.clone();
+        missingDefault[data.length - defaults + 3]--;
+        assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip(missingDefault))));
 
         assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip(Arrays.copyOf(data, data.length + 1)))));
         assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip(Arrays.copyOf(data, data.length - 1)))));

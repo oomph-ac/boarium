@@ -26,19 +26,20 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * Writes boar's Bedrock block table from the Bedrock data in blockdata/data/bedrock (see its README): the block palette, and the dump of every block state from Bedrock Dedicated Server.
- * The two are joined by network hash, the FNV-1a 32 hash of a palette entry's name and states, which the dump lists as blockStateHash.
+ * Writes boar's Bedrock block table from the Bedrock data in blockdata/data/bedrock (see its README): the block palette, the dump of every block state from Bedrock Dedicated Server, and each block's default state.
+ * They are joined by network hash, the FNV-1a 32 hash of a palette entry's name and states, which the dump lists as blockStateHash and the block types as defaultBlockStateHash.
  *
  * The table is gzip over big-endian DataOutputStream data, in this order:
  * magic "BNBT", format version, protocol, source version (UTF), block version;
  * strings (count, UTF each);
  * shapes (count; per shape: box count u8, then minX, minY, minZ, maxX, maxY, maxZ as floats per box), in order of first use by palette index, each with the dump's boxes in the dump's order;
- * palette entries in runtime ID order (count; per entry: name, network hash, state count u8, then per state: key, NBT tag type u8 (1 byte, 3 int, 8 string), value; then shape u16, flags u8, hardness and friction as floats).
+ * palette entries in runtime ID order (count; per entry: name, network hash, state count u8, then per state: key, NBT tag type u8 (1 byte, 3 int, 8 string), value; then shape u16, flags u8, hardness and friction as floats);
+ * default states (count; per block name, in palette order: the palette index of its default state, u16).
  * A name, key or string value is a u16 string index.
  */
 public final class BedrockBlockGenerator {
     private static final int MAGIC = 0x424E4254;
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
     private static final int PROTOCOL = 1001;
     // The BedrockData folder the files come from
     private static final String SOURCE_VERSION = "1.26.33.1";
@@ -64,7 +65,7 @@ public final class BedrockBlockGenerator {
 
         byte[] table;
         try {
-            table = new BedrockBlockGenerator().build(data.resolve("block_palette.nbt"), data.resolve("block_states.json.gz"));
+            table = new BedrockBlockGenerator().build(data.resolve("block_palette.nbt"), data.resolve("block_states.json.gz"), data.resolve("block_types.json.gz"));
         } catch (IllegalStateException e) {
             System.err.println("Bedrock block table not written: " + e.getMessage());
             System.exit(1);
@@ -85,9 +86,10 @@ public final class BedrockBlockGenerator {
     private record DumpState(String name, int hash, float[] boxes, boolean canContainLiquidSource, float hardness, float friction, boolean solid) {
     }
 
-    private byte[] build(Path palettePath, Path dumpPath) throws IOException {
+    private byte[] build(Path palettePath, Path dumpPath, Path typesPath) throws IOException {
         List<NbtMap> palette = readPalette(palettePath);
         List<DumpState> dump = readDump(dumpPath);
+        Map<String, Integer> defaultHashes = readDefaults(typesPath);
         require(dump.size() == palette.size(), "The dump has " + dump.size() + " states, the palette " + palette.size());
         require(palette.size() <= 0xFFFF, "Palette has " + palette.size() + " entries, more than a u16 holds");
 
@@ -118,6 +120,20 @@ public final class BedrockBlockGenerator {
             require(state.name.equals(palette.get(i).getString("name")), "Dump state " + state.name + " has the network hash of palette entry " + i + " " + palette.get(i).getString("name"));
             joined[i] = state;
         }
+
+        List<Integer> defaults = new ArrayList<>();
+        for (int i = 0; i < palette.size(); i++) {
+            String name = palette.get(i).getString("name");
+            if (i > 0 && name.equals(palette.get(i - 1).getString("name"))) {
+                continue;
+            }
+            Integer hash = defaultHashes.get(name);
+            require(hash != null, "The block types have no default state for " + name);
+            Integer index = byHash.get(hash);
+            require(index != null && palette.get(index).getString("name").equals(name), "The default state of " + name + " is not one of its palette entries");
+            defaults.add(index);
+        }
+        require(defaults.size() == defaultHashes.size(), "The block types list " + defaultHashes.size() + " blocks, the palette " + defaults.size());
 
         Map<List<Float>, Integer> shapeIds = new HashMap<>();
         List<float[]> shapes = new ArrayList<>();
@@ -180,6 +196,11 @@ public final class BedrockBlockGenerator {
             data.writeFloat(state.hardness);
             data.writeFloat(state.friction);
         }
+
+        data.writeInt(defaults.size());
+        for (int index : defaults) {
+            data.writeShort(index);
+        }
         data.flush();
 
         require(strings.size() <= 0xFFFF, "More than 65535 strings");
@@ -208,6 +229,32 @@ public final class BedrockBlockGenerator {
             require(root instanceof NbtMap map && map.containsKey("blocks", NbtType.LIST), path + " is not a block palette");
             return ((NbtMap) root).getList("blocks", NbtType.COMPOUND);
         }
+    }
+
+    // The network hash of each block's default state, by name
+    private static Map<String, Integer> readDefaults(Path path) throws IOException {
+        Map<String, Integer> defaults = new HashMap<>();
+        try (JsonReader json = new JsonReader(new InputStreamReader(new GZIPInputStream(Files.newInputStream(path)), StandardCharsets.UTF_8))) {
+            json.beginObject();
+            while (json.hasNext()) {
+                String name = json.nextName();
+                Long hash = null;
+                json.beginObject();
+                while (json.hasNext()) {
+                    if (json.nextName().equals("defaultBlockStateHash")) {
+                        hash = json.nextLong();
+                    } else {
+                        json.skipValue();
+                    }
+                }
+                json.endObject();
+                require(hash != null && hash >= 0 && hash <= 0xFFFFFFFFL, "Block type " + name + " has no 32-bit defaultBlockStateHash");
+                require(defaults.put(name, (int) (long) hash) == null, "Block type " + name + " is listed twice");
+            }
+            json.endObject();
+            require(json.peek() == JsonToken.END_DOCUMENT, path + " has data after its object");
+        }
+        return defaults;
     }
 
     private static List<DumpState> readDump(Path path) throws IOException {
