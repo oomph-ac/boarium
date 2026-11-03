@@ -150,6 +150,8 @@ class BoarSessionTest {
     private static final int STONE_RUNTIME_ID = 2706;
     private static final int FENCE_Z = 8;
     private static final int WALL_X = 5;
+    // The client skips a block without this compound. Geyser 2.12 writes a block_id in it.
+    private static final NbtMap VANILLA_BLOCK_DATA = NbtMap.builder().putInt("block_id", 0).build();
     private static final long BOAT_RUNTIME_ID = 20;
     private static final long BOAT_UNIQUE_ID = -20;
     private static final long HORSE_RUNTIME_ID = 21;
@@ -1107,6 +1109,31 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // The client skips the two blocks without vanilla_block_data, which sort before stone, so only the pipe's 2 states move stone and air, and the broken block does not make the IDs unknown.
+    @Test
+    void checksAPlayerWhoseServerSendsBlocksWithoutVanillaBlockData() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap level = NbtMap.builder().putString("name", "level").putList("enum", NbtType.INT, 0, 1, 2).build();
+        BlockPropertyData vent = withoutVanillaBlockData(customBlock("cubecraft:vent", level, null, null));
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(withoutVanillaBlockData(noValues()), vent, pipe())));
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+        BoarPlayer player = this.withMitigations(session);
+        this.readItemsOnTheClient();
+        int air = AIR_RUNTIME_ID + 2;
+        int stone = STONE_RUNTIME_ID + 2;
+        assertEquals(air, player.mappingInfo.airId());
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, air, stone, 20));
+        Vector3i floor = Vector3i.from((this.startGame.getPlayerPosition().getFloorX() & ~15) + 3, 0, (this.startGame.getPlayerPosition().getFloorZ() & ~15) + 5);
+        BoarBlockState floorState = onLoop(session, () -> player.compensatedWorld.getBlockState(floor, 0));
+        assertEquals("minecraft:stone", floorState.block().toString());
+        assertEquals(stone, floorState.definition(player).getRuntimeId());
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+        this.assertNothingFailed();
+    }
+
     @Test
     void keepsMitigationsOnWhenItReadsEveryCustomBlock() throws Exception {
         TestBoar.mitigations(true);
@@ -1334,7 +1361,7 @@ class BoarSessionTest {
     void standsOnStoneThatACustomStateMoved() throws Exception {
         TestBoar.mitigations(true);
         // A value found by search, whose state has stone's network hash
-        BlockPropertyData clash = new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, NbtMap.builder().putString("name", "n").putList("enum", NbtType.STRING, "vajo54aake").build()).build());
+        BlockPropertyData clash = new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, NbtMap.builder().putString("name", "n").putList("enum", NbtType.STRING, "vajo54aake").build()).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
         BedrockBlockTable table = BedrockBlockTable.get();
         int stone = table.networkHash(table.firstIndex("minecraft:stone"));
         ByteArrayOutputStream state = new ByteArrayOutputStream();
@@ -1928,7 +1955,7 @@ class BoarSessionTest {
 
     // A custom block of 1 state. cubecraft:tiles and cubecraft:lamp sort after stone and air by name hash, so they move neither.
     private static BlockPropertyData plainBlock(String name) {
-        return new BlockPropertyData(name, NbtMap.EMPTY);
+        return new BlockPropertyData(name, NbtMap.builder().putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
     }
 
     // A custom block with this property, or none, and this base minecraft:collision_box and permutation, each of which may be null
@@ -1941,7 +1968,7 @@ class BoarSessionTest {
         if (permutation != null) {
             properties.putList("permutations", NbtType.COMPOUND, permutation);
         }
-        return new BlockPropertyData(name, properties.build());
+        return new BlockPropertyData(name, properties.putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
     }
 
     // A minecraft:collision_box of one box, with corners in 1/16 of a block, as Geyser 2.12 writes it
@@ -1950,16 +1977,23 @@ class BoarSessionTest {
         return NbtMap.builder().putBoolean("enabled", true).putList("boxes", NbtType.COMPOUND, box).build();
     }
 
+    // This block as a server that leaves out vanilla_block_data sends it
+    private static BlockPropertyData withoutVanillaBlockData(BlockPropertyData block) {
+        NbtMapBuilder properties = block.getProperties().toBuilder();
+        properties.remove("vanilla_block_data");
+        return new BlockPropertyData(block.getName(), properties.build());
+    }
+
     // A block with a property without values, which the client cannot read
     private static BlockPropertyData noValues() {
         NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, List.of()).build();
-        return new BlockPropertyData("cubecraft:broken", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).build());
+        return new BlockPropertyData("cubecraft:broken", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
     }
 
     // A custom block of 2 states
     private static BlockPropertyData pipe() {
         NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, (byte) 0, (byte) 1).build();
-        return new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).build());
+        return new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
     }
 
     // Boar's processor, with these custom blocks added to the StartGame the client is sent, and its hashed IDs set

@@ -273,7 +273,7 @@ final class CustomCollision {
         return this.shapes.size() + " shapes" + (this.guess == null ? "" : ", guessed: " + this.guess);
     }
 
-    // The work Boar may spend on the custom blocks of one StartGame, counted in states, characters, boxes and condition nodes, and the shapes it added; BedrockPalette also counts hashed bytes and clash steps with one
+    // A limit on the work Boar spends on the custom blocks of one StartGame, and the count of shapes it added
     static final class Budget {
         static final long MAX = 1L << 24;
         private long left;

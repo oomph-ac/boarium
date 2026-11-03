@@ -25,8 +25,10 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntUnaryOperator;
 
@@ -65,7 +67,7 @@ public final class BedrockPalette {
     // Bounds the memory a server's unknown hashed IDs can take for each player.
     static final int MAX_KEPT_HASHES = 1 << 12;
     static final int END_ID = FIRST_KEPT_ID + MAX_STATES;
-    // How many custom block names a palette logs, and how many unknown runtime IDs a player's mapping logs
+    // How many custom block names a palette logs for each kind of warning, and how many unknown runtime IDs a player's mapping logs
     static final int MAX_WARNED_NAMES = 256;
     static final int MAX_WARNED_IDS = 16;
 
@@ -206,12 +208,25 @@ public final class BedrockPalette {
 
     // When Boar cannot read the custom blocks, their runtime IDs are unknown. With sorted IDs they also move the vanilla IDs, so every ID is unknown.
     private static BedrockPalette build(Key key) {
-        // The client keeps the last block of a name (BlockDefinitionGroup::digestServerBlockProperties).
+        // As BlockDefinitionGroup::digestServerBlockProperties: it skips a block without a vanilla_block_data compound before it reads the block's properties, so the block has no states, and an earlier block of its name stays. Of the other blocks, it keeps the last of a name.
         Map<String, BlockPropertyData> byName = new LinkedHashMap<>();
+        Set<String> skipped = new LinkedHashSet<>();
         for (BlockPropertyData data : key.blocks()) {
-            if (TABLE.firstIndex(data.getName()) < 0) {
-                byName.put(data.getName(), data);
+            if (TABLE.firstIndex(data.getName()) >= 0) {
+                continue;
             }
+            if (data.getProperties().get("vanilla_block_data") instanceof NbtMap) {
+                byName.put(data.getName(), data);
+            } else {
+                skipped.add(data.getName());
+            }
+        }
+        int warned = 0;
+        for (String name : skipped) {
+            if (++warned > MAX_WARNED_NAMES) {
+                break;
+            }
+            LOG.warn("A copy of custom block {} has no vanilla_block_data compound, so the client skips that copy, and so does Boar{}", name, warned == MAX_WARNED_NAMES ? ", and logs no more skipped blocks of this palette" : "");
         }
         List<CustomBlock> blocks = new ArrayList<>();
         CustomCollision.Budget budget = new CustomCollision.Budget();

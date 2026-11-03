@@ -8,6 +8,7 @@ import ac.boar.mappings.block.HorseJumpMaterial;
 import ac.oomph.boarium.boar.TestBoar;
 import org.cloudburstmc.nbt.NBTOutputStream;
 import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtMapBuilder;
 import org.cloudburstmc.nbt.NbtType;
 import org.cloudburstmc.nbt.NbtUtils;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
@@ -40,6 +41,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class BedrockPaletteTest {
     private static final int SORTED_AIR = 13094;
     private static final int SORTED_STONE = 2706;
+    // The client skips a block without this compound. Geyser 2.12 writes a block_id in it.
+    private static final NbtMap VANILLA_BLOCK_DATA = NbtMap.builder().putInt("block_id", 0).build();
 
     private static BedrockBlockTable table;
 
@@ -67,7 +70,19 @@ class BedrockPaletteTest {
     }
 
     private static BlockPropertyData block(String name, NbtMap... properties) {
-        return new BlockPropertyData(name, NbtMap.builder().putList("properties", NbtType.COMPOUND, properties).putCompound("components", NbtMap.EMPTY).build());
+        return new BlockPropertyData(name, NbtMap.builder().putList("properties", NbtType.COMPOUND, properties).putCompound("components", NbtMap.EMPTY).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
+    }
+
+    // This block as a server that leaves out vanilla_block_data sends it
+    private static BlockPropertyData withoutVanillaBlockData(BlockPropertyData block) {
+        NbtMapBuilder properties = block.getProperties().toBuilder();
+        properties.remove("vanilla_block_data");
+        return new BlockPropertyData(block.getName(), properties.build());
+    }
+
+    // 3 states; its name sorts before stone and air
+    private static BlockPropertyData vent() {
+        return block("cubecraft:vent", property("level", NbtType.INT, List.of(0, 1, 2)));
     }
 
     private static <T> NbtMap property(String name, NbtType<T> type, List<T> values) {
@@ -303,6 +318,7 @@ class BedrockPaletteTest {
                 .putList("properties", NbtType.COMPOUND, property("open", NbtType.BYTE, List.of((byte) 0, (byte) 1)))
                 .putCompound("components", slab)
                 .putList("permutations", NbtType.COMPOUND, open)
+                .putCompound("vanilla_block_data", VANILLA_BLOCK_DATA)
                 .build());
         for (boolean hashed : new boolean[]{false, true}) {
             BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(hashed, gate));
@@ -577,7 +593,7 @@ class BedrockPaletteTest {
     @Test
     void readsCustomBlocksAsTheClientDoes() {
         // Properties that are not a list of compounds are none.
-        assertStatesBeforeStone(new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putCompound("properties", NbtMap.EMPTY).build()), List.of(NbtMap.EMPTY));
+        assertStatesBeforeStone(new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putCompound("properties", NbtMap.EMPTY).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build()), List.of(NbtMap.EMPTY));
         // A property without a name is named "".
         assertStatesBeforeStone(block("cubecraft:pipe", NbtMap.builder().putList("enum", NbtType.BYTE, (byte) 0, (byte) 1).build()), List.of(state("", (byte) 0), state("", (byte) 1)));
         // A property without an "enum" list is skipped.
@@ -592,6 +608,79 @@ class BedrockPaletteTest {
         assertStatesBeforeStone(block("cubecraft:pipe", property("level", NbtType.INT, List.of(1, 2, 3))), List.of(state("level", 1), state("level", 2), state("level", 3)));
         BlockMappingInfo twice = BedrockPalette.mappingInfo(startGame(false, pipe(), block("cubecraft:pipe", property("level", NbtType.INT, List.of(1, 2, 3)))));
         assertEquals(SORTED_STONE + 3, twice.fromIntermediary().applyAsInt(SORTED_STONE));
+    }
+
+    // The client skips a block without a vanilla_block_data compound, so with sorted IDs only the blocks it keeps move stone.
+    @Test
+    void sortedIdsSkipABlockWithoutVanillaBlockData() {
+        assertTrue(Long.compareUnsigned(BedrockPalette.nameHash("cubecraft:vent"), BedrockPalette.nameHash("minecraft:stone")) < 0);
+        assertTrue(Long.compareUnsigned(BedrockPalette.nameHash("cubecraft:broken"), BedrockPalette.nameHash("minecraft:stone")) < 0);
+        // Without the compound, with a tag of another type, and a block whose property has no values, which the client never reads
+        BlockPropertyData otherType = new BlockPropertyData("cubecraft:vent", vent().getProperties().toBuilder().putInt("vanilla_block_data", 0).build());
+        BlockPropertyData broken = withoutVanillaBlockData(block("cubecraft:broken", property("open", NbtType.BYTE, List.of())));
+        for (BlockPropertyData skipped : List.of(withoutVanillaBlockData(vent()), otherType, broken)) {
+            BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(false, skipped, pipe()));
+            assertFalse(BedrockPalette.runtimeIdsUnknown(info));
+            assertEquals(SORTED_STONE + 8, info.fromIntermediary().applyAsInt(SORTED_STONE));
+            assertEquals(SORTED_STONE, info.toIntermediary().applyAsInt(SORTED_STONE + 8));
+            List<Integer> custom = customRuntimeIds(info);
+            assertEquals(8, custom.size());
+            for (int runtimeId : custom) {
+                assertEquals("cubecraft:pipe", ((SimpleBlockDefinition) BedrockPalette.definition(info, info.toIntermediary().applyAsInt(runtimeId))).getIdentifier());
+            }
+        }
+        // The client keeps a block whatever its compound holds, so an empty one will do.
+        BlockPropertyData empty = new BlockPropertyData("cubecraft:vent", vent().getProperties().toBuilder().putCompound("vanilla_block_data", NbtMap.EMPTY).build());
+        assertEquals(SORTED_STONE + 11, BedrockPalette.mappingInfo(startGame(false, empty, pipe())).fromIntermediary().applyAsInt(SORTED_STONE));
+    }
+
+    // With hashed IDs, the states of a block the client skips are runtime IDs it does not know.
+    @Test
+    void hashedIdsSkipABlockWithoutVanillaBlockData() throws IOException {
+        BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(true, withoutVanillaBlockData(vent()), pipe()));
+        for (int level = 0; level < 3; level++) {
+            int runtimeId = referenceHash("cubecraft:vent", state("level", level));
+            assertTrue(table.indexOfHash(runtimeId) < 0);
+            assertTrue(info.toIntermediary().applyAsInt(runtimeId) > BedrockPalette.UNKNOWN_ID, "level " + level);
+            assertFalse(info.isKnownRawId(runtimeId));
+        }
+        int pipe = info.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build()));
+        assertTrue(pipe >= BedrockPalette.FIRST_CUSTOM_ID && pipe < BedrockPalette.UNKNOWN_ID);
+        assertTrue(info.isKnownRawId(info.fromIntermediary().applyAsInt(SORTED_STONE)));
+    }
+
+    // The client skips a block without vanilla_block_data before it keeps the last block of a name, so an earlier block of that name stays, and a name whose every block lacks it is gone.
+    @Test
+    void aBlockWithoutVanillaBlockDataLeavesTheEarlierBlockOfItsName() throws IOException {
+        BlockPropertyData levels = block("cubecraft:pipe", property("level", NbtType.INT, List.of(1, 2, 3)));
+        assertEquals(SORTED_STONE + 8, BedrockPalette.mappingInfo(startGame(false, pipe(), withoutVanillaBlockData(levels))).fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 3, BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(pipe()), levels)).fromIntermediary().applyAsInt(SORTED_STONE));
+        BlockMappingInfo neither = BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(pipe()), withoutVanillaBlockData(levels)));
+        assertEquals(SORTED_STONE, neither.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(List.of(), customRuntimeIds(neither));
+
+        BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, pipe(), withoutVanillaBlockData(levels)));
+        int pipe = hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build()));
+        assertTrue(pipe >= BedrockPalette.FIRST_CUSTOM_ID && pipe < BedrockPalette.UNKNOWN_ID);
+        assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", state("level", 1))) > BedrockPalette.UNKNOWN_ID);
+    }
+
+    @Test
+    void warnsOnceForEachBlockWithoutVanillaBlockData() {
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            BlockPropertyData a = withoutVanillaBlockData(block("cubecraft:skipped_a"));
+            BlockPropertyData b = withoutVanillaBlockData(block("cubecraft:skipped_b"));
+            BedrockPalette.mappingInfo(startGame(false, a, b, a, pipe()));
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("cubecraft:skipped_a has no vanilla_block_data", -1).length - 1, log);
+        assertEquals(1, log.split("cubecraft:skipped_b has no vanilla_block_data", -1).length - 1, log);
+        assertFalse(log.contains("cubecraft:pipe"), log);
     }
 
     // 17 bools need 17 bits, past the client's 16: the 17th is always false.
