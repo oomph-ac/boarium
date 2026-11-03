@@ -157,6 +157,11 @@ final class CustomCollision {
         return this.shapes.get(this.stateShapes == null ? 0 : this.stateShapes[state]);
     }
 
+    // Each distinct shape is one list.
+    boolean sameBoxes(int state, int other) {
+        return this.boxes(state) == this.boxes(other);
+    }
+
     // Sturdy means one full-cube box, as for vanilla blocks.
     boolean faceSturdy(int state) {
         return this.boxes(state) == FULL_CUBE;

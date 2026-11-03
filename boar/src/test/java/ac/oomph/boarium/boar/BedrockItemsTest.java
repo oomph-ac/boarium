@@ -11,17 +11,24 @@ import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
 import ac.oomph.boarium.boar.blocks.BedrockBlock;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.boar.blocks.BedrockState;
 import ac.oomph.boarium.boar.blocks.GeyserFixtures;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtType;
+import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ItemVersion;
+import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -30,6 +37,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -176,6 +184,80 @@ class BedrockItemsTest {
         assertSame(wand.item(), BoarItemStack.of(session, stack(new SimpleItemDefinition("cubecraft:wand", 2000, true), 1)).item());
     }
 
+    // The client's block item of a custom block has the block's name and version NONE, as Geyser and dragonfly send it, and a data-driven item places the block its minecraft:block_placer names.
+    @Test
+    void placesTheCustomBlocksOfAServersOwnItems() {
+        StartGamePacket startGame = startGame(customBlock("cubecraft:item_marble"), customBlock("minecraft:item_marble"));
+        NbtMap marblePlacer = NbtMap.builder().putString("block", "cubecraft:item_marble").putList("use_on", NbtType.COMPOUND).build();
+        BoariumPlayerManager.BoariumNetworkSession session = session(List.of(
+                new SimpleItemDefinition("cubecraft:item_marble", -600, ItemVersion.NONE, false, null),
+                blockPlacer("cubecraft:chisel", 2101, marblePlacer),
+                blockPlacer("cubecraft:picky_chisel", 2102, marblePlacer.toBuilder().putList("use_on", NbtType.STRING, "minecraft:stone").build()),
+                blockPlacer("cubecraft:odd_chisel", 2103, marblePlacer.toBuilder().putString("use_on", "minecraft:stone").build()),
+                blockPlacer("cubecraft:stone_chisel", 2104, NbtMap.builder().putString("block", "minecraft:stone").build()),
+                blockPlacer("cubecraft:missing_chisel", 2105, NbtMap.builder().putString("block", "cubecraft:no_such_block").build()),
+                new SimpleItemDefinition("cubecraft:no_such_block", -601, ItemVersion.NONE, false, null),
+                new SimpleItemDefinition("minecraft:item_marble", -602, ItemVersion.NONE, false, null)), startGame);
+        Block marble = placed(session, "cubecraft:item_marble");
+        assertNotNull(marble);
+        assertEquals("cubecraft:item_marble", marble.toString());
+        assertTrue(marble.defaultBlockState(Vector3i.ZERO, 0).is(marble));
+        assertTrue(marble.defaultBlockState(Vector3i.ZERO, 0).intermediaryId() >= BedrockBlockTable.get().paletteSize());
+        assertSame(marble, placed(session, "cubecraft:chisel"));
+        // The client places these blocks, so Boar counts the items down, but it does not place them: only on the blocks use_on lists, a vanilla block, a custom block in the minecraft namespace.
+        assertPlacesUnknownBlock(session, "cubecraft:picky_chisel");
+        assertPlacesUnknownBlock(session, "cubecraft:odd_chisel");
+        assertPlacesUnknownBlock(session, "cubecraft:stone_chisel");
+        assertPlacesUnknownBlock(session, "minecraft:item_marble");
+        // The client places no block that its palette lacks.
+        assertPlacesNothing(session, "cubecraft:missing_chisel");
+        assertPlacesNothing(session, "cubecraft:no_such_block");
+
+        // Another session of the same server has its own items, which place the same block.
+        BoariumPlayerManager.BoariumNetworkSession other = session(List.of(new SimpleItemDefinition("cubecraft:item_marble", -600, ItemVersion.NONE, false, null)), startGame);
+        assertSame(marble, placed(other, "cubecraft:item_marble"));
+        // The client makes a data-driven or legacy item of the block's name another item, and the block's item gets another name.
+        assertPlacesNothing(session(List.of(blockPlacer("cubecraft:item_marble", 2106, NbtMap.EMPTY)), startGame), "cubecraft:item_marble");
+        assertPlacesNothing(session(List.of(new SimpleItemDefinition("cubecraft:item_marble", -600, ItemVersion.DATA_DRIVEN, true, NbtMap.EMPTY)), startGame), "cubecraft:item_marble");
+        assertPlacesNothing(session(List.of(new SimpleItemDefinition("cubecraft:item_marble", -600, false)), startGame), "cubecraft:item_marble");
+        // Unless its minecraft:block_placer replaces the block's item
+        NbtMap replacing = NbtMap.builder().putString("block", "cubecraft:item_marble").putBoolean("replace_block_item", true).build();
+        assertSame(marble, placed(session(List.of(blockPlacer("cubecraft:item_marble", 2107, replacing)), startGame), "cubecraft:item_marble"));
+    }
+
+    // The client sets the states of a custom block's traits as it places it, which Boar does not, so Boar places the block only when those states do not change its collision.
+    @Test
+    void placesACustomBlockWithTraitsOnlyWhenTheyKeepItsCollision() {
+        NbtMap cardinal = NbtMap.builder().putString("name", "minecraft:placement_direction").putCompound("enabled_states", NbtMap.builder().putByte("cardinal_direction", (byte) 1).build()).build();
+        BlockPropertyData log = withTraits(customBlock("cubecraft:item_log"), cardinal);
+        NbtMap open = NbtMap.builder().putString("condition", "q.block_state('minecraft:cardinal_direction') == 'east'")
+                .putCompound("components", NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).putList("boxes", NbtType.COMPOUND).build()).build()).build();
+        BlockPropertyData gate = new BlockPropertyData("cubecraft:item_gate", withTraits(customBlock("cubecraft:item_gate"), cardinal).getProperties().toBuilder()
+                .putList("permutations", NbtType.COMPOUND, open).putInt("molangVersion", 12).build());
+        BoariumPlayerManager.BoariumNetworkSession session = session(List.of(
+                new SimpleItemDefinition("cubecraft:item_log", -600, ItemVersion.NONE, false, null),
+                new SimpleItemDefinition("cubecraft:item_gate", -601, ItemVersion.NONE, false, null),
+                blockPlacer("cubecraft:gate_placer", 2108, NbtMap.builder().putString("block", "cubecraft:item_gate").build())), startGame(log, gate));
+        assertNotNull(placed(session, "cubecraft:item_log"));
+        assertPlacesUnknownBlock(session, "cubecraft:item_gate");
+        assertPlacesUnknownBlock(session, "cubecraft:gate_placer");
+    }
+
+    @Test
+    void placesNoCustomBlockWithAnItemPastTheSessionsLimit() {
+        List<ItemDefinition> items = new ArrayList<>();
+        for (int i = 0; i < BedrockItems.SessionItems.OWN_LIMIT; i++) {
+            items.add(new SimpleItemDefinition("cubecraft:filler_" + i, 3000 + i, true));
+        }
+        items.add(new SimpleItemDefinition("cubecraft:item_marble", -600, ItemVersion.NONE, false, null));
+        BoariumPlayerManager.BoariumNetworkSession session = session(items, startGame(customBlock("cubecraft:item_marble")));
+        for (int i = 0; i < BedrockItems.SessionItems.OWN_LIMIT; i++) {
+            placed(session, "cubecraft:filler_" + i);
+        }
+        assertPlacesNothing(session, "cubecraft:item_marble");
+        assertSame(BedrockItems.UNKNOWN, BoarItemStack.of(session, stack(items.getLast(), 1)).item());
+    }
+
     @Test
     void readsAirAndNoItemsAsEmpty() {
         assertTrue(BoarItemStack.of(null, ItemData.AIR).isEmpty());
@@ -212,7 +294,58 @@ class BedrockItemsTest {
     }
 
     private static BoariumPlayerManager.BoariumNetworkSession session(List<ItemDefinition> items) {
-        return new BoariumPlayerManager.BoariumNetworkSession(null, false, new BedrockItems.SessionItems(Definitions.items(items)));
+        return session(items, new StartGamePacket());
+    }
+
+    // A session whose client was sent this StartGame
+    private static BoariumPlayerManager.BoariumNetworkSession session(List<ItemDefinition> items, StartGamePacket startGame) {
+        return new BoariumPlayerManager.BoariumNetworkSession(null, false, new BedrockItems.SessionItems(Definitions.items(items), BedrockPalette.mappingInfo(startGame)));
+    }
+
+    private static StartGamePacket startGame(BlockPropertyData... blocks) {
+        StartGamePacket startGame = new StartGamePacket();
+        startGame.getBlockProperties().addAll(List.of(blocks));
+        return startGame;
+    }
+
+    // A custom block of one state
+    private static BlockPropertyData customBlock(String name) {
+        return new BlockPropertyData(name, NbtMap.builder().putCompound("vanilla_block_data", NbtMap.builder().putInt("block_id", 0).build()).build());
+    }
+
+    // A data-driven item with this minecraft:block_placer component, as Geyser sends one (CustomItemRegistryPopulator)
+    private static ItemDefinition blockPlacer(String name, int runtimeId, NbtMap placer) {
+        NbtMap components = NbtMap.builder().putCompound("components", NbtMap.builder().putCompound("minecraft:block_placer", placer).build()).build();
+        return new SimpleItemDefinition(name, runtimeId, ItemVersion.DATA_DRIVEN, true, components);
+    }
+
+    private static BlockPropertyData withTraits(BlockPropertyData block, NbtMap... traits) {
+        return new BlockPropertyData(block.getName(), block.getProperties().toBuilder().putList("traits", NbtType.COMPOUND, traits).build());
+    }
+
+    private static Item ownItem(BoariumPlayerManager.BoariumNetworkSession session, String name) {
+        return BoarItemStack.of(session, stack(session.items().definitions.getDefinition(name), 1)).item();
+    }
+
+    // The block Boar places with a session's own item of this name, or null
+    private static Block placed(BoariumPlayerManager.BoariumNetworkSession session, String name) {
+        Item item = ownItem(session, name);
+        Block block = BlockMappings.get().getItemToBlock().get(item);
+        if (block != null) {
+            assertTrue(item.isBlock(), name);
+        }
+        return block;
+    }
+
+    // A block item without a block, whose placement Boar counts but does not make
+    private static void assertPlacesUnknownBlock(BoariumPlayerManager.BoariumNetworkSession session, String name) {
+        assertTrue(ownItem(session, name).isBlock(), name);
+        assertNull(placed(session, name), name);
+    }
+
+    private static void assertPlacesNothing(BoariumPlayerManager.BoariumNetworkSession session, String name) {
+        assertFalse(ownItem(session, name).isBlock(), name);
+        assertNull(placed(session, name), name);
     }
 
     private static Item item(String name) {

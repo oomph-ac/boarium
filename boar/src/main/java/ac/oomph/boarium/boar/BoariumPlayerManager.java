@@ -92,7 +92,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected NetworkSession createNetworkSession(Session session) {
-        return new BoariumNetworkSession(session, deviceOs(session) == BuildPlatform.SONY.getId(), new BedrockItems.SessionItems(session.itemDefinitions()));
+        return new BoariumNetworkSession(session, deviceOs(session) == BuildPlatform.SONY.getId(), new BedrockItems.SessionItems(session.itemDefinitions(), this.getMappingInfo(session)));
     }
 
     @Override

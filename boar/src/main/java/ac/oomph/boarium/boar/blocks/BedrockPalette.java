@@ -3,6 +3,7 @@ package ac.oomph.boarium.boar.blocks;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.player.data.BlockMappingInfo;
 import ac.boar.anticheat.util.math.Box;
+import ac.boar.mappings.block.Block;
 import ac.boar.mappings.block.FallingFlowMaterial;
 import ac.boar.mappings.block.FallingFlowMaterials;
 import ac.boar.mappings.block.HorseJumpMaterial;
@@ -70,6 +71,7 @@ public final class BedrockPalette {
     // How many custom block names a palette logs for each kind of warning, and how many unknown runtime IDs a player's mapping logs
     static final int MAX_WARNED_NAMES = 256;
     static final int MAX_WARNED_IDS = 16;
+    private static final int MAX_LOGGED_NAME = 64;
 
     private static final int AIR = TABLE.firstIndex("minecraft:air");
     // What a runtime ID is, when it is not a state with an intermediary ID: a state of the custom block at cappedBlocks[CUSTOM - entry], which has no custom IDs, or an ID the palette does not define
@@ -92,10 +94,15 @@ public final class BedrockPalette {
     private final CustomBlock[] customBlocks;
     private final int[] customFirstRuntimeIds;
     private final Map<Integer, BlockDefinition> customDefinitions = new ConcurrentHashMap<>();
+    // Boar's block of each custom block in customBlocks, and the index of each by name
+    private final CustomBlockType[] customTypes;
+    private final Map<String, Integer> customIndices = new HashMap<>();
     // The custom blocks with no custom IDs
     private final CustomBlock[] cappedBlocks;
     // Whether the custom block of each index in customBlocks, then in cappedBlocks, was logged, and how many were. Read without the lock, and set with it, so that each is logged once.
     private final boolean[] warnedBlocks;
+    // Whether each custom block in customBlocks that Boar does not place was logged; these count against the same limit as warnedBlocks
+    private final boolean[] warnedPlacements;
     private int warnedNames;
 
     private BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread) {
@@ -163,7 +170,12 @@ public final class BedrockPalette {
         this.customStarts = withIds.stream().mapToInt(firstIds::get).toArray();
         this.customBlocks = withIds.toArray(CustomBlock[]::new);
         this.customFirstRuntimeIds = withIds.stream().mapToInt(block -> firstRuntimeIds.getOrDefault(block, -1)).toArray();
+        this.customTypes = withIds.stream().map(block -> customIds.type(firstIds.get(block))).toArray(CustomBlockType[]::new);
+        for (int i = 0; i < this.customBlocks.length; i++) {
+            this.customIndices.put(this.customBlocks[i].name(), i);
+        }
         this.warnedBlocks = new boolean[this.customBlocks.length + this.cappedBlocks.length];
+        this.warnedPlacements = new boolean[this.customBlocks.length];
     }
 
     /**
@@ -292,6 +304,49 @@ public final class BedrockPalette {
 
     static boolean customFaceSturdy(int id) {
         return CUSTOM_IDS.faceSturdy(id);
+    }
+
+    static Block customType(int id) {
+        return CUSTOM_IDS.type(id);
+    }
+
+    /**
+     * Boar's block of the custom block of this name in a mapping's palette, when Boar places it as the client does, or null.
+     * A custom block without custom IDs has no block of its own. Logs once why Boar does not place a custom block.
+     */
+    public static Block placedBlock(BlockMappingInfo info, String name) {
+        BedrockPalette palette = of(info);
+        Integer index = palette.customIndices.get(name);
+        if (index == null) {
+            return null;
+        }
+        CustomBlockType type = palette.customTypes[index];
+        if (type.unplaced() == null) {
+            return type;
+        }
+        palette.warnPlacement(index, type.unplaced());
+        return null;
+    }
+
+    // Whether a mapping's palette has a block of this name
+    public static boolean hasBlock(BlockMappingInfo info, String name) {
+        BedrockPalette palette = of(info);
+        return TABLE.firstIndex(name) >= 0 || palette.customIndices.containsKey(name) || Arrays.stream(palette.cappedBlocks).anyMatch(block -> block.name().equals(name));
+    }
+
+    private void warnPlacement(int index, String reason) {
+        if (this.warnedPlacements[index] || this.warnedNames >= MAX_WARNED_NAMES) {
+            return;
+        }
+        synchronized (this.warnedBlocks) {
+            if (this.warnedPlacements[index] || this.warnedNames >= MAX_WARNED_NAMES) {
+                return;
+            }
+            this.warnedPlacements[index] = true;
+            this.warnedNames++;
+            String name = this.customBlocks[index].name();
+            LOG.warn("Boar does not place custom block {} before the server does, since {}{}", name.length() > MAX_LOGGED_NAME ? name.substring(0, MAX_LOGGED_NAME) + "..." : name, reason, this.warnedNames == MAX_WARNED_NAMES ? ", and logs no more custom blocks of this palette" : "");
+        }
     }
 
     // Logs the custom block at this index in customBlocks, then in cappedBlocks, the first time it is read, when Boar takes some of its states for full cubes.
@@ -498,7 +553,7 @@ public final class BedrockPalette {
         private int next;
         private boolean full;
         // The blocks by first custom ID, which BedrockState reads without the lock
-        private volatile Assigned assigned = new Assigned(new int[0], new CustomBlock[0], 0, 0);
+        private volatile Assigned assigned = new Assigned(new int[0], new CustomBlock[0], new CustomBlockType[0], 0, 0);
 
         CustomIds(int first, int max) {
             this.first = first;
@@ -523,14 +578,17 @@ public final class BedrockPalette {
             Assigned assigned = this.assigned;
             int[] starts = assigned.starts();
             CustomBlock[] blocks = assigned.blocks();
+            CustomBlockType[] types = assigned.types();
             if (assigned.count() == starts.length) {
                 starts = Arrays.copyOf(starts, Math.max(16, starts.length * 2));
                 blocks = Arrays.copyOf(blocks, starts.length);
+                types = Arrays.copyOf(types, starts.length);
             }
             starts[assigned.count()] = this.next;
             blocks[assigned.count()] = block;
+            types[assigned.count()] = new CustomBlockType(block, this.next);
             this.next += block.stateCount();
-            this.assigned = new Assigned(starts, blocks, assigned.count() + 1, this.next);
+            this.assigned = new Assigned(starts, blocks, types, assigned.count() + 1, this.next);
             return this.firstIds.get(block);
         }
 
@@ -546,8 +604,15 @@ public final class BedrockPalette {
             return i < 0 || assigned.blocks()[i].collision().faceSturdy(id - assigned.starts()[i]);
         }
 
+        // Boar's block of the custom block with this custom ID, or null
+        CustomBlockType type(int id) {
+            Assigned assigned = this.assigned;
+            int i = assigned.blockOf(id);
+            return i < 0 ? null : assigned.types()[i];
+        }
+
         // Each block's IDs end where the next block's start, and the last block's at end.
-        private record Assigned(int[] starts, CustomBlock[] blocks, int count, int end) {
+        private record Assigned(int[] starts, CustomBlock[] blocks, CustomBlockType[] types, int count, int end) {
             // The index of the block with this custom ID, or -1
             int blockOf(int id) {
                 int i = Arrays.binarySearch(this.starts, 0, this.count, id);

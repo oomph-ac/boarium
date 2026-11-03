@@ -3,9 +3,11 @@ package ac.oomph.boarium.boar.blocks;
 import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.player.data.BlockMappingInfo;
 import ac.boar.anticheat.util.math.Box;
+import ac.boar.mappings.block.Block;
 import ac.boar.mappings.block.FallingFlowMaterial;
 import ac.boar.mappings.block.HorseJumpMaterial;
 import ac.oomph.boarium.boar.TestBoar;
+import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NBTOutputStream;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
@@ -26,13 +28,16 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.UnaryOperator;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -795,6 +800,122 @@ class BedrockPaletteTest {
         assertEquals(bookshelfHash + 1, palette.definition(lamp).getRuntimeId());
         assertEquals(state("n", "v281011"), ((SimpleBlockDefinition) palette.definition(lamp)).getState().getCompound("states"));
         assertTrue(info.isKnownRawId(info.fromIntermediary().applyAsInt(SORTED_STONE)));
+    }
+
+    // Every palette with the same custom block shares one Boar block of it, whose default state is the block's first state, as the client places it.
+    @Test
+    void placesTheFirstStateOfACustomBlock() {
+        BlockMappingInfo sorted = BedrockPalette.mappingInfo(startGame(false, block("cubecraft:placed_pipe", property("facing", NbtType.STRING, List.of("north", "east")))));
+        BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, block("cubecraft:placed_pipe", property("facing", NbtType.STRING, List.of("north", "east")))));
+        Block pipe = BedrockPalette.placedBlock(sorted, "cubecraft:placed_pipe");
+        assertNotNull(pipe);
+        assertSame(pipe, BedrockPalette.placedBlock(hashed, "cubecraft:placed_pipe"));
+        assertEquals("cubecraft:placed_pipe", pipe.toString());
+
+        BoarBlockState placed = pipe.defaultBlockState(Vector3i.ZERO, 0);
+        assertTrue(placed.intermediaryId() >= BedrockPalette.FIRST_CUSTOM_ID);
+        assertEquals(NbtMap.builder().putString("facing", "north").build(), ((SimpleBlockDefinition) BedrockPalette.definition(sorted, placed.intermediaryId())).getState().getCompound("states"));
+        // Each state of the block is a state of that block, and the states of another block are not.
+        assertTrue(placed.is(pipe));
+        assertTrue(BedrockState.FACTORY.create(placed.intermediaryId() + 1, Vector3i.ZERO, 0).is(pipe));
+        BlockMappingInfo other = BedrockPalette.mappingInfo(startGame(false, block("cubecraft:placed_pipe", property("facing", NbtType.STRING, List.of("up", "down")))));
+        Block otherPipe = BedrockPalette.placedBlock(other, "cubecraft:placed_pipe");
+        assertNotSame(pipe, otherPipe);
+        assertFalse(otherPipe.defaultBlockState(Vector3i.ZERO, 0).is(pipe));
+
+        assertNull(BedrockPalette.placedBlock(sorted, "cubecraft:no_such_block"));
+        assertNull(BedrockPalette.placedBlock(sorted, "minecraft:stone"));
+    }
+
+    // Boar does not place a block whose trait states change its collision, a block in the minecraft namespace, whose state the item's data value picks, a block with a placement filter, or a block of several parts.
+    // A block whose trait states keep its collision is placed in its default state.
+    @Test
+    void placesNoCustomBlockWhoseStateItCannotSet() {
+        NbtMap cardinal = trait("minecraft:placement_direction", "cardinal_direction");
+        BlockPropertyData logBlock = withTraits(block("cubecraft:placed_log"), cardinal);
+        NbtMap disabled = NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).putList("boxes", NbtType.COMPOUND).build()).build();
+        NbtMap open = NbtMap.builder().putString("condition", "q.block_state('minecraft:cardinal_direction') == 'east'").putCompound("components", disabled).build();
+        BlockPropertyData gate = withProperties(withTraits(block("cubecraft:placed_gate"), cardinal), properties -> properties.putList("permutations", NbtType.COMPOUND, open).putInt("molangVersion", 12));
+        // The connection states change no collision here.
+        BlockPropertyData wall = withTraits(block("cubecraft:placed_wall"), NbtMap.builder().putString("name", "minecraft:connection").putInt("type", 0).putInt("enabled_states", 1).build());
+        BlockPropertyData door = withTraits(block("cubecraft:placed_door"), NbtMap.builder().putString("name", "minecraft:multi_block").putCompound("enabled_states", NbtMap.builder().putByte("multi_block", (byte) 1).build()).putByte("part_count", (byte) 2).build());
+        NbtMap filter = NbtMap.builder().putCompound("minecraft:placement_filter", NbtMap.builder().putList("conditions", NbtType.COMPOUND).build()).build();
+        BlockPropertyData torch = withProperties(block("cubecraft:placed_torch"), properties -> properties.putCompound("components", filter));
+        BlockPropertyData lamp = withProperties(block("cubecraft:placed_lamp"), properties -> properties.putList("permutations", NbtType.COMPOUND, NbtMap.builder().putString("condition", "1").putCompound("components", filter).build()));
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(false, logBlock, gate, wall, door, torch, lamp, block("minecraft:placed_marble")));
+            assertNotNull(BedrockPalette.placedBlock(info, "cubecraft:placed_log"));
+            assertNotNull(BedrockPalette.placedBlock(info, "cubecraft:placed_wall"));
+            for (String name : List.of("cubecraft:placed_gate", "cubecraft:placed_gate", "cubecraft:placed_door", "cubecraft:placed_torch", "cubecraft:placed_lamp", "minecraft:placed_marble")) {
+                assertNull(BedrockPalette.placedBlock(info, name), name);
+                assertTrue(BedrockPalette.hasBlock(info, name), name);
+            }
+            // The gate's states still have their own block.
+            int gateId = customRuntimeIds(info, table.paletteSize() + 32).stream().mapToInt(runtimeId -> info.toIntermediary().applyAsInt(runtimeId))
+                    .filter(id -> BedrockPalette.definition(info, id) instanceof SimpleBlockDefinition definition && definition.getState().getString("name").equals("cubecraft:placed_gate")).findFirst().orElseThrow();
+            CustomBlockType type = (CustomBlockType) BedrockState.FACTORY.create(gateId, Vector3i.ZERO, 0).block();
+            assertEquals(List.of("minecraft:cardinal_direction"), type.unsetStates());
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("custom block cubecraft:placed_gate before the server does, since its traits add \\[minecraft:cardinal_direction], which change its collision", -1).length - 1, log);
+        assertTrue(log.contains("custom block cubecraft:placed_door before the server does, since Boar does not follow its minecraft:multi_block parts"), log);
+        assertTrue(log.contains("custom block cubecraft:placed_torch before the server does, since Boar does not check its minecraft:placement_filter"), log);
+        assertTrue(log.contains("custom block cubecraft:placed_lamp before the server does, since Boar does not check its minecraft:placement_filter"), log);
+        assertTrue(log.contains("custom block minecraft:placed_marble before the server does, since Boar does not know which state its item's data value picks"), log);
+        assertFalse(log.contains("placed_log") || log.contains("placed_wall"), log);
+    }
+
+    // These warnings count against the palette's limit, and cut long names.
+    @Test
+    void logsTheCustomBlocksItDoesNotPlaceUpToTheLimit() {
+        String longName = "cubecraft:" + "x".repeat(100);
+        List<BlockPropertyData> blocks = new ArrayList<>();
+        for (int i = 0; i <= BedrockPalette.MAX_WARNED_NAMES + 1; i++) {
+            blocks.add(block(i == 0 ? longName : "minecraft:unplaced_" + i));
+        }
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(true, withProperties(blocks.getFirst(), properties -> properties.putCompound("components", NbtMap.builder().putCompound("minecraft:placement_filter", NbtMap.EMPTY).build()))));
+            assertNull(BedrockPalette.placedBlock(info, longName));
+            BlockMappingInfo many = BedrockPalette.mappingInfo(startGame(true, blocks.subList(1, blocks.size()).toArray(BlockPropertyData[]::new)));
+            for (BlockPropertyData block : blocks.subList(1, blocks.size())) {
+                assertNull(BedrockPalette.placedBlock(many, block.getName()));
+            }
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        assertTrue(log.contains("custom block cubecraft:" + "x".repeat(54) + "... before the server does"), log);
+        assertFalse(log.contains(longName), log);
+        assertEquals(BedrockPalette.MAX_WARNED_NAMES, log.split("custom block minecraft:unplaced_", -1).length - 1);
+        assertTrue(log.contains("and logs no more custom blocks of this palette"), log);
+    }
+
+    // A custom block without custom IDs has no block of its own.
+    @Test
+    void placesNoCustomBlockPastTheCap() {
+        BedrockPalette palette = new BedrockPalette(false, List.of(CustomBlock.of(pipe())), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, 1));
+        assertNull(BedrockPalette.placedBlock(palette.mappingInfo(), "cubecraft:pipe"));
+        assertTrue(BedrockPalette.hasBlock(palette.mappingInfo(), "cubecraft:pipe"));
+    }
+
+    private static NbtMap trait(String name, String state) {
+        return NbtMap.builder().putString("name", name).putCompound("enabled_states", NbtMap.builder().putByte(state, (byte) 1).build()).build();
+    }
+
+    private static BlockPropertyData withTraits(BlockPropertyData block, NbtMap... traits) {
+        return withProperties(block, properties -> properties.putList("traits", NbtType.COMPOUND, traits));
+    }
+
+    private static BlockPropertyData withProperties(BlockPropertyData block, UnaryOperator<NbtMapBuilder> change) {
+        return new BlockPropertyData(block.getName(), change.apply(block.getProperties().toBuilder()).build());
     }
 
     // Past its limits on hashing, Boar does not read a palette with hashed IDs.

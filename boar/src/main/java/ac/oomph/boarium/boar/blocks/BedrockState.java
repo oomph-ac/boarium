@@ -26,7 +26,7 @@ import java.util.Set;
 
 /**
  * A Bedrock block state for Boar, answered from the Bedrock block table.
- * A state past the vanilla palette is a block of UNKNOWN_BLOCK, and keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
+ * A custom state's block is its custom block's CustomBlockType, and that of any other state past the vanilla palette is UNKNOWN_BLOCK. Each keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
  * A custom state has its block's collision boxes from {@link BedrockPalette}, and any other ID past the palette is a full solid 1x1x1 block.
  *
  * @param intermediaryId the palette index, or an ID past it from {@link BedrockPalette}
@@ -132,7 +132,11 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
 
     @Override
     public Block block() {
-        return this.isVanilla() ? BedrockBlock.of(this.intermediaryId) : UNKNOWN_BLOCK;
+        if (this.isVanilla()) {
+            return BedrockBlock.of(this.intermediaryId);
+        }
+        Block custom = this.intermediaryId < BedrockPalette.UNKNOWN_ID ? BedrockPalette.customType(this.intermediaryId) : null;
+        return custom != null ? custom : UNKNOWN_BLOCK;
     }
 
     @Override
@@ -200,7 +204,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         return self;
     }
 
-    // The block of every state past the vanilla palette. Its hardness of 0 only tells Boar that it can be broken.
+    // The block of every state past the vanilla palette that has no custom ID. Its hardness of 0 only tells Boar that it can be broken.
     private static final class UnknownBlock implements Block {
         @Override
         public boolean is(Block value) {

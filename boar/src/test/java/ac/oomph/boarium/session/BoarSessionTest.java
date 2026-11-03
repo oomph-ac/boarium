@@ -62,6 +62,7 @@ import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityLinkData;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.ItemVersion;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerSlotType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.FullContainerName;
@@ -1413,6 +1414,95 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // A server sends the item of its custom block named after the block, with version NONE, as Geyser and dragonfly do. The client places the block's first state, and so does Boar, before the server sends the block.
+    @Test
+    void standsOnTheCustomBlockItPlacedBeforeTheServerSendsIt() throws Exception {
+        TestBoar.mitigations(true);
+        SimpleItemDefinition tilesItem = new SimpleItemDefinition("cubecraft:tiles", -600, ItemVersion.NONE, false, null);
+        List<ItemDefinition> items = new ArrayList<>(ITEMS);
+        items.add(tilesItem);
+        this.server.items = items;
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(plainBlock("cubecraft:tiles"))));
+        BoarPlayer player = this.withMitigations(session);
+        int tiles = this.customRuntimeId(session, player);
+        ItemData tilesStack = ItemData.builder().definition(tilesItem).count(64).blockDefinition(Definitions.ANY_BLOCK.getDefinition(tiles)).usingNetId(true).netId(1).build();
+        this.giveAndAcknowledge(session, player, 0, tilesStack);
+
+        // A stone floor at Y 0 with a hole east of the player's feet
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        Vector3i feet = Vector3i.from((chunkX << 4) + 3, 1, (chunkZ << 4) + 5);
+        Vector3i hole = feet.add(1, -1, 0);
+        int[] blocks = new int[4096];
+        Arrays.fill(blocks, AIR_RUNTIME_ID);
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                blocks[x << 8 | z << 4] = STONE_RUNTIME_ID;
+            }
+        }
+        blocks[(hole.getX() & 15) << 8 | (hole.getZ() & 15) << 4] = AIR_RUNTIME_ID;
+        this.sendChunk(chunkX, chunkZ, subChunk(0, blocks));
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(feet.sub(0, 1, 0), 0).isAir());
+
+        List<String> violations = this.violationsWhile(player, () -> {
+            int tick = 1;
+            for (; tick <= 5; tick++) {
+                this.answerLatency();
+                PlayerAuthInputPacket input = authInput();
+                input.setPosition(eyes(feet));
+                input.setDelta(Vector3f.from(0, -0.0784F, 0));
+                input.setTick(tick);
+                this.client.session.get().sendPacket(input);
+                Thread.sleep(50);
+            }
+
+            // A click on the east face of the floor under the player's feet fills the hole.
+            InventoryTransactionPacket place = place(feet.sub(0, 1, 0), eyes(feet), tilesStack);
+            place.setBlockFace(5);
+            place.setClickPosition(Vector3f.from(1, 0.5F, 0.5F));
+            this.client.session.get().sendPacket(place);
+            awaitOnLoop(session, () -> RECORDER.received.contains(InventoryTransactionPacket.class));
+            assertEquals("cubecraft:tiles", onLoop(session, () -> player.compensatedWorld.getBlockState(hole, 0).block().toString()));
+            assertEquals(tiles, onLoop(session, () -> player.mappingInfo.fromIntermediary().applyAsInt(player.compensatedWorld.getBlockState(hole, 0).intermediaryId())));
+
+            // Walks east for 15 ticks, as the client moves on stone, then stops with its whole width over the placed block. The server never sends the block.
+            float x = feet.getX() + 0.5F;
+            Vec3 velocity = Vec3.ZERO.clone();
+            long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
+            int last = tick + 15 + 20;
+            for (int walked = 0; tick < last; tick++, walked++) {
+                boolean walking = walked < 15;
+                if (walking) {
+                    velocity = velocity.add(MathUtil.getInputVector(new Vec3(0, 0, 0.3F * 0.98F), 0.1F, -90));
+                }
+                x += velocity.x;
+                velocity = velocity.multiply(0.546F, 1, 0.546F);
+                this.answerLatency();
+                PlayerAuthInputPacket input = authInput();
+                input.setRotation(Vector3f.from(0, -90, -90));
+                input.setPosition(Vector3f.from(x, feet.getY() + 1.62001F, feet.getZ() + 0.5F));
+                if (walking) {
+                    input.getInputData().add(PlayerAuthInputData.UP);
+                    input.setMotion(Vector2f.from(0, 0.3F));
+                    input.setRawMoveVector(Vector2f.from(0, 0.3F));
+                    input.setAnalogMoveVector(Vector2f.from(0, 0.3F));
+                }
+                input.setDelta(Vector3f.from(velocity.x, -0.0784F, 0));
+                input.setTick(tick);
+                this.client.session.get().sendPacket(input);
+                Thread.sleep(50);
+            }
+            awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + 35);
+            assertTrue(x - 0.3F > hole.getX() && x + 0.3F < hole.getX() + 1, "x " + x);
+            return null;
+        });
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+        assertEquals("cubecraft:tiles", onLoop(session, () -> player.compensatedWorld.getBlockState(hole, 0).block().toString()));
+        this.assertNothingFailed();
+    }
+
     // A hashed runtime ID that is no state of the palette, such as a block of a newer Bedrock version, is a full cube that Boar can send back.
     @Test
     void standsOnABlockItDoesNotKnow() throws Exception {
@@ -1916,7 +2006,7 @@ class BoarSessionTest {
     // The test client has no item or block definitions of its own, and needs them to read the items the server sends.
     private void readItemsOnTheClient() throws Exception {
         BedrockCodecHelper clientHelper = this.client.session.get().getPeer().getCodecHelper();
-        clientHelper.setItemDefinitions(Definitions.items(ITEMS));
+        clientHelper.setItemDefinitions(Definitions.items(this.server.items));
         clientHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
     }
 

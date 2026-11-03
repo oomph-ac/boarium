@@ -23,13 +23,16 @@ import java.util.TreeMap;
  *
  * @param keys the names of the states its traits add, then the property names in the order of the block properties, where a name may be listed twice
  * @param values each key's values, of any NBT type
+ * @param traitStates how many of the keys its traits add
+ * @param placementFilter whether it or any of its permutations has a minecraft:placement_filter component
  * @param collision each state's collision boxes
  */
-record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int stateCount, CustomCollision collision) {
+record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int traitStates, boolean placementFilter, int stateCount, CustomCollision collision) {
     // BlockType::createBlockPermutations makes a permutation for each value of the lowest 16 bits.
     private static final int PERMUTATION_BITS = 16;
     // Past 32 bits, the client's 32-bit shifts wrap around, so a later property reads the bits of the first ones, which Boar does not follow.
     private static final int MAX_BITS = 32;
+    private static final String PLACEMENT_FILTER = "minecraft:placement_filter";
     // The client's CompoundTag sorts its keys by their UTF-8 bytes.
     private static final Comparator<String> KEY_ORDER = (a, b) -> Arrays.compareUnsigned(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
 
@@ -49,6 +52,7 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
             keys.add(state.name());
             values.add(state.values());
         }
+        int traitStates = keys.size();
         // As BlockDefinitionGroup::digestServerBlockProperties: it reads properties only from a list of compounds, skips a property without an "enum" list, and names a property without a string "name" "".
         if (data.getProperties().get("properties") instanceof NbtList<?> list && list.getType() == NbtType.COMPOUND) {
             for (Object element : list) {
@@ -73,7 +77,21 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         for (int radix : radices) {
             states *= radix;
         }
-        return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), states, CustomCollision.of(keys, values, radices, states, data.getProperties(), budget));
+        return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), traitStates, placementFilter(data.getProperties()), states, CustomCollision.of(keys, values, radices, states, data.getProperties(), budget));
+    }
+
+    private static boolean placementFilter(NbtMap properties) {
+        if (properties.get("components") instanceof NbtMap components && components.containsKey(PLACEMENT_FILTER)) {
+            return true;
+        }
+        if (properties.get("permutations") instanceof NbtList<?> permutations) {
+            for (Object permutation : permutations) {
+                if (permutation instanceof NbtMap map && map.get("components") instanceof NbtMap components && components.containsKey(PLACEMENT_FILTER)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // As BlockType::addState: the bits that hold the index of a value, at least 1.
