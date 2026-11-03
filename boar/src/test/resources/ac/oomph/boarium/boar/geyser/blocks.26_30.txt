@@ -1,0 +1,1201 @@
+# The Java blocks of Geyser 2.11.3-b1248, with what Boar's Java block lists and Geyser's mapping to Bedrock 1.26.30 say about each.
+# Made at boarium commit c200cbe by a one-off test that read boarium's old Java block table (BlockTable, built from Geyser's jar) and its Java block lists (TableBlockMappings).
+# Each line: the Java block name, its Java destroy time, the Boar block lists that hold it (named as in BlockMappings' getters, in snake case; - for none), and the Bedrock names of its states, its default state's first, when they are not just the Java name.
+# Names are without minecraft:.
+# When the Bedrock palette changes, these facts no longer hold: rebuild them from the Geyser build of that version, or drop the tests that read them.
+air 0.0 -
+stone 1.5 -
+granite 1.5 -
+polished_granite 1.5 -
+diorite 1.5 -
+polished_diorite 1.5 -
+andesite 1.5 -
+polished_andesite 1.5 -
+grass_block 0.6 -
+dirt 0.5 -
+coarse_dirt 0.5 -
+podzol 0.5 -
+cobblestone 2.0 -
+oak_planks 2.0 -
+spruce_planks 2.0 -
+birch_planks 2.0 -
+jungle_planks 2.0 -
+acacia_planks 2.0 -
+cherry_planks 2.0 -
+dark_oak_planks 2.0 -
+pale_oak_wood 2.0 -
+pale_oak_planks 2.0 -
+mangrove_planks 2.0 -
+bamboo_planks 2.0 -
+bamboo_mosaic 2.0 -
+oak_sapling 0.0 -
+spruce_sapling 0.0 -
+birch_sapling 0.0 -
+jungle_sapling 0.0 -
+acacia_sapling 0.0 -
+cherry_sapling 0.0 -
+dark_oak_sapling 0.0 -
+pale_oak_sapling 0.0 -
+mangrove_propagule 0.0 -
+bedrock -1.0 -
+water 100.0 - water,flowing_water
+lava 100.0 - lava,flowing_lava
+sand 0.5 -
+suspicious_sand 0.25 -
+red_sand 0.5 -
+gravel 0.6 -
+suspicious_gravel 0.25 -
+gold_ore 3.0 -
+deepslate_gold_ore 4.5 -
+iron_ore 3.0 -
+deepslate_iron_ore 4.5 -
+coal_ore 3.0 -
+deepslate_coal_ore 4.5 -
+nether_gold_ore 3.0 -
+oak_log 2.0 -
+spruce_log 2.0 -
+birch_log 2.0 -
+jungle_log 2.0 -
+acacia_log 2.0 -
+cherry_log 2.0 -
+dark_oak_log 2.0 -
+pale_oak_log 2.0 -
+mangrove_log 2.0 -
+mangrove_roots 0.7 -
+muddy_mangrove_roots 0.7 -
+bamboo_block 2.0 -
+stripped_spruce_log 2.0 -
+stripped_birch_log 2.0 -
+stripped_jungle_log 2.0 -
+stripped_acacia_log 2.0 -
+stripped_cherry_log 2.0 -
+stripped_dark_oak_log 2.0 -
+stripped_pale_oak_log 2.0 -
+stripped_oak_log 2.0 -
+stripped_mangrove_log 2.0 -
+stripped_bamboo_block 2.0 -
+oak_wood 2.0 -
+spruce_wood 2.0 -
+birch_wood 2.0 -
+jungle_wood 2.0 -
+acacia_wood 2.0 -
+cherry_wood 2.0 -
+dark_oak_wood 2.0 -
+mangrove_wood 2.0 -
+stripped_oak_wood 2.0 -
+stripped_spruce_wood 2.0 -
+stripped_birch_wood 2.0 -
+stripped_jungle_wood 2.0 -
+stripped_acacia_wood 2.0 -
+stripped_cherry_wood 2.0 -
+stripped_dark_oak_wood 2.0 -
+stripped_pale_oak_wood 2.0 -
+stripped_mangrove_wood 2.0 -
+oak_leaves 0.2 leaves
+spruce_leaves 0.2 leaves
+birch_leaves 0.2 leaves
+jungle_leaves 0.2 leaves
+acacia_leaves 0.2 leaves
+cherry_leaves 0.2 leaves
+dark_oak_leaves 0.2 leaves
+pale_oak_leaves 0.2 leaves
+mangrove_leaves 0.2 leaves
+azalea_leaves 0.2 leaves
+flowering_azalea_leaves 0.2 leaves azalea_leaves_flowered
+sponge 0.6 -
+wet_sponge 0.6 -
+glass 0.3 -
+lapis_ore 3.0 -
+deepslate_lapis_ore 4.5 -
+lapis_block 3.0 -
+dispenser 3.5 interactive
+sandstone 0.8 -
+chiseled_sandstone 0.8 -
+cut_sandstone 0.8 -
+note_block 0.8 interactive noteblock
+white_bed 0.2 bed,interactive bed
+orange_bed 0.2 bed,interactive bed
+magenta_bed 0.2 bed,interactive bed
+light_blue_bed 0.2 bed,interactive bed
+yellow_bed 0.2 bed,interactive bed
+lime_bed 0.2 bed,interactive bed
+pink_bed 0.2 bed,interactive bed
+gray_bed 0.2 bed,interactive bed
+light_gray_bed 0.2 bed,interactive bed
+cyan_bed 0.2 bed,interactive bed
+purple_bed 0.2 bed,interactive bed
+blue_bed 0.2 bed,interactive bed
+brown_bed 0.2 bed,interactive bed
+green_bed 0.2 bed,interactive bed
+red_bed 0.2 bed,interactive bed
+black_bed 0.2 bed,interactive bed
+powered_rail 0.7 - golden_rail
+detector_rail 0.7 -
+sticky_piston 1.5 -
+cobweb 4.0 - web
+short_grass 0.0 -
+fern 0.0 -
+dead_bush 0.0 - deadbush
+bush 0.0 -
+short_dry_grass 0.0 -
+tall_dry_grass 0.0 -
+seagrass 0.0 -
+tall_seagrass 0.0 - seagrass
+piston 1.5 -
+piston_head 1.5 - piston_arm_collision,sticky_piston_arm_collision
+white_wool 0.8 -
+orange_wool 0.8 -
+magenta_wool 0.8 -
+light_blue_wool 0.8 -
+yellow_wool 0.8 -
+lime_wool 0.8 -
+pink_wool 0.8 -
+gray_wool 0.8 -
+light_gray_wool 0.8 -
+cyan_wool 0.8 -
+purple_wool 0.8 -
+blue_wool 0.8 -
+brown_wool 0.8 -
+green_wool 0.8 -
+red_wool 0.8 -
+black_wool 0.8 -
+moving_piston -1.0 - moving_block
+dandelion 0.0 -
+golden_dandelion 0.0 -
+torchflower 0.0 -
+poppy 0.0 -
+blue_orchid 0.0 -
+allium 0.0 -
+azure_bluet 0.0 -
+red_tulip 0.0 -
+orange_tulip 0.0 -
+white_tulip 0.0 -
+pink_tulip 0.0 -
+oxeye_daisy 0.0 -
+cornflower 0.0 -
+wither_rose 0.0 -
+lily_of_the_valley 0.0 -
+brown_mushroom 0.0 -
+red_mushroom 0.0 -
+gold_block 3.0 -
+iron_block 5.0 -
+bricks 2.0 - brick_block
+tnt 0.0 -
+bookshelf 1.5 -
+chiseled_bookshelf 1.5 interactive
+acacia_shelf 2.0 interactive
+bamboo_shelf 2.0 interactive
+birch_shelf 2.0 interactive
+cherry_shelf 2.0 interactive
+crimson_shelf 2.0 interactive
+dark_oak_shelf 2.0 interactive
+jungle_shelf 2.0 interactive
+mangrove_shelf 2.0 interactive
+oak_shelf 2.0 interactive
+pale_oak_shelf 2.0 interactive
+spruce_shelf 2.0 interactive
+warped_shelf 2.0 interactive
+mossy_cobblestone 2.0 -
+obsidian 50.0 -
+torch 0.0 -
+wall_torch 0.0 - torch
+fire 0.0 -
+soul_fire 0.0 -
+spawner 5.0 - mob_spawner
+creaking_heart 10.0 -
+oak_stairs 2.0 stairs
+chest 2.5 chest,interactive
+redstone_wire 0.0 -
+diamond_ore 3.0 -
+deepslate_diamond_ore 4.5 -
+diamond_block 5.0 -
+crafting_table 2.5 interactive
+wheat 0.0 -
+farmland 0.6 -
+furnace 3.5 interactive lit_furnace,furnace
+oak_sign 1.0 sign,interactive standing_sign
+spruce_sign 1.0 sign,interactive spruce_standing_sign
+birch_sign 1.0 sign,interactive birch_standing_sign
+acacia_sign 1.0 sign,interactive acacia_standing_sign
+cherry_sign 1.0 sign,interactive cherry_standing_sign
+jungle_sign 1.0 sign,interactive jungle_standing_sign
+dark_oak_sign 1.0 sign,interactive darkoak_standing_sign
+pale_oak_sign 1.0 sign,interactive pale_oak_standing_sign
+mangrove_sign 1.0 sign,interactive mangrove_standing_sign
+bamboo_sign 1.0 sign,interactive bamboo_standing_sign
+oak_door 3.0 door,interactive wooden_door
+ladder 0.4 climbable
+rail 0.7 -
+cobblestone_stairs 2.0 stairs stone_stairs
+oak_wall_sign 1.0 sign,interactive wall_sign
+spruce_wall_sign 1.0 sign,interactive
+birch_wall_sign 1.0 sign,interactive
+acacia_wall_sign 1.0 sign,interactive
+cherry_wall_sign 1.0 sign,interactive
+jungle_wall_sign 1.0 sign,interactive
+dark_oak_wall_sign 1.0 sign,interactive darkoak_wall_sign
+pale_oak_wall_sign 1.0 sign,interactive
+mangrove_wall_sign 1.0 sign,interactive
+bamboo_wall_sign 1.0 sign,interactive
+oak_hanging_sign 1.0 sign,interactive
+spruce_hanging_sign 1.0 sign,interactive
+birch_hanging_sign 1.0 sign,interactive
+acacia_hanging_sign 1.0 sign,interactive
+cherry_hanging_sign 1.0 sign,interactive
+jungle_hanging_sign 1.0 sign,interactive
+dark_oak_hanging_sign 1.0 sign,interactive
+pale_oak_hanging_sign 1.0 sign,interactive
+crimson_hanging_sign 1.0 sign,interactive
+warped_hanging_sign 1.0 sign,interactive
+mangrove_hanging_sign 1.0 sign,interactive
+bamboo_hanging_sign 1.0 sign,interactive
+oak_wall_hanging_sign 1.0 sign,interactive oak_hanging_sign
+spruce_wall_hanging_sign 1.0 sign,interactive spruce_hanging_sign
+birch_wall_hanging_sign 1.0 sign,interactive birch_hanging_sign
+acacia_wall_hanging_sign 1.0 sign,interactive acacia_hanging_sign
+cherry_wall_hanging_sign 1.0 sign,interactive cherry_hanging_sign
+jungle_wall_hanging_sign 1.0 sign,interactive jungle_hanging_sign
+dark_oak_wall_hanging_sign 1.0 sign,interactive dark_oak_hanging_sign
+pale_oak_wall_hanging_sign 1.0 sign,interactive pale_oak_hanging_sign
+mangrove_wall_hanging_sign 1.0 sign,interactive mangrove_hanging_sign
+crimson_wall_hanging_sign 1.0 sign,interactive crimson_hanging_sign
+warped_wall_hanging_sign 1.0 sign,interactive warped_hanging_sign
+bamboo_wall_hanging_sign 1.0 sign,interactive bamboo_hanging_sign
+lever 0.5 interactive
+stone_pressure_plate 0.5 -
+iron_door 5.0 door,interactive
+oak_pressure_plate 0.5 - wooden_pressure_plate
+spruce_pressure_plate 0.5 -
+birch_pressure_plate 0.5 -
+jungle_pressure_plate 0.5 -
+acacia_pressure_plate 0.5 -
+cherry_pressure_plate 0.5 -
+dark_oak_pressure_plate 0.5 -
+pale_oak_pressure_plate 0.5 -
+mangrove_pressure_plate 0.5 -
+bamboo_pressure_plate 0.5 -
+redstone_ore 3.0 - lit_redstone_ore,redstone_ore
+deepslate_redstone_ore 4.5 - lit_deepslate_redstone_ore,deepslate_redstone_ore
+redstone_torch 0.0 - redstone_torch,unlit_redstone_torch
+redstone_wall_torch 0.0 - redstone_torch,unlit_redstone_torch
+stone_button 0.5 button,interactive
+snow 0.1 - snow_layer
+ice 0.5 -
+snow_block 0.2 - snow
+cactus 0.4 -
+cactus_flower 0.0 -
+clay 0.6 -
+sugar_cane 0.0 - reeds
+jukebox 2.0 interactive
+oak_fence 2.0 fence
+netherrack 0.4 -
+soul_sand 0.5 -
+soul_soil 0.5 -
+basalt 1.25 -
+polished_basalt 1.25 -
+soul_torch 0.0 -
+soul_wall_torch 0.0 - soul_torch
+copper_torch 0.0 -
+copper_wall_torch 0.0 - copper_torch
+glowstone 0.3 -
+nether_portal -1.0 - portal
+carved_pumpkin 1.0 -
+jack_o_lantern 1.0 lantern lit_pumpkin
+cake 0.5 -
+repeater 0.0 interactive powered_repeater,unpowered_repeater
+white_stained_glass 0.3 -
+orange_stained_glass 0.3 -
+magenta_stained_glass 0.3 -
+light_blue_stained_glass 0.3 -
+yellow_stained_glass 0.3 -
+lime_stained_glass 0.3 -
+pink_stained_glass 0.3 -
+gray_stained_glass 0.3 -
+light_gray_stained_glass 0.3 -
+cyan_stained_glass 0.3 -
+purple_stained_glass 0.3 -
+blue_stained_glass 0.3 -
+brown_stained_glass 0.3 -
+green_stained_glass 0.3 -
+red_stained_glass 0.3 -
+black_stained_glass 0.3 -
+oak_trapdoor 3.0 trapdoor,interactive trapdoor
+spruce_trapdoor 3.0 trapdoor,interactive
+birch_trapdoor 3.0 trapdoor,interactive
+jungle_trapdoor 3.0 trapdoor,interactive
+acacia_trapdoor 3.0 trapdoor,interactive
+cherry_trapdoor 3.0 trapdoor,interactive
+dark_oak_trapdoor 3.0 trapdoor,interactive
+pale_oak_trapdoor 3.0 trapdoor,interactive
+mangrove_trapdoor 3.0 trapdoor,interactive
+bamboo_trapdoor 3.0 trapdoor,interactive
+stone_bricks 1.5 -
+mossy_stone_bricks 1.5 -
+cracked_stone_bricks 1.5 -
+chiseled_stone_bricks 1.5 -
+packed_mud 1.0 -
+mud_bricks 1.5 -
+infested_stone 0.75 -
+infested_cobblestone 1.0 -
+infested_stone_bricks 0.75 -
+infested_mossy_stone_bricks 0.75 -
+infested_cracked_stone_bricks 0.75 -
+infested_chiseled_stone_bricks 0.75 -
+brown_mushroom_block 0.2 -
+red_mushroom_block 0.2 -
+mushroom_stem 0.2 -
+iron_bars 5.0 bars
+copper_bars 5.0 bars
+exposed_copper_bars 5.0 bars
+weathered_copper_bars 5.0 bars
+oxidized_copper_bars 5.0 bars
+waxed_copper_bars 5.0 bars
+waxed_exposed_copper_bars 5.0 bars
+waxed_weathered_copper_bars 5.0 bars
+waxed_oxidized_copper_bars 5.0 bars
+iron_chain 5.0 -
+copper_chain 5.0 -
+exposed_copper_chain 5.0 -
+weathered_copper_chain 5.0 -
+oxidized_copper_chain 5.0 -
+waxed_copper_chain 5.0 -
+waxed_exposed_copper_chain 5.0 -
+waxed_weathered_copper_chain 5.0 -
+waxed_oxidized_copper_chain 5.0 -
+glass_pane 0.3 bars
+pumpkin 1.0 -
+melon 1.0 - melon_block
+attached_pumpkin_stem 0.0 - pumpkin_stem
+attached_melon_stem 0.0 - melon_stem
+pumpkin_stem 0.0 -
+melon_stem 0.0 -
+vine 0.2 climbable
+glow_lichen 0.2 -
+resin_clump 0.0 -
+oak_fence_gate 2.0 fence_gate,interactive fence_gate
+brick_stairs 2.0 stairs
+stone_brick_stairs 1.5 stairs
+mud_brick_stairs 1.5 stairs
+mycelium 0.6 -
+lily_pad 0.0 - waterlily
+resin_block 0.0 -
+resin_bricks 1.5 -
+resin_brick_stairs 1.5 stairs
+resin_brick_slab 1.5 - resin_brick_slab,resin_brick_double_slab
+resin_brick_wall 1.5 wall
+chiseled_resin_bricks 1.5 -
+nether_bricks 2.0 - nether_brick
+nether_brick_fence 2.0 fence
+nether_brick_stairs 2.0 stairs
+nether_wart 0.0 -
+enchanting_table 5.0 interactive
+brewing_stand 0.5 interactive
+cauldron 2.0 cauldron,interactive
+water_cauldron 2.0 cauldron,interactive cauldron
+lava_cauldron 2.0 cauldron,interactive cauldron
+powder_snow_cauldron 2.0 cauldron,interactive cauldron
+end_portal -1.0 -
+end_portal_frame -1.0 interactive
+end_stone 3.0 -
+dragon_egg 3.0 -
+redstone_lamp 0.3 - lit_redstone_lamp,redstone_lamp
+cocoa 0.2 -
+sandstone_stairs 0.8 stairs
+emerald_ore 3.0 -
+deepslate_emerald_ore 4.5 -
+ender_chest 22.5 interactive
+tripwire_hook 0.0 -
+tripwire 0.0 - trip_wire
+emerald_block 5.0 -
+spruce_stairs 2.0 stairs
+birch_stairs 2.0 stairs
+jungle_stairs 2.0 stairs
+command_block -1.0 interactive
+beacon 3.0 interactive
+cobblestone_wall 2.0 wall
+mossy_cobblestone_wall 2.0 wall
+flower_pot 0.0 interactive
+potted_torchflower 0.0 interactive flower_pot
+potted_oak_sapling 0.0 interactive flower_pot
+potted_spruce_sapling 0.0 interactive flower_pot
+potted_birch_sapling 0.0 interactive flower_pot
+potted_jungle_sapling 0.0 interactive flower_pot
+potted_acacia_sapling 0.0 interactive flower_pot
+potted_cherry_sapling 0.0 interactive flower_pot
+potted_dark_oak_sapling 0.0 interactive flower_pot
+potted_pale_oak_sapling 0.0 interactive flower_pot
+potted_mangrove_propagule 0.0 interactive flower_pot
+potted_fern 0.0 interactive flower_pot
+potted_dandelion 0.0 interactive flower_pot
+potted_golden_dandelion 0.0 interactive flower_pot
+potted_poppy 0.0 interactive flower_pot
+potted_blue_orchid 0.0 interactive flower_pot
+potted_allium 0.0 interactive flower_pot
+potted_azure_bluet 0.0 interactive flower_pot
+potted_red_tulip 0.0 interactive flower_pot
+potted_orange_tulip 0.0 interactive flower_pot
+potted_white_tulip 0.0 interactive flower_pot
+potted_pink_tulip 0.0 interactive flower_pot
+potted_oxeye_daisy 0.0 interactive flower_pot
+potted_cornflower 0.0 interactive flower_pot
+potted_lily_of_the_valley 0.0 interactive flower_pot
+potted_wither_rose 0.0 interactive flower_pot
+potted_red_mushroom 0.0 interactive flower_pot
+potted_brown_mushroom 0.0 interactive flower_pot
+potted_dead_bush 0.0 interactive flower_pot
+potted_cactus 0.0 interactive flower_pot
+carrots 0.0 -
+potatoes 0.0 -
+oak_button 0.5 button,interactive wooden_button
+spruce_button 0.5 button,interactive
+birch_button 0.5 button,interactive
+jungle_button 0.5 button,interactive
+acacia_button 0.5 button,interactive
+cherry_button 0.5 button,interactive
+dark_oak_button 0.5 button,interactive
+pale_oak_button 0.5 button,interactive
+mangrove_button 0.5 button,interactive
+bamboo_button 0.5 button,interactive
+skeleton_skull 1.0 -
+skeleton_wall_skull 1.0 - skeleton_skull
+wither_skeleton_skull 1.0 -
+wither_skeleton_wall_skull 1.0 - wither_skeleton_skull
+zombie_head 1.0 -
+zombie_wall_head 1.0 - zombie_head
+player_head 1.0 -
+player_wall_head 1.0 - player_head
+creeper_head 1.0 -
+creeper_wall_head 1.0 - creeper_head
+dragon_head 1.0 -
+dragon_wall_head 1.0 - dragon_head
+piglin_head 1.0 -
+piglin_wall_head 1.0 - piglin_head
+anvil 5.0 anvil,interactive
+chipped_anvil 5.0 anvil,interactive
+damaged_anvil 5.0 anvil,interactive
+trapped_chest 2.5 chest,interactive
+light_weighted_pressure_plate 0.5 -
+heavy_weighted_pressure_plate 0.5 -
+comparator 0.0 interactive powered_comparator,unpowered_comparator
+daylight_detector 0.2 interactive daylight_detector_inverted,daylight_detector
+redstone_block 5.0 -
+nether_quartz_ore 3.0 - quartz_ore
+hopper 3.0 interactive
+quartz_block 0.8 -
+chiseled_quartz_block 0.8 -
+quartz_pillar 0.8 -
+quartz_stairs 0.8 stairs
+activator_rail 0.7 -
+dropper 3.5 interactive
+white_terracotta 1.25 -
+orange_terracotta 1.25 -
+magenta_terracotta 1.25 -
+light_blue_terracotta 1.25 -
+yellow_terracotta 1.25 -
+lime_terracotta 1.25 -
+pink_terracotta 1.25 -
+gray_terracotta 1.25 -
+light_gray_terracotta 1.25 -
+cyan_terracotta 1.25 -
+purple_terracotta 1.25 -
+blue_terracotta 1.25 -
+brown_terracotta 1.25 -
+green_terracotta 1.25 -
+red_terracotta 1.25 -
+black_terracotta 1.25 -
+white_stained_glass_pane 0.3 bars
+orange_stained_glass_pane 0.3 bars
+magenta_stained_glass_pane 0.3 bars
+light_blue_stained_glass_pane 0.3 bars
+yellow_stained_glass_pane 0.3 bars
+lime_stained_glass_pane 0.3 bars
+pink_stained_glass_pane 0.3 bars
+gray_stained_glass_pane 0.3 bars
+light_gray_stained_glass_pane 0.3 bars
+cyan_stained_glass_pane 0.3 bars
+purple_stained_glass_pane 0.3 bars
+blue_stained_glass_pane 0.3 bars
+brown_stained_glass_pane 0.3 bars
+green_stained_glass_pane 0.3 bars
+red_stained_glass_pane 0.3 bars
+black_stained_glass_pane 0.3 bars
+acacia_stairs 2.0 stairs
+cherry_stairs 2.0 stairs
+dark_oak_stairs 2.0 stairs
+pale_oak_stairs 2.0 stairs
+mangrove_stairs 2.0 stairs
+bamboo_stairs 2.0 stairs
+bamboo_mosaic_stairs 2.0 stairs
+slime_block 0.0 - slime
+barrier -1.0 -
+light -1.0 - light_block_0,light_block_1,light_block_10,light_block_11,light_block_12,light_block_13,light_block_14,light_block_15,light_block_2,light_block_3,light_block_4,light_block_5,light_block_6,light_block_7,light_block_8,light_block_9
+iron_trapdoor 5.0 trapdoor,interactive
+prismarine 1.5 -
+prismarine_bricks 1.5 -
+dark_prismarine 1.5 -
+prismarine_stairs 1.5 stairs
+prismarine_brick_stairs 1.5 stairs prismarine_bricks_stairs
+dark_prismarine_stairs 1.5 stairs
+prismarine_slab 1.5 - prismarine_slab,prismarine_double_slab
+prismarine_brick_slab 1.5 - prismarine_brick_slab,prismarine_brick_double_slab
+dark_prismarine_slab 1.5 - dark_prismarine_slab,dark_prismarine_double_slab
+sea_lantern 0.3 lantern
+hay_block 0.5 -
+white_carpet 0.1 -
+orange_carpet 0.1 -
+magenta_carpet 0.1 -
+light_blue_carpet 0.1 -
+yellow_carpet 0.1 -
+lime_carpet 0.1 -
+pink_carpet 0.1 -
+gray_carpet 0.1 -
+light_gray_carpet 0.1 -
+cyan_carpet 0.1 -
+purple_carpet 0.1 -
+blue_carpet 0.1 -
+brown_carpet 0.1 -
+green_carpet 0.1 -
+red_carpet 0.1 -
+black_carpet 0.1 -
+terracotta 1.25 - hardened_clay
+coal_block 5.0 -
+packed_ice 0.5 -
+sunflower 0.0 -
+lilac 0.0 -
+rose_bush 0.0 -
+peony 0.0 -
+tall_grass 0.0 -
+large_fern 0.0 -
+white_banner 1.0 - standing_banner
+orange_banner 1.0 - standing_banner
+magenta_banner 1.0 - standing_banner
+light_blue_banner 1.0 - standing_banner
+yellow_banner 1.0 - standing_banner
+lime_banner 1.0 - standing_banner
+pink_banner 1.0 - standing_banner
+gray_banner 1.0 - standing_banner
+light_gray_banner 1.0 - standing_banner
+cyan_banner 1.0 - standing_banner
+purple_banner 1.0 - standing_banner
+blue_banner 1.0 - standing_banner
+brown_banner 1.0 - standing_banner
+green_banner 1.0 - standing_banner
+red_banner 1.0 - standing_banner
+black_banner 1.0 - standing_banner
+white_wall_banner 1.0 - wall_banner
+orange_wall_banner 1.0 - wall_banner
+magenta_wall_banner 1.0 - wall_banner
+light_blue_wall_banner 1.0 - wall_banner
+yellow_wall_banner 1.0 - wall_banner
+lime_wall_banner 1.0 - wall_banner
+pink_wall_banner 1.0 - wall_banner
+gray_wall_banner 1.0 - wall_banner
+light_gray_wall_banner 1.0 - wall_banner
+cyan_wall_banner 1.0 - wall_banner
+purple_wall_banner 1.0 - wall_banner
+blue_wall_banner 1.0 - wall_banner
+brown_wall_banner 1.0 - wall_banner
+green_wall_banner 1.0 - wall_banner
+red_wall_banner 1.0 - wall_banner
+black_wall_banner 1.0 - wall_banner
+red_sandstone 0.8 -
+chiseled_red_sandstone 0.8 -
+cut_red_sandstone 0.8 -
+red_sandstone_stairs 0.8 stairs
+oak_slab 2.0 - oak_slab,oak_double_slab
+spruce_slab 2.0 - spruce_slab,spruce_double_slab
+birch_slab 2.0 - birch_slab,birch_double_slab
+jungle_slab 2.0 - jungle_slab,jungle_double_slab
+acacia_slab 2.0 - acacia_slab,acacia_double_slab
+cherry_slab 2.0 - cherry_slab,cherry_double_slab
+dark_oak_slab 2.0 - dark_oak_slab,dark_oak_double_slab
+pale_oak_slab 2.0 - pale_oak_slab,pale_oak_double_slab
+mangrove_slab 2.0 - mangrove_slab,mangrove_double_slab
+bamboo_slab 2.0 - bamboo_slab,bamboo_double_slab
+bamboo_mosaic_slab 2.0 - bamboo_mosaic_slab,bamboo_mosaic_double_slab
+stone_slab 2.0 - normal_stone_slab,normal_stone_double_slab
+smooth_stone_slab 2.0 - smooth_stone_slab,smooth_stone_double_slab
+sandstone_slab 2.0 - sandstone_slab,sandstone_double_slab
+cut_sandstone_slab 2.0 - cut_sandstone_slab,cut_sandstone_double_slab
+petrified_oak_slab 2.0 - petrified_oak_slab,petrified_oak_double_slab
+cobblestone_slab 2.0 - cobblestone_slab,cobblestone_double_slab
+brick_slab 2.0 - brick_slab,brick_double_slab
+stone_brick_slab 2.0 - stone_brick_slab,stone_brick_double_slab
+mud_brick_slab 1.5 - mud_brick_slab,mud_brick_double_slab
+nether_brick_slab 2.0 - nether_brick_slab,nether_brick_double_slab
+quartz_slab 2.0 - quartz_slab,quartz_double_slab
+red_sandstone_slab 2.0 - red_sandstone_slab,red_sandstone_double_slab
+cut_red_sandstone_slab 2.0 - cut_red_sandstone_slab,cut_red_sandstone_double_slab
+purpur_slab 2.0 - purpur_slab,purpur_double_slab
+smooth_stone 2.0 -
+smooth_sandstone 2.0 -
+smooth_quartz 2.0 -
+smooth_red_sandstone 2.0 -
+spruce_fence_gate 2.0 fence_gate,interactive
+birch_fence_gate 2.0 fence_gate,interactive
+jungle_fence_gate 2.0 fence_gate,interactive
+acacia_fence_gate 2.0 fence_gate,interactive
+cherry_fence_gate 2.0 fence_gate,interactive
+dark_oak_fence_gate 2.0 fence_gate,interactive
+pale_oak_fence_gate 2.0 fence_gate,interactive
+mangrove_fence_gate 2.0 fence_gate,interactive
+bamboo_fence_gate 2.0 fence_gate,interactive
+spruce_fence 2.0 fence
+birch_fence 2.0 fence
+jungle_fence 2.0 fence
+acacia_fence 2.0 fence
+cherry_fence 2.0 fence
+dark_oak_fence 2.0 fence
+pale_oak_fence 2.0 fence
+mangrove_fence 2.0 fence
+bamboo_fence 2.0 fence
+spruce_door 3.0 door,interactive
+birch_door 3.0 door,interactive
+jungle_door 3.0 door,interactive
+acacia_door 3.0 door,interactive
+cherry_door 3.0 door,interactive
+dark_oak_door 3.0 door,interactive
+pale_oak_door 3.0 door,interactive
+mangrove_door 3.0 door,interactive
+bamboo_door 3.0 door,interactive
+end_rod 0.0 -
+chorus_plant 0.4 -
+chorus_flower 0.4 -
+purpur_block 1.5 -
+purpur_pillar 1.5 -
+purpur_stairs 1.5 stairs
+end_stone_bricks 3.0 - end_bricks
+torchflower_crop 0.0 -
+pitcher_crop 0.0 -
+pitcher_plant 0.0 -
+beetroots 0.0 - beetroot
+dirt_path 0.65 - grass_path
+end_gateway -1.0 -
+repeating_command_block -1.0 interactive
+chain_command_block -1.0 interactive
+frosted_ice 0.5 -
+magma_block 0.5 - magma
+nether_wart_block 1.0 -
+red_nether_bricks 2.0 - red_nether_brick
+bone_block 2.0 -
+structure_void 0.0 -
+observer 3.0 -
+shulker_box 2.0 shulker,interactive undyed_shulker_box
+white_shulker_box 2.0 shulker,interactive
+orange_shulker_box 2.0 shulker,interactive
+magenta_shulker_box 2.0 shulker,interactive
+light_blue_shulker_box 2.0 shulker,interactive
+yellow_shulker_box 2.0 shulker,interactive
+lime_shulker_box 2.0 shulker,interactive
+pink_shulker_box 2.0 shulker,interactive
+gray_shulker_box 2.0 shulker,interactive
+light_gray_shulker_box 2.0 shulker,interactive
+cyan_shulker_box 2.0 shulker,interactive
+purple_shulker_box 2.0 shulker,interactive
+blue_shulker_box 2.0 shulker,interactive
+brown_shulker_box 2.0 shulker,interactive
+green_shulker_box 2.0 shulker,interactive
+red_shulker_box 2.0 shulker,interactive
+black_shulker_box 2.0 shulker,interactive
+white_glazed_terracotta 1.4 -
+orange_glazed_terracotta 1.4 -
+magenta_glazed_terracotta 1.4 -
+light_blue_glazed_terracotta 1.4 -
+yellow_glazed_terracotta 1.4 -
+lime_glazed_terracotta 1.4 -
+pink_glazed_terracotta 1.4 -
+gray_glazed_terracotta 1.4 -
+light_gray_glazed_terracotta 1.4 - silver_glazed_terracotta
+cyan_glazed_terracotta 1.4 -
+purple_glazed_terracotta 1.4 -
+blue_glazed_terracotta 1.4 -
+brown_glazed_terracotta 1.4 -
+green_glazed_terracotta 1.4 -
+red_glazed_terracotta 1.4 -
+black_glazed_terracotta 1.4 -
+white_concrete 1.8 -
+orange_concrete 1.8 -
+magenta_concrete 1.8 -
+light_blue_concrete 1.8 -
+yellow_concrete 1.8 -
+lime_concrete 1.8 -
+pink_concrete 1.8 -
+gray_concrete 1.8 -
+light_gray_concrete 1.8 -
+cyan_concrete 1.8 -
+purple_concrete 1.8 -
+blue_concrete 1.8 -
+brown_concrete 1.8 -
+green_concrete 1.8 -
+red_concrete 1.8 -
+black_concrete 1.8 -
+white_concrete_powder 0.5 -
+orange_concrete_powder 0.5 -
+magenta_concrete_powder 0.5 -
+light_blue_concrete_powder 0.5 -
+yellow_concrete_powder 0.5 -
+lime_concrete_powder 0.5 -
+pink_concrete_powder 0.5 -
+gray_concrete_powder 0.5 -
+light_gray_concrete_powder 0.5 -
+cyan_concrete_powder 0.5 -
+purple_concrete_powder 0.5 -
+blue_concrete_powder 0.5 -
+brown_concrete_powder 0.5 -
+green_concrete_powder 0.5 -
+red_concrete_powder 0.5 -
+black_concrete_powder 0.5 -
+kelp 0.0 -
+kelp_plant 0.0 - kelp
+dried_kelp_block 0.5 -
+turtle_egg 0.5 -
+sniffer_egg 0.5 -
+dried_ghast 0.0 -
+dead_tube_coral_block 1.5 -
+dead_brain_coral_block 1.5 -
+dead_bubble_coral_block 1.5 -
+dead_fire_coral_block 1.5 -
+dead_horn_coral_block 1.5 -
+tube_coral_block 1.5 -
+brain_coral_block 1.5 -
+bubble_coral_block 1.5 -
+fire_coral_block 1.5 -
+horn_coral_block 1.5 -
+dead_tube_coral 0.0 -
+dead_brain_coral 0.0 -
+dead_bubble_coral 0.0 -
+dead_fire_coral 0.0 -
+dead_horn_coral 0.0 -
+tube_coral 0.0 -
+brain_coral 0.0 -
+bubble_coral 0.0 -
+fire_coral 0.0 -
+horn_coral 0.0 -
+dead_tube_coral_fan 0.0 -
+dead_brain_coral_fan 0.0 -
+dead_bubble_coral_fan 0.0 -
+dead_fire_coral_fan 0.0 -
+dead_horn_coral_fan 0.0 -
+tube_coral_fan 0.0 -
+brain_coral_fan 0.0 -
+bubble_coral_fan 0.0 -
+fire_coral_fan 0.0 -
+horn_coral_fan 0.0 -
+dead_tube_coral_wall_fan 0.0 -
+dead_brain_coral_wall_fan 0.0 -
+dead_bubble_coral_wall_fan 0.0 -
+dead_fire_coral_wall_fan 0.0 -
+dead_horn_coral_wall_fan 0.0 -
+tube_coral_wall_fan 0.0 -
+brain_coral_wall_fan 0.0 -
+bubble_coral_wall_fan 0.0 -
+fire_coral_wall_fan 0.0 -
+horn_coral_wall_fan 0.0 -
+sea_pickle 0.0 -
+blue_ice 2.8 -
+conduit 3.0 -
+bamboo_sapling 1.0 -
+bamboo 1.0 -
+potted_bamboo 0.0 interactive flower_pot
+void_air 0.0 - air
+cave_air 0.0 - air
+bubble_column 0.0 -
+polished_granite_stairs 1.5 stairs
+smooth_red_sandstone_stairs 2.0 stairs
+mossy_stone_brick_stairs 1.5 stairs
+polished_diorite_stairs 1.5 stairs
+mossy_cobblestone_stairs 2.0 stairs
+end_stone_brick_stairs 3.0 stairs end_brick_stairs
+stone_stairs 1.5 stairs normal_stone_stairs
+smooth_sandstone_stairs 2.0 stairs
+smooth_quartz_stairs 2.0 stairs
+granite_stairs 1.5 stairs
+andesite_stairs 1.5 stairs
+red_nether_brick_stairs 2.0 stairs
+polished_andesite_stairs 1.5 stairs
+diorite_stairs 1.5 stairs
+polished_granite_slab 1.5 - polished_granite_slab,polished_granite_double_slab
+smooth_red_sandstone_slab 2.0 - smooth_red_sandstone_slab,smooth_red_sandstone_double_slab
+mossy_stone_brick_slab 1.5 - mossy_stone_brick_slab,mossy_stone_brick_double_slab
+polished_diorite_slab 1.5 - polished_diorite_slab,polished_diorite_double_slab
+mossy_cobblestone_slab 2.0 - mossy_cobblestone_slab,mossy_cobblestone_double_slab
+end_stone_brick_slab 3.0 - end_stone_brick_slab,end_stone_brick_double_slab
+smooth_sandstone_slab 2.0 - smooth_sandstone_slab,smooth_sandstone_double_slab
+smooth_quartz_slab 2.0 - smooth_quartz_slab,smooth_quartz_double_slab
+granite_slab 1.5 - granite_slab,granite_double_slab
+andesite_slab 1.5 - andesite_slab,andesite_double_slab
+red_nether_brick_slab 2.0 - red_nether_brick_slab,red_nether_brick_double_slab
+polished_andesite_slab 1.5 - polished_andesite_slab,polished_andesite_double_slab
+diorite_slab 1.5 - diorite_slab,diorite_double_slab
+brick_wall 2.0 wall
+prismarine_wall 1.5 wall
+red_sandstone_wall 0.8 wall
+mossy_stone_brick_wall 1.5 wall
+granite_wall 1.5 wall
+stone_brick_wall 1.5 wall
+mud_brick_wall 1.5 wall
+nether_brick_wall 2.0 wall
+andesite_wall 1.5 wall
+red_nether_brick_wall 2.0 wall
+sandstone_wall 0.8 wall
+end_stone_brick_wall 3.0 wall
+diorite_wall 1.5 wall
+scaffolding 0.0 -
+loom 2.5 interactive
+barrel 2.5 interactive
+smoker 3.5 interactive lit_smoker,smoker
+blast_furnace 3.5 interactive lit_blast_furnace,blast_furnace
+cartography_table 2.5 interactive
+fletching_table 2.5 -
+grindstone 2.0 interactive
+lectern 2.5 interactive
+smithing_table 2.5 interactive
+stonecutter 3.5 interactive stonecutter_block
+bell 5.0 interactive
+lantern 3.5 lantern
+soul_lantern 3.5 lantern
+copper_lantern 3.5 lantern
+exposed_copper_lantern 3.5 lantern
+weathered_copper_lantern 3.5 lantern
+oxidized_copper_lantern 3.5 lantern
+waxed_copper_lantern 3.5 lantern
+waxed_exposed_copper_lantern 3.5 lantern
+waxed_weathered_copper_lantern 3.5 lantern
+waxed_oxidized_copper_lantern 3.5 lantern
+campfire 2.0 -
+soul_campfire 2.0 -
+sweet_berry_bush 0.0 interactive
+warped_stem 2.0 -
+stripped_warped_stem 2.0 -
+warped_hyphae 2.0 -
+stripped_warped_hyphae 2.0 -
+warped_nylium 0.4 -
+warped_fungus 0.0 -
+warped_wart_block 1.0 -
+warped_roots 0.0 -
+nether_sprouts 0.0 -
+crimson_stem 2.0 -
+stripped_crimson_stem 2.0 -
+crimson_hyphae 2.0 -
+stripped_crimson_hyphae 2.0 -
+crimson_nylium 0.4 -
+crimson_fungus 0.0 -
+shroomlight 1.0 -
+weeping_vines 0.0 climbable
+weeping_vines_plant 0.0 climbable weeping_vines
+twisting_vines 0.0 climbable
+twisting_vines_plant 0.0 climbable twisting_vines
+crimson_roots 0.0 -
+crimson_planks 2.0 -
+warped_planks 2.0 -
+crimson_slab 2.0 - crimson_slab,crimson_double_slab
+warped_slab 2.0 - warped_slab,warped_double_slab
+crimson_pressure_plate 0.5 -
+warped_pressure_plate 0.5 -
+crimson_fence 2.0 fence
+warped_fence 2.0 fence
+crimson_trapdoor 3.0 trapdoor,interactive
+warped_trapdoor 3.0 trapdoor,interactive
+crimson_fence_gate 2.0 fence_gate,interactive
+warped_fence_gate 2.0 fence_gate,interactive
+crimson_stairs 2.0 stairs
+warped_stairs 2.0 stairs
+crimson_button 0.5 button,interactive
+warped_button 0.5 button,interactive
+crimson_door 3.0 door,interactive
+warped_door 3.0 door,interactive
+crimson_sign 1.0 sign,interactive crimson_standing_sign
+warped_sign 1.0 sign,interactive warped_standing_sign
+crimson_wall_sign 1.0 sign,interactive
+warped_wall_sign 1.0 sign,interactive
+structure_block -1.0 interactive
+jigsaw -1.0 interactive
+test_block -1.0 - unknown
+test_instance_block -1.0 - unknown
+composter 0.6 interactive
+target 0.5 -
+bee_nest 0.3 -
+beehive 0.6 -
+honey_block 0.0 -
+honeycomb_block 0.6 -
+netherite_block 50.0 -
+ancient_debris 30.0 -
+crying_obsidian 50.0 -
+respawn_anchor 50.0 interactive
+potted_crimson_fungus 0.0 interactive flower_pot
+potted_warped_fungus 0.0 interactive flower_pot
+potted_crimson_roots 0.0 interactive flower_pot
+potted_warped_roots 0.0 interactive flower_pot
+lodestone 3.5 -
+blackstone 1.5 -
+blackstone_stairs 1.5 stairs
+blackstone_wall 1.5 wall
+blackstone_slab 2.0 - blackstone_slab,blackstone_double_slab
+polished_blackstone 2.0 -
+polished_blackstone_bricks 1.5 -
+cracked_polished_blackstone_bricks 1.5 -
+chiseled_polished_blackstone 1.5 -
+polished_blackstone_brick_slab 2.0 - polished_blackstone_brick_slab,polished_blackstone_brick_double_slab
+polished_blackstone_brick_stairs 1.5 stairs
+polished_blackstone_brick_wall 1.5 wall
+gilded_blackstone 1.5 -
+polished_blackstone_stairs 2.0 stairs
+polished_blackstone_slab 2.0 - polished_blackstone_slab,polished_blackstone_double_slab
+polished_blackstone_pressure_plate 0.5 -
+polished_blackstone_button 0.5 button,interactive
+polished_blackstone_wall 2.0 wall
+chiseled_nether_bricks 2.0 -
+cracked_nether_bricks 2.0 -
+quartz_bricks 0.8 -
+candle 0.1 candle,interactive
+white_candle 0.1 candle,interactive
+orange_candle 0.1 candle,interactive
+magenta_candle 0.1 candle,interactive
+light_blue_candle 0.1 candle,interactive
+yellow_candle 0.1 candle,interactive
+lime_candle 0.1 candle,interactive
+pink_candle 0.1 candle,interactive
+gray_candle 0.1 candle,interactive
+light_gray_candle 0.1 candle,interactive
+cyan_candle 0.1 candle,interactive
+purple_candle 0.1 candle,interactive
+blue_candle 0.1 candle,interactive
+brown_candle 0.1 candle,interactive
+green_candle 0.1 candle,interactive
+red_candle 0.1 candle,interactive
+black_candle 0.1 candle,interactive
+candle_cake 0.5 interactive
+white_candle_cake 0.5 interactive
+orange_candle_cake 0.5 interactive
+magenta_candle_cake 0.5 interactive
+light_blue_candle_cake 0.5 interactive
+yellow_candle_cake 0.5 interactive
+lime_candle_cake 0.5 interactive
+pink_candle_cake 0.5 interactive
+gray_candle_cake 0.5 interactive
+light_gray_candle_cake 0.5 interactive
+cyan_candle_cake 0.5 interactive
+purple_candle_cake 0.5 interactive
+blue_candle_cake 0.5 interactive
+brown_candle_cake 0.5 interactive
+green_candle_cake 0.5 interactive
+red_candle_cake 0.5 interactive
+black_candle_cake 0.5 interactive
+amethyst_block 1.5 -
+budding_amethyst 1.5 -
+amethyst_cluster 1.5 -
+large_amethyst_bud 1.5 -
+medium_amethyst_bud 1.5 -
+small_amethyst_bud 1.5 -
+tuff 1.5 -
+tuff_slab 1.5 - tuff_slab,tuff_double_slab
+tuff_stairs 1.5 stairs
+tuff_wall 1.5 wall
+polished_tuff 1.5 -
+polished_tuff_slab 1.5 - polished_tuff_slab,polished_tuff_double_slab
+polished_tuff_stairs 1.5 stairs
+polished_tuff_wall 1.5 wall
+chiseled_tuff 1.5 -
+tuff_bricks 1.5 -
+tuff_brick_slab 1.5 - tuff_brick_slab,tuff_brick_double_slab
+tuff_brick_stairs 1.5 stairs
+tuff_brick_wall 1.5 wall
+chiseled_tuff_bricks 1.5 -
+sulfur 1.5 -
+potent_sulfur 1.5 -
+sulfur_slab 1.5 - sulfur_slab,sulfur_double_slab
+sulfur_stairs 1.5 stairs
+sulfur_wall 1.5 wall
+polished_sulfur 1.5 -
+polished_sulfur_slab 1.5 - polished_sulfur_slab,polished_sulfur_double_slab
+polished_sulfur_stairs 1.5 stairs
+polished_sulfur_wall 1.5 wall
+sulfur_bricks 1.5 -
+sulfur_brick_slab 1.5 - sulfur_brick_slab,sulfur_brick_double_slab
+sulfur_brick_stairs 1.5 stairs
+sulfur_brick_wall 1.5 wall
+chiseled_sulfur 1.5 -
+cinnabar 1.5 -
+cinnabar_slab 1.5 - cinnabar_slab,cinnabar_double_slab
+cinnabar_stairs 1.5 stairs
+cinnabar_wall 1.5 wall
+polished_cinnabar 1.5 -
+polished_cinnabar_slab 1.5 - polished_cinnabar_slab,polished_cinnabar_double_slab
+polished_cinnabar_stairs 1.5 stairs
+polished_cinnabar_wall 1.5 wall
+cinnabar_bricks 1.5 -
+cinnabar_brick_slab 1.5 - cinnabar_brick_slab,cinnabar_brick_double_slab
+cinnabar_brick_stairs 1.5 stairs
+cinnabar_brick_wall 1.5 wall
+chiseled_cinnabar 1.5 -
+calcite 0.75 -
+tinted_glass 0.3 -
+powder_snow 0.25 -
+sculk_sensor 1.5 -
+calibrated_sculk_sensor 1.5 -
+sculk 0.2 -
+sculk_vein 0.2 -
+sculk_catalyst 3.0 -
+sculk_shrieker 3.0 -
+copper_block 3.0 -
+exposed_copper 3.0 -
+weathered_copper 3.0 -
+oxidized_copper 3.0 -
+waxed_copper_block 3.0 - waxed_copper
+waxed_exposed_copper 3.0 -
+waxed_weathered_copper 3.0 -
+waxed_oxidized_copper 3.0 -
+copper_ore 3.0 -
+deepslate_copper_ore 4.5 -
+cut_copper 3.0 -
+exposed_cut_copper 3.0 -
+weathered_cut_copper 3.0 -
+oxidized_cut_copper 3.0 -
+waxed_cut_copper 3.0 -
+waxed_exposed_cut_copper 3.0 -
+waxed_weathered_cut_copper 3.0 -
+waxed_oxidized_cut_copper 3.0 -
+chiseled_copper 3.0 -
+exposed_chiseled_copper 3.0 -
+weathered_chiseled_copper 3.0 -
+oxidized_chiseled_copper 3.0 -
+waxed_chiseled_copper 3.0 -
+waxed_exposed_chiseled_copper 3.0 -
+waxed_weathered_chiseled_copper 3.0 -
+waxed_oxidized_chiseled_copper 3.0 -
+cut_copper_stairs 3.0 stairs
+exposed_cut_copper_stairs 3.0 stairs
+weathered_cut_copper_stairs 3.0 stairs
+oxidized_cut_copper_stairs 3.0 stairs
+waxed_cut_copper_stairs 3.0 stairs
+waxed_exposed_cut_copper_stairs 3.0 stairs
+waxed_weathered_cut_copper_stairs 3.0 stairs
+waxed_oxidized_cut_copper_stairs 3.0 stairs
+cut_copper_slab 3.0 - cut_copper_slab,double_cut_copper_slab
+exposed_cut_copper_slab 3.0 - exposed_cut_copper_slab,exposed_double_cut_copper_slab
+weathered_cut_copper_slab 3.0 - weathered_cut_copper_slab,weathered_double_cut_copper_slab
+oxidized_cut_copper_slab 3.0 - oxidized_cut_copper_slab,oxidized_double_cut_copper_slab
+waxed_cut_copper_slab 3.0 - waxed_cut_copper_slab,waxed_double_cut_copper_slab
+waxed_exposed_cut_copper_slab 3.0 - waxed_exposed_cut_copper_slab,waxed_exposed_double_cut_copper_slab
+waxed_weathered_cut_copper_slab 3.0 - waxed_weathered_cut_copper_slab,waxed_weathered_double_cut_copper_slab
+waxed_oxidized_cut_copper_slab 3.0 - waxed_oxidized_cut_copper_slab,waxed_oxidized_double_cut_copper_slab
+copper_door 3.0 door,interactive
+exposed_copper_door 3.0 door,interactive
+weathered_copper_door 3.0 door,interactive
+oxidized_copper_door 3.0 door,interactive
+waxed_copper_door 3.0 door,interactive
+waxed_exposed_copper_door 3.0 door,interactive
+waxed_weathered_copper_door 3.0 door,interactive
+waxed_oxidized_copper_door 3.0 door,interactive
+copper_trapdoor 3.0 trapdoor,interactive
+exposed_copper_trapdoor 3.0 trapdoor,interactive
+weathered_copper_trapdoor 3.0 trapdoor,interactive
+oxidized_copper_trapdoor 3.0 trapdoor,interactive
+waxed_copper_trapdoor 3.0 trapdoor,interactive
+waxed_exposed_copper_trapdoor 3.0 trapdoor,interactive
+waxed_weathered_copper_trapdoor 3.0 trapdoor,interactive
+waxed_oxidized_copper_trapdoor 3.0 trapdoor,interactive
+copper_grate 3.0 -
+exposed_copper_grate 3.0 -
+weathered_copper_grate 3.0 -
+oxidized_copper_grate 3.0 -
+waxed_copper_grate 3.0 -
+waxed_exposed_copper_grate 3.0 -
+waxed_weathered_copper_grate 3.0 -
+waxed_oxidized_copper_grate 3.0 -
+copper_bulb 3.0 -
+exposed_copper_bulb 3.0 -
+weathered_copper_bulb 3.0 -
+oxidized_copper_bulb 3.0 -
+waxed_copper_bulb 3.0 -
+waxed_exposed_copper_bulb 3.0 -
+waxed_weathered_copper_bulb 3.0 -
+waxed_oxidized_copper_bulb 3.0 -
+copper_chest 3.0 chest,interactive
+exposed_copper_chest 3.0 chest,interactive
+weathered_copper_chest 3.0 chest,interactive
+oxidized_copper_chest 3.0 chest,interactive
+waxed_copper_chest 3.0 chest,interactive
+waxed_exposed_copper_chest 3.0 chest,interactive
+waxed_weathered_copper_chest 3.0 chest,interactive
+waxed_oxidized_copper_chest 3.0 chest,interactive
+copper_golem_statue 3.0 interactive
+exposed_copper_golem_statue 3.0 interactive
+weathered_copper_golem_statue 3.0 interactive
+oxidized_copper_golem_statue 3.0 interactive
+waxed_copper_golem_statue 3.0 interactive
+waxed_exposed_copper_golem_statue 3.0 interactive
+waxed_weathered_copper_golem_statue 3.0 interactive
+waxed_oxidized_copper_golem_statue 3.0 interactive
+lightning_rod 3.0 -
+exposed_lightning_rod 3.0 -
+weathered_lightning_rod 3.0 -
+oxidized_lightning_rod 3.0 -
+waxed_lightning_rod 3.0 -
+waxed_exposed_lightning_rod 3.0 -
+waxed_weathered_lightning_rod 3.0 -
+waxed_oxidized_lightning_rod 3.0 -
+dripstone_block 1.5 -
+pointed_dripstone 1.5 -
+sulfur_spike 1.5 -
+cave_vines 0.0 climbable cave_vines_head_with_berries,cave_vines
+cave_vines_plant 0.0 climbable cave_vines_body_with_berries,cave_vines
+spore_blossom 0.0 -
+azalea 0.0 -
+flowering_azalea 0.0 -
+moss_carpet 0.1 -
+pink_petals 0.0 -
+wildflowers 0.0 -
+leaf_litter 0.0 -
+moss_block 0.1 -
+big_dripleaf 0.1 -
+big_dripleaf_stem 0.1 - big_dripleaf
+small_dripleaf 0.0 - small_dripleaf_block
+hanging_roots 0.0 -
+rooted_dirt 0.5 - dirt_with_roots
+mud 0.5 -
+deepslate 3.0 -
+cobbled_deepslate 3.5 -
+cobbled_deepslate_stairs 3.5 stairs
+cobbled_deepslate_slab 3.5 - cobbled_deepslate_slab,cobbled_deepslate_double_slab
+cobbled_deepslate_wall 3.5 wall
+polished_deepslate 3.5 -
+polished_deepslate_stairs 3.5 stairs
+polished_deepslate_slab 3.5 - polished_deepslate_slab,polished_deepslate_double_slab
+polished_deepslate_wall 3.5 wall
+deepslate_tiles 3.5 -
+deepslate_tile_stairs 3.5 stairs
+deepslate_tile_slab 3.5 - deepslate_tile_slab,deepslate_tile_double_slab
+deepslate_tile_wall 3.5 wall
+deepslate_bricks 3.5 -
+deepslate_brick_stairs 3.5 stairs
+deepslate_brick_slab 3.5 - deepslate_brick_slab,deepslate_brick_double_slab
+deepslate_brick_wall 3.5 wall
+chiseled_deepslate 3.5 -
+cracked_deepslate_bricks 3.5 -
+cracked_deepslate_tiles 3.5 -
+infested_deepslate 1.5 -
+smooth_basalt 1.25 -
+raw_iron_block 5.0 -
+raw_copper_block 5.0 -
+raw_gold_block 5.0 -
+potted_azalea_bush 0.0 interactive flower_pot
+potted_flowering_azalea_bush 0.0 interactive flower_pot
+ochre_froglight 0.3 -
+verdant_froglight 0.3 -
+pearlescent_froglight 0.3 -
+frogspawn 0.0 - frog_spawn
+reinforced_deepslate 55.0 -
+decorated_pot 0.0 interactive
+crafter 1.5 interactive
+trial_spawner 50.0 -
+vault 50.0 interactive
+heavy_core 10.0 -
+pale_moss_block 0.1 -
+pale_moss_carpet 0.1 -
+pale_hanging_moss 0.0 -
+open_eyeblossom 0.0 -
+closed_eyeblossom 0.0 -
+potted_open_eyeblossom 0.0 interactive flower_pot
+potted_closed_eyeblossom 0.0 interactive flower_pot
+firefly_bush 0.0 -

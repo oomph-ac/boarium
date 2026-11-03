@@ -12,7 +12,7 @@ import ac.boar.mappings.item.Items;
 import ac.oomph.boarium.boar.blocks.BedrockBlock;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockState;
-import ac.oomph.boarium.boar.blocks.BlockTable;
+import ac.oomph.boarium.boar.blocks.GeyserFixtures;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
@@ -134,20 +134,24 @@ class BedrockItemsTest {
         assertEquals(1283, compared);
     }
 
-    // The Java model's block items, from Geyser, are each mapped to the Bedrock block of the Java block's default state. The other block items are Bedrock blocks Java does not have, or other names of a block, such as minecraft:lit_furnace.
+    // The block items Geyser maps to a Java block each place the Bedrock block of that Java block's default state (items.26_30.txt). The other block items are Bedrock blocks Java does not have, or other names of a block, such as minecraft:lit_furnace.
     @Test
-    void placesTheBlocksOfTheJavaModel() {
-        BlockTable java = BlockTable.get();
+    void placesTheBlocksGeyserMapsTo() {
         Map<Item, Block> blocks = BlockMappings.get().getItemToBlock();
-        java.itemBlocks().forEach((name, javaBlock) -> assertSame(BedrockBlock.of(java.toRuntime(java.defaultState(javaBlock), false)), blocks.get(item(name)), name));
+        Set<String> geyserItems = new TreeSet<>();
+        for (String[] row : GeyserFixtures.items()) {
+            String name = GeyserFixtures.name(row[0]);
+            assertSame(BedrockBlock.named(GeyserFixtures.name(row[row.length - 1])), blocks.get(item(name)), name);
+            geyserItems.add(name);
+        }
         Set<String> others = new TreeSet<>();
         blocks.forEach((item, block) -> {
-            if (!java.itemBlocks().containsKey(item.toString())) {
+            if (!geyserItems.contains(item.toString())) {
                 assertSame(BedrockBlock.named(item.toString()), block, item.toString());
                 others.add(item.toString());
             }
         });
-        assertEquals(1022, java.itemBlocks().size());
+        assertEquals(1022, geyserItems.size());
         assertEquals(292, others.size());
         assertTrue(others.containsAll(List.of("minecraft:lit_furnace", "minecraft:wall_sign", "minecraft:hard_glass", "minecraft:frame", "minecraft:water")));
     }

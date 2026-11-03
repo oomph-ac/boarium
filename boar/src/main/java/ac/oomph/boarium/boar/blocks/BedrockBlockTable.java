@@ -22,7 +22,6 @@ public final class BedrockBlockTable {
     public static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/bedrock_blocks.26_30.bin.gz";
     private static final int MAGIC = 0x424E4254;
     private static final int FORMAT = 2;
-    private static final int JAVA_TABLE_MAGIC = 0x42425432;
 
     public static final int CAN_CONTAIN_LIQUID_SOURCE = 1;
     public static final int SOLID = 2;
@@ -54,9 +53,6 @@ public final class BedrockBlockTable {
 
     private BedrockBlockTable(DataInputStream in) throws IOException {
         int magic = in.readInt();
-        if (magic == JAVA_TABLE_MAGIC) {
-            throw new IOException("This is the Java block table (BBT2), not the Bedrock one");
-        }
         if (magic != MAGIC) {
             throw new IOException("Not a Bedrock block table");
         }

@@ -13,7 +13,6 @@ import ac.boar.api.anticheat.model.NetworkSession;
 import ac.boar.mappings.block.ChestType;
 import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockProperties.BedrockProperty;
-import ac.oomph.boarium.boar.blocks.TableProperties.TableProperty;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
@@ -22,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,20 +37,51 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-// Expected values come from the Bedrock palette and its BDS boxes (BedrockBlockTable), from Geyser's Java to Bedrock mapping (BlockTable), and from Boar's own BedrockCollision.
+// Expected values come from the Bedrock palette and its BDS boxes (BedrockBlockTable), from facts about Geyser's Java to Bedrock mapping (GeyserFixtures), and from Boar's own BedrockCollision.
 class BedrockStateTest {
     private static final String[] KEYS = {"age_1", "age_3", "bell_attachment", "bites", "chest_type", "door_hinge", "drag", "dripstone_thickness", "half", "hanging",
             "has_book", "horizontal_facing", "level", "lit", "open", "respawn_anchor_charges", "slab_type", "vault_state", "vertical_direction", "waterlogged"};
     private static final Vector3i POS = Vector3i.from(8, 64, 8);
 
     private static BedrockBlockTable table;
-    private static BlockTable java;
+    private static Map<Integer, GeyserFixtures.JavaState> geyser;
+    // By Boar's property key, then Bedrock block name
+    private static final Map<String, Map<String, JavaValues>> JAVA_VALUES = new HashMap<>();
 
     @BeforeAll
     static void load() throws Exception {
         TestBoar.start();
         table = BedrockBlockTable.get();
-        java = BlockTable.get();
+        geyser = GeyserFixtures.javaStates(table);
+        for (String[] row : GeyserFixtures.properties()) {
+            List<String> keys = row[1].equals("-") ? List.of() : List.of(row[1].split("\\+"));
+            Map<String, String> values = new HashMap<>();
+            for (String pair : row[2].split(",")) {
+                int split = pair.lastIndexOf('=');
+                values.put(pair.substring(0, split), pair.substring(split + 1));
+            }
+            for (String block : row[3].split(",")) {
+                JAVA_VALUES.computeIfAbsent(row[0], key -> new HashMap<>()).put(GeyserFixtures.name(block), new JavaValues(keys, values));
+            }
+        }
+    }
+
+    // The Java values of one of Boar's properties on one block, from properties.26_30.txt, by the values of the Bedrock state keys that decide them
+    private record JavaValues(List<String> keys, Map<String, String> values) {
+        String of(NbtMap states) {
+            List<String> parts = new ArrayList<>();
+            for (String key : this.keys) {
+                parts.add(String.valueOf(states.get(key)));
+            }
+            return this.values.get(parts.isEmpty() ? "*" : String.join("/", parts));
+        }
+    }
+
+    // The value Geyser's Java state of the palette entry has for one of Boar's keys, or null
+    private static String javaValue(String key, int index) {
+        JavaValues values = JAVA_VALUES.getOrDefault(key, Map.of()).get(table.name(index));
+        String value = values == null || !geyser.containsKey(index) ? null : values.of(table.states(index));
+        return "none".equals(value) ? null : value;
     }
 
     // The first palette entry with this name and these state values
@@ -208,9 +239,8 @@ class BedrockStateTest {
         for (String name : List.of("minecraft:kelp", "minecraft:seagrass", "minecraft:bubble_column", "minecraft:sea_pickle")) {
             int first = table.firstIndex(name);
             for (int i = first; i < first + table.stateCount(name); i++) {
-                int javaState = java.paletteToJava(i);
-                if (javaState != 0) {
-                    assertEquals(java.isWaterlogged(javaState), delegate(i).isWaterlogged(), name + " " + table.states(i));
+                if (geyser.containsKey(i)) {
+                    assertEquals(geyser.get(i).waterlogged(), delegate(i).isWaterlogged(), name + " " + table.states(i));
                 }
             }
         }
@@ -255,29 +285,31 @@ class BedrockStateTest {
     @Test
     void agreesWithGeysersJavaStates() {
         Map<String, Set<String>> javaOnly = new TreeMap<>();
+        int javaValues = 0;
         int compared = 0;
         for (String key : KEYS) {
             // Java's single, left and right chests are one Bedrock state, so Geyser's way back picks one of them.
             if (key.equals("chest_type")) {
                 continue;
             }
-            TableProperty<?> javaProperty = (TableProperty<?>) TableProperties.INSTANCE.get(key);
             BedrockProperty<?> property = property(key);
             for (int i = 0; i < table.paletteSize(); i++) {
-                int javaState = java.paletteToJava(i);
-                if (javaState == 0) {
+                String javaValue = javaValue(key, i);
+                if (javaValue == null) {
                     continue;
                 }
-                String javaValue = java.value(javaState, javaProperty.id());
+                javaValues++;
                 Object value = property.get(i);
-                if (javaValue != null && value != null) {
-                    assertEquals(javaProperty.parse().apply(javaValue), value, key + " of " + table.name(i) + " " + table.states(i));
+                if (value != null) {
+                    assertEquals(javaValue, String.valueOf(value), key + " of " + table.name(i) + " " + table.states(i));
                     compared++;
-                } else if (javaValue != null) {
+                } else {
                     javaOnly.computeIfAbsent(key, k -> new TreeSet<>()).add(table.name(i));
                 }
             }
         }
+        // The palette entries with a Java value, summed over the keys
+        assertEquals(14898, javaValues);
         assertTrue(compared > 4000, "compared " + compared);
 
         // Blocks with Java's property that Boar never reads it on, and whose Bedrock state does not match Java's one to one
@@ -317,18 +349,16 @@ class BedrockStateTest {
         assertEquals(find("minecraft:waxed_double_cut_copper_slab", "minecraft:vertical_half", "bottom"), with(find("minecraft:waxed_cut_copper_slab", "minecraft:vertical_half", "top"), "slab_type", "double"));
 
         // Every Java slab's single and double Bedrock names, from Geyser
-        int type = java.property("type", "top", "bottom", "double");
-        Set<String> singles = new TreeSet<>();
-        for (int javaState = 0; javaState < java.stateCount(); javaState++) {
-            if (!"bottom".equals(java.value(javaState, type))) {
-                continue;
+        int slabs = 0;
+        for (String[] row : GeyserFixtures.blocks()) {
+            if (row[0].endsWith("_slab")) {
+                String[] names = row[3].split(",");
+                int single = find(GeyserFixtures.name(names[0]), "minecraft:vertical_half", "bottom");
+                assertEquals(GeyserFixtures.name(names[1]), table.name(with(single, "slab_type", "double")), row[0]);
+                slabs++;
             }
-            int single = java.toRuntime(javaState, false);
-            int expected = java.toRuntime(java.with(javaState, type, "double"), false);
-            assertEquals(table.name(expected), table.name(with(single, "slab_type", "double")));
-            singles.add(table.name(single));
         }
-        assertEquals(68, singles.size());
+        assertEquals(68, slabs);
     }
 
     @Test
@@ -394,16 +424,12 @@ class BedrockStateTest {
     @Test
     void faceAndReplacingAgreeWithGeyser() {
         Set<String> sturdyDiffers = new TreeSet<>();
-        for (int i = 0; i < table.paletteSize(); i++) {
-            int javaState = java.paletteToJava(i);
-            if (javaState == 0 && !table.name(i).equals("minecraft:air")) {
-                continue;
-            }
-            assertEquals(java.isReplaceable(javaState), delegate(i).isReplaceable(null), table.name(i) + " " + table.states(i));
-            if (java.isFaceSturdy(javaState) != delegate(i).isFaceSturdy(null)) {
+        geyser.forEach((i, java) -> {
+            assertEquals(java.replaceable(), delegate(i).isReplaceable(null), table.name(i) + " " + table.states(i));
+            if (java.faceSturdy() != delegate(i).isFaceSturdy(null)) {
                 sturdyDiffers.add(table.name(i));
             }
-        }
+        });
         assertEquals(Set.of("minecraft:azalea", "minecraft:dragon_egg", "minecraft:flowering_azalea"), sturdyDiffers);
     }
 
@@ -481,7 +507,7 @@ class BedrockStateTest {
     }
 
     // Where Boar's collision picks a box by direction, half or hanging, the Bedrock state ends with the BDS box.
-    // The BDS data has one box for every door state, so doors are compared with the box of Geyser's Java state instead, which is 0.005 thicker than Boar's.
+    // The BDS data has one box for every door state, so doors are compared with Java's box for the facing, open and hinge of Geyser's Java state instead, which is 0.005 thicker than Boar's.
     @Test
     void boarsCollisionShapesFollowTheBindings() {
         BoarPlayer player = player();
@@ -490,15 +516,17 @@ class BedrockStateTest {
                 "minecraft:lantern", "minecraft:soul_lantern", "minecraft:bell", "minecraft:wooden_door", "minecraft:iron_door", "minecraft:cherry_door")) {
             int first = table.firstIndex(name);
             for (int i = first; i < first + table.stateCount(name); i++) {
-                int javaState = java.paletteToJava(i);
-                if (javaState == 0 || name.equals("minecraft:bell") && !"floor".equals(get(i, "bell_attachment"))) {
+                if (!geyser.containsKey(i) || name.equals("minecraft:bell") && !"floor".equals(get(i, "bell_attachment"))) {
                     continue;
                 }
                 List<Box> boxes = boarCollision(player, i);
                 String state = name + " " + table.states(i);
                 if (name.endsWith("_door")) {
-                    List<Box> javaBoxes = TableBlockState.FACTORY.create(javaState, POS, 0).getCollisionBoxes().stream().map(box -> box.offset(POS.getX(), POS.getY(), POS.getZ())).toList();
-                    assertArrayEquals(flatten(javaBoxes), flatten(boxes), 0.0051F, state);
+                    float[] door = javaDoorBox(Direction.valueOf(javaValue("horizontal_facing", i)), Boolean.parseBoolean(javaValue("open", i)), javaValue("door_hinge", i).equals("right"));
+                    for (int v = 0; v < 6; v++) {
+                        door[v] += v % 3 == 1 ? POS.getY() : v % 3 == 0 ? POS.getX() : POS.getZ();
+                    }
+                    assertArrayEquals(door, flatten(boxes), 0.0051F, state);
                 } else {
                     assertArrayEquals(bedrockBoxes(i), flatten(boxes), state);
                 }
@@ -508,7 +536,20 @@ class BedrockStateTest {
         assertEquals(164, compared);
     }
 
-    // The BDS data has no piston arm boxes. The arm boxes come from the client; their facing is checked against Geyser's Java piston head, whose plate covers the same places.
+    // The box of Java's DoorBlock.getShape: 3/16 thick, on the side the door's facing points away from. An open door turns that a quarter, clockwise when the hinge is on the left.
+    private static float[] javaDoorBox(Direction facing, boolean open, boolean rightHinge) {
+        int turns = !open ? 0 : rightHinge ? 3 : 1;
+        Direction named = Direction.HORIZONTAL[(List.of(Direction.HORIZONTAL).indexOf(facing) + turns) % 4];
+        float thickness = 0.1875F;
+        return switch (named) {
+            case EAST -> new float[]{0, 0, 0, thickness, 1, 1};
+            case WEST -> new float[]{1 - thickness, 0, 0, 1, 1, 1};
+            case SOUTH -> new float[]{0, 0, 0, 1, 1, thickness};
+            default -> new float[]{0, 0, 1 - thickness, 1, 1, 1};
+        };
+    }
+
+    // The BDS data has no piston arm boxes. The arm boxes come from the client; their plate is the plate of the Java piston head that Geyser maps each arm to.
     @Test
     void pistonArmsHaveTheClientsBoxes() {
         int north = find("minecraft:piston_arm_collision", "facing_direction", 3);
@@ -516,20 +557,17 @@ class BedrockStateTest {
         assertBoxes(delegate(north).getCollisionBoxes(), 0.3125F, 0.3125F, 0.75F, 0.6875F, 0.6875F, 1.25F, 0.375F, 0.375F, 0.25F, 0.625F, 0.625F, 0.75F, 0, 0, 0, 1, 1, 0.25F);
         assertEquals(delegate(north).getCollisionBoxes(), delegate(find("minecraft:sticky_piston_arm_collision", "facing_direction", 3)).getCollisionBoxes());
 
+        // The facing of Geyser's Java piston head for each facing_direction (checked against Geyser at c200cbe)
+        Direction[] javaFacings = {Direction.DOWN, Direction.UP, Direction.SOUTH, Direction.NORTH, Direction.EAST, Direction.WEST};
         for (String name : List.of("minecraft:piston_arm_collision", "minecraft:sticky_piston_arm_collision")) {
             int first = table.firstIndex(name);
             for (int i = first; i < first + table.stateCount(name); i++) {
                 List<Box> boxes = delegate(i).getCollisionBoxes();
                 assertEquals(3, boxes.size());
-                // The plate is the last box: two of its sides span the block. Its middle and a point near a corner are inside Java's head.
-                Box plate = boxes.get(2);
-                List<Box> javaHead = TableBlockState.FACTORY.create(java.paletteToJava(i), POS, 0).getCollisionBoxes();
-                for (float inset : new float[]{0.5F, 0.05F}) {
-                    float x = plate.minX + (plate.maxX - plate.minX) * inset;
-                    float y = plate.minY + (plate.maxY - plate.minY) * inset;
-                    float z = plate.minZ + (plate.maxZ - plate.minZ) * inset;
-                    assertTrue(javaHead.stream().anyMatch(box -> box.minX <= x && x <= box.maxX && box.minY <= y && y <= box.maxY && box.minZ <= z && z <= box.maxZ), name + " " + table.states(i));
-                }
+                // The plate is the last box: a quarter of the block on the side the head faces.
+                Vector3i facing = javaFacings[table.states(i).getInt("facing_direction")].getUnitVector();
+                float[] plate = {facing.getX() > 0 ? 0.75F : 0, facing.getY() > 0 ? 0.75F : 0, facing.getZ() > 0 ? 0.75F : 0, facing.getX() < 0 ? 0.25F : 1, facing.getY() < 0 ? 0.25F : 1, facing.getZ() < 0 ? 0.25F : 1};
+                assertArrayEquals(plate, flatten(List.of(boxes.get(2))), name + " " + table.states(i));
             }
         }
     }

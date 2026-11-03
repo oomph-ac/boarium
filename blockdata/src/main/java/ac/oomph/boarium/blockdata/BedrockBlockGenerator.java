@@ -107,7 +107,7 @@ public final class BedrockBlockGenerator {
             require(i == 0 || Long.compareUnsigned(previousNameHash, nameHash) <= 0, "Palette entry " + i + " " + name + " is out of runtime ID order");
             previousNameHash = nameHash;
             // Bedrock gives minecraft:unknown the network hash -2 instead of its FNV-1a hash.
-            hashes[i] = name.equals("minecraft:unknown") ? -2 : BlockTableGenerator.networkHash(name, entry.getCompound("states"));
+            hashes[i] = name.equals("minecraft:unknown") ? -2 : networkHash(name, entry.getCompound("states"));
             Integer other = byHash.put(hashes[i], i);
             require(other == null, "Palette entries " + other + " and " + i + " share the network hash " + Integer.toUnsignedString(hashes[i]));
         }
@@ -339,6 +339,57 @@ public final class BedrockBlockGenerator {
             hash ^= b & 0xFF;
         }
         return hash;
+    }
+
+    // FNV-1a 32 of the little-endian NBT compound {name, states}, with the states sorted by key: the ID a client uses when StartGame asks for hashed block IDs.
+    private static int networkHash(String name, NbtMap states) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        out.write(10);
+        writeLeString(out, "");
+        out.write(8);
+        writeLeString(out, "name");
+        writeLeString(out, name);
+        out.write(10);
+        writeLeString(out, "states");
+        for (Map.Entry<String, Object> state : new TreeMap<>(states).entrySet()) {
+            String key = state.getKey();
+            switch (state.getValue()) {
+                case Byte value -> {
+                    out.write(1);
+                    writeLeString(out, key);
+                    out.write(value);
+                }
+                case Integer value -> {
+                    out.write(3);
+                    writeLeString(out, key);
+                    for (int shift = 0; shift < 32; shift += 8) {
+                        out.write(value >>> shift);
+                    }
+                }
+                case String value -> {
+                    out.write(8);
+                    writeLeString(out, key);
+                    writeLeString(out, value);
+                }
+                default -> throw new IllegalStateException("Palette state " + state + " has an unsupported type");
+            }
+        }
+        out.write(0);
+        out.write(0);
+
+        int hash = 0x811c9dc5;
+        for (byte b : out.toByteArray()) {
+            hash ^= b & 0xFF;
+            hash *= 0x01000193;
+        }
+        return hash;
+    }
+
+    private static void writeLeString(ByteArrayOutputStream out, String value) {
+        byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+        out.write(bytes.length);
+        out.write(bytes.length >>> 8);
+        out.writeBytes(bytes);
     }
 
     private int string(String value) {

@@ -28,19 +28,17 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-// Expected IDs come from small references written here (a merge of names sorted with List.sort, network hashes from Cloudburst's NBT writer) and from TablePalette, the Java model's palette, whose runtime IDs must not change.
+// Expected IDs come from small references written here: a merge of names sorted with List.sort, and network hashes from Cloudburst's NBT writer.
 class BedrockPaletteTest {
     private static final int SORTED_AIR = 13094;
     private static final int SORTED_STONE = 2706;
 
     private static BedrockBlockTable table;
-    private static BlockTable java;
 
     @BeforeAll
     static void start() throws Exception {
         TestBoar.start();
         table = BedrockBlockTable.get();
-        java = BlockTable.get();
     }
 
     // 8 states; its name sorts before stone and air
@@ -87,27 +85,6 @@ class BedrockPaletteTest {
             hash = (hash ^ (b & 0xFF)) * 0x01000193;
         }
         return hash;
-    }
-
-    // Every Java state's runtime ID is the one its palette entry has here.
-    private static void assertSameRuntimeIdsAsTheJavaModel(StartGamePacket startGame) {
-        BlockMappingInfo bedrock = BedrockPalette.mappingInfo(startGame);
-        BlockMappingInfo javaModel = TablePalette.mappingInfo(startGame);
-        for (int state = 0; state < java.stateCount(); state++) {
-            assertEquals(javaModel.fromIntermediary().applyAsInt(state), bedrock.fromIntermediary().applyAsInt(java.toRuntime(state, false)), java.name(state));
-        }
-        assertEquals(javaModel.airId(), bedrock.airId());
-        assertEquals(javaModel.waterId(), bedrock.waterId());
-        assertEquals(javaModel.lavaDefinition().getRuntimeId(), bedrock.lavaDefinition().getRuntimeId());
-        assertEquals(javaModel.powderSnowDefinition().getRuntimeId(), bedrock.powderSnowDefinition().getRuntimeId());
-    }
-
-    @Test
-    void runtimeIdsAreThoseOfTheJavaModel() {
-        for (boolean hashed : new boolean[]{false, true}) {
-            assertSameRuntimeIdsAsTheJavaModel(startGame(hashed));
-            assertSameRuntimeIdsAsTheJavaModel(startGame(hashed, pipe(), lamp()));
-        }
     }
 
     // An entry of the reference palette: its block name, and its vanilla palette index, or -1 and the state of a custom block
@@ -264,8 +241,11 @@ class BedrockPaletteTest {
             SimpleBlockDefinition lava = (SimpleBlockDefinition) info.lavaDefinition();
             assertEquals("minecraft:lava", lava.getIdentifier());
             assertEquals(NbtMap.builder().putInt("liquid_depth", 0).build(), lava.getState().getCompound("states"));
-            assertEquals("minecraft:water", ((SimpleBlockDefinition) info.waterDefinition()).getIdentifier());
+            SimpleBlockDefinition water = (SimpleBlockDefinition) info.waterDefinition();
+            assertEquals("minecraft:water", water.getIdentifier());
+            assertEquals(NbtMap.builder().putInt("liquid_depth", 0).build(), water.getState().getCompound("states"));
             assertEquals("minecraft:powder_snow", ((SimpleBlockDefinition) info.powderSnowDefinition()).getIdentifier());
+            assertEquals(hashed ? table.networkHash(SORTED_AIR) : SORTED_AIR, info.airId());
             assertEquals(List.of(info.airId()), info.airIds());
 
             int frame = table.firstIndex("minecraft:frame");
@@ -273,9 +253,10 @@ class BedrockPaletteTest {
             assertTrue(info.isItemFrame(palette.definition(table.firstIndex("minecraft:glow_frame"))));
             assertFalse(info.isItemFrame(palette.definition(SORTED_STONE)));
 
-            // Boar's data has every block of the 1.26.30 palette.
+            // Boar's data has every block of the 1.26.30 palette. Without custom blocks, a runtime ID is the palette index or the network hash.
             for (int i = 0; i < table.paletteSize(); i++) {
                 int runtimeId = info.fromIntermediary().applyAsInt(i);
+                assertEquals(hashed ? table.networkHash(i) : i, runtimeId, table.name(i));
                 assertTrue(info.fallingFlowMaterial().apply(runtimeId).isKnown(), table.name(i));
                 assertEquals(i, info.toIntermediary().applyAsInt(runtimeId));
                 assertTrue(info.isKnownRawId(runtimeId));
@@ -286,20 +267,6 @@ class BedrockPaletteTest {
             assertEquals(HorseJumpMaterial.NONE, info.horseJumpMaterial().apply(info.fromIntermediary().applyAsInt(SORTED_STONE)));
             assertEquals(HorseJumpMaterial.UNKNOWN, info.horseJumpMaterial().apply(12345678));
             assertFalse(info.isKnownRawId(12345678));
-        }
-    }
-
-    // Falling flow and horse jumps read the Bedrock names and states, so they are what the Java model's palette gave each entry.
-    @Test
-    void materialsAreThoseOfTheJavaModel() {
-        for (boolean hashed : new boolean[]{false, true}) {
-            BlockMappingInfo bedrock = BedrockPalette.mappingInfo(startGame(hashed));
-            BlockMappingInfo javaModel = TablePalette.mappingInfo(startGame(hashed));
-            for (int i = 0; i < table.paletteSize(); i++) {
-                int runtimeId = bedrock.fromIntermediary().applyAsInt(i);
-                assertEquals(javaModel.fallingFlowMaterial().apply(runtimeId), bedrock.fallingFlowMaterial().apply(runtimeId), table.name(i));
-                assertEquals(javaModel.horseJumpMaterial().apply(runtimeId), bedrock.horseJumpMaterial().apply(runtimeId), table.name(i));
-            }
         }
     }
 

@@ -1,6 +1,5 @@
 package ac.oomph.boarium.boar.blocks;
 
-import ac.boar.anticheat.data.block.AbstractBoarBlockState;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.player.data.BlockMappingInfo;
 import ac.boar.anticheat.util.Dimension;
@@ -12,12 +11,14 @@ import it.unimi.dsi.fastutil.ints.IntList;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleBlockDefinition;
-import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,41 +33,30 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // Expected boxes and rules come from the 1.26.30 client (Minecraft Education 1.26.30.1 in Ghidra): FenceBlock::addCollisionShapes, ThinFenceBlock::addAABBs, ChorusPlantBlock::_getShape,
 // StairBlock::setStepShape and setInnerPieceShape, WallBlock::getVisualShapeInWorld, the connection rules in VanillaBlockTypes::registerBlocks, and the _addHardCodedBlockComponents of
 // fence gates, trapdoors, stairs, slabs, top snow, shelves and PistonArmBlock. Wall boxes are also Oomph's wall.go, and the BDS data in BedrockBlockTable.
-// Boar's Java model (TableConnections through Geyser's Java to Bedrock mapping) is compared where the two should agree, and every difference is listed.
+// What boarium's old Java block table did, through Geyser's Java to Bedrock mapping (the states.26_30.txt fixture and JAVA_STAIR_CELLS), is compared where the two should agree, and every difference is listed.
 class BedrockConnectionsTest {
     private static final Vector3i POS = Vector3i.from(8, 64, 8);
-    private static final String[] SIDES = {"north", "east", "south", "west"};
     private static final float[] POST = {0.375F, 0, 0.375F, 0.625F, 1.5F, 0.625F};
     private static final float[] PANE_POST = {0.4375F, 0, 0.4375F, 0.5625F, 1, 0.5625F};
+    private static final String JAVA_STAIR_CELLS = "4039f1f32ecdc45a36ef3a04d81f1db32f0e2ecd10f5eac84850f74e056f7a72";
 
     private static BedrockBlockTable table;
-    private static BlockTable java;
-    private static BlockMappingInfo javaMapping;
     private BoarPlayer player;
-    private BoarPlayer javaPlayer;
 
     @BeforeAll
     static void load() throws Exception {
         TestBoar.start();
         table = BedrockBlockTable.get();
-        java = BlockTable.get();
-        javaMapping = TablePalette.mappingInfo(new StartGamePacket());
     }
 
-    // A player whose runtime IDs are palette indices, and a player of Boar's Java model; each with one empty overworld chunk at chunk 0, 0
+    // A player whose runtime IDs are palette indices, with one empty overworld chunk at chunk 0, 0
     @BeforeEach
     void world() {
         int airIndex = table.firstIndex("minecraft:air");
         SimpleBlockDefinition air = new SimpleBlockDefinition("minecraft:air", airIndex, table.states(airIndex));
-        this.player = player(new BlockMappingInfo(air, air, air, air, IntList.of(airIndex), definition -> false, id -> id, id -> id));
-        this.javaPlayer = player(javaMapping);
-    }
-
-    private static BoarPlayer player(BlockMappingInfo mapping) {
-        BoarPlayer player = new BoarPlayer(new Offline(), null, null, mapping, null, null, null, Map.of(), true);
-        player.compensatedWorld.setDimension(Dimension.OVERWORLD);
-        player.compensatedWorld.put(0, 0, new BoarChunkSection[24], new boolean[24]);
-        return player;
+        this.player = new BoarPlayer(new Offline(), null, null, new BlockMappingInfo(air, air, air, air, IntList.of(airIndex), definition -> false, id -> id, id -> id), null, null, null, Map.of(), true);
+        this.player.compensatedWorld.setDimension(Dimension.OVERWORLD);
+        this.player.compensatedWorld.put(0, 0, new BoarChunkSection[24], new boolean[24]);
     }
 
     // The first palette entry with this name and these state values
@@ -224,9 +214,10 @@ class BedrockConnectionsTest {
         assertBoxes(this.override(east), 0, 0, 0, 1, 0.5F, 1, 0.5F, 0.5F, 0, 1, 1, 0.5F);
     }
 
-    // Every arrangement of oak stairs around an oak stair covers the same space as Boar's Java model, whose corners follow Java's StairBlock.
+    // Every arrangement of oak stairs around an oak stair covers the same space as boarium's old Java block table, whose corners followed Java's StairBlock.
+    // JAVA_STAIR_CELLS is the SHA-256 of that table's cells, one byte per arrangement in this loop's order, taken at commit c200cbe through Geyser 2.11.3-b1248's mapping.
     @Test
-    void stairCornersCoverWhatJavasDo() {
+    void stairCornersCoverWhatJavasDo() throws NoSuchAlgorithmException {
         int first = table.firstIndex("minecraft:oak_stairs");
         int[] around = new int[9];
         for (int i = 0; i < 8; i++) {
@@ -234,20 +225,21 @@ class BedrockConnectionsTest {
         }
         around[0] = table.firstIndex("minecraft:air");
         Vector3i[] beside = {POS.north(), POS.east(), POS.south(), POS.west()};
+        byte[] cells = new byte[8 * 9 * 9 * 9 * 9];
+        int n = 0;
         int corners = 0;
         for (int stair = first; stair < first + 8; stair++) {
             for (int arrangement = 0; arrangement < 9 * 9 * 9 * 9; arrangement++) {
                 for (int side = 0, rest = arrangement; side < 4; side++, rest /= 9) {
                     this.set(beside[side], around[rest % 9]);
-                    this.javaPlayer.compensatedWorld.updateBlock(beside[side], 0, javaMapping.fromIntermediary().applyAsInt(java.paletteToJava(around[rest % 9])));
                 }
                 List<Box> boxes = this.override(stair);
                 corners += boxes == null ? 0 : 1;
-                float[] bedrock = boxes == null ? table.collision(stair) : flatten(boxes);
-                float[] javaBoxes = java.collision(this.reshaped(java.paletteToJava(stair)));
-                assertEquals(cells(javaBoxes), cells(bedrock), table.states(stair) + " among " + arrangement);
+                cells[n++] = (byte) cells(boxes == null ? table.collision(stair) : flatten(boxes));
             }
         }
+        assertEquals(JAVA_STAIR_CELLS, HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(cells)),
+                "pins Java's stair corners through Geyser 2.11.3-b1248's 1.26.30 mapping; with new Bedrock data, rebuild it from a Geyser build with that palette, or drop this check");
         assertTrue(corners > 1000, "corners " + corners);
     }
 
@@ -344,40 +336,33 @@ class BedrockConnectionsTest {
         rules.forEach((name, rule) -> assertEquals(rule, BedrockConnections.rule(find(name)), name));
     }
 
-    // Every Java state beside a fence and a pane, on each side, against its Bedrock state through Geyser's mapping. Boar's Java model calls a face sturdy only for a block of one
+    // Every Bedrock state that Geyser maps a Java state to, beside a fence and a pane on each side, against the states.26_30.txt fixture. The Java table it came from called a face sturdy only for a block of one
     // full-cube box, while the client joins on the rules of each block. Bedrock joins the full back of stairs and shelves, open trapdoors, top snow at full height, the head of a
     // piston, the slightly smaller boxes of honey, mud and soul sand, the composter, and the structure void, which has no rule. It never joins chorus flowers, jigsaw and structure blocks.
     @Test
     void differencesFromJava() {
         Map<String, String> fences = new TreeMap<>();
         Map<String, String> panes = new TreeMap<>();
-        int oakFence = java.defaultState(java.block("minecraft:oak_fence"));
-        int glassPane = java.defaultState(java.block("minecraft:glass_pane"));
+        Map<String, String> expected = new TreeMap<>();
         Vector3i[] beside = {POS.north(), POS.east(), POS.south(), POS.west()};
-        for (int state = 0; state < java.stateCount(); state++) {
-            int index = java.toRuntime(state, false);
+        GeyserFixtures.javaStates(table).forEach((index, java) -> {
+            String name = table.name(index);
             for (int side = 0; side < 4; side++) {
-                this.javaPlayer.compensatedWorld.updateBlock(beside[side], 0, javaMapping.fromIntermediary().applyAsInt(state));
                 this.set(beside[side], index);
                 boolean fenceJoins = this.reaches(find("oak_fence"), side);
                 boolean paneJoins = this.reaches(find("glass_pane"), side);
-                if (fenceJoins != "true".equals(java.value(this.reshaped(oakFence), SIDES[side]))) {
-                    fences.put(table.name(index), fenceJoins ? "joins" : "apart");
+                if (fenceJoins != (java.fenceJoins().charAt(side) == '1')) {
+                    fences.put(name, fenceJoins ? "joins" : "apart");
                 }
-                if (paneJoins != "true".equals(java.value(this.reshaped(glassPane), SIDES[side]))) {
-                    panes.put(table.name(index), paneJoins ? "joins" : "apart");
+                if (paneJoins != (java.paneJoins().charAt(side) == '1')) {
+                    panes.put(name, paneJoins ? "joins" : "apart");
                 }
-                this.javaPlayer.compensatedWorld.updateBlock(beside[side], 0, javaMapping.fromIntermediary().applyAsInt(0));
                 this.set(beside[side], table.firstIndex("minecraft:air"));
             }
-        }
-        Map<String, String> expected = new TreeMap<>();
-        for (int i = 0; i < table.paletteSize(); i += table.stateCount(table.name(i))) {
-            String name = table.name(i);
-            if ((name.endsWith("_stairs") || name.endsWith("trapdoor") || name.endsWith("_shelf")) && java.paletteToJava(i) != 0) {
+            if (name.endsWith("_stairs") || name.endsWith("trapdoor") || name.endsWith("_shelf")) {
                 expected.put(name, "joins");
             }
-        }
+        });
         for (String name : Set.of("snow_layer", "piston_arm_collision", "sticky_piston_arm_collision", "honey_block", "mud", "soul_sand", "composter", "structure_void")) {
             expected.put("minecraft:" + name, "joins");
         }
@@ -386,11 +371,6 @@ class BedrockConnectionsTest {
         }
         assertEquals(expected, fences);
         assertEquals(expected, panes);
-    }
-
-    private int reshaped(int javaState) {
-        AbstractBoarBlockState self = (AbstractBoarBlockState) TableBlockState.FACTORY.create(javaState, POS, 0);
-        return self.delegate().applyConnectionShape(this.javaPlayer, self, POS).intermediaryId();
     }
 
     // Whether this fence or pane at POS reaches the side

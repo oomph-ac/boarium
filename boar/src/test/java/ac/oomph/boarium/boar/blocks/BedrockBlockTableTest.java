@@ -1,8 +1,6 @@
 package ac.oomph.boarium.boar.blocks;
 
 import org.cloudburstmc.nbt.NbtMap;
-import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
-import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleBlockDefinition;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -13,8 +11,14 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.BitSet;
+import java.util.HexFormat;
+import java.util.TreeMap;
+import java.util.function.IntFunction;
+import java.util.function.IntUnaryOperator;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
@@ -210,42 +214,25 @@ class BedrockBlockTableTest {
         assertEquals(table.paletteSize(), seen.cardinality());
     }
 
-    // The client sorts the palette by the hash of the block name, so a palette index is its runtime ID; the Java table's palette and TablePalette agree.
+    // The client sorts the palette by the hash of the block name, so a palette index is its runtime ID.
     @Test
     void indexIsTheSortedRuntimeId() {
         for (int i = 1; i < table.paletteSize(); i++) {
-            assertTrue(Long.compareUnsigned(TablePalette.nameHash(table.name(i - 1)), TablePalette.nameHash(table.name(i))) <= 0, table.name(i));
+            assertTrue(Long.compareUnsigned(BedrockPalette.nameHash(table.name(i - 1)), BedrockPalette.nameHash(table.name(i))) <= 0, table.name(i));
         }
+    }
 
-        BlockTable java = BlockTable.get();
-        assertEquals(java.paletteSize(), table.paletteSize());
-        for (int i = 0; i < table.paletteSize(); i++) {
-            assertEquals(java.paletteName(i), table.name(i));
-            assertEquals(java.paletteStates(i), table.states(i));
-            assertEquals(java.networkHash(i), table.networkHash(i));
-        }
-
-        TablePalette sorted = TablePalette.of(false);
-        TablePalette hashed = TablePalette.of(true);
-        for (int state = 0; state < java.stateCount(); state++) {
-            BlockDefinition definition = sorted.definition(state);
-            int index = definition.getRuntimeId();
-            NbtMap nbt = ((SimpleBlockDefinition) definition).getState();
-            assertEquals(table.name(index), nbt.getString("name"));
-            assertEquals(table.states(index), nbt.getCompound("states"));
-            assertEquals(table.networkHash(index), hashed.definition(state).getRuntimeId());
-        }
+    // The 1.26.30 palette in Geyser 2.11.3-b1248's jar had this fingerprint and these hashes, read at commit c200cbe from boarium's old Java block table, which held a copy of it.
+    @Test
+    void paletteIsGeysers() throws NoSuchAlgorithmException {
+        assertEquals("966564b76e8d97da64e7bae92473b79c7c435924659a76c38a341fb0d6bc49ea", fingerprint(table.paletteSize(), table::name, table::states, table::networkHash),
+                "pins Geyser 2.11.3-b1248's 1.26.30 palette; with new Bedrock data, rebuild it from a Geyser build with that palette, or drop this check");
+        assertEquals(-2144268767, table.networkHash(STONE));
+        assertEquals(-604749536, table.networkHash(AIR));
     }
 
     @Test
     void rejectsOtherData() throws IOException {
-        byte[] javaTable;
-        try (InputStream in = BlockTable.class.getResourceAsStream(BlockTable.RESOURCE)) {
-            javaTable = in.readAllBytes();
-        }
-        IOException wrongTable = assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(javaTable)));
-        assertTrue(wrongTable.getMessage().contains("BBT2"), wrongTable.getMessage());
-
         assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream("not a table".getBytes(StandardCharsets.UTF_8))));
         assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(gzip("not a table, but long enough".getBytes(StandardCharsets.UTF_8)))));
 
@@ -292,6 +279,22 @@ class BedrockBlockTableTest {
         byte[] badCrc = gzip.clone();
         badCrc[badCrc.length - 8] ^= 1;
         assertThrows(IOException.class, () -> BedrockBlockTable.load(new ByteArrayInputStream(badCrc)));
+    }
+
+    // SHA-256 of each palette entry's name, states (by key, with their NBT types) and network hash, in index order
+    static String fingerprint(int size, IntFunction<String> names, IntFunction<NbtMap> states, IntUnaryOperator hashes) throws NoSuchAlgorithmException {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        for (int i = 0; i < size; i++) {
+            StringBuilder entry = new StringBuilder(names.apply(i)).append('[');
+            new TreeMap<>(states.apply(i)).forEach((key, value) -> entry.append(key).append('=').append(switch (value) {
+                case Byte b -> "b";
+                case Integer n -> "i";
+                default -> "s";
+            }).append(value).append(';'));
+            entry.append(']').append(hashes.applyAsInt(i)).append('\n');
+            digest.update(entry.toString().getBytes(StandardCharsets.UTF_8));
+        }
+        return HexFormat.of().formatHex(digest.digest());
     }
 
     private static byte[] gzip(byte[] data) throws IOException {

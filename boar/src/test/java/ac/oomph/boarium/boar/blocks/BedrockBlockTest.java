@@ -18,6 +18,8 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,18 +36,24 @@ import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-// Expected values come from the Bedrock palette and its BDS data (BedrockBlockTable), and from Geyser's Java blocks and their Bedrock states (BlockTable).
+// Expected values come from the Bedrock palette and its BDS data (BedrockBlockTable), and from Geyser's Java blocks and their Bedrock names (blocks.26_30.txt of GeyserFixtures).
 class BedrockBlockTest {
     private static final Vector3i POS = Vector3i.from(8, 64, 8);
 
     private static BedrockBlockTable table;
-    private static BlockTable java;
+    // The Java block lines of blocks.26_30.txt
+    private static List<String[]> javaBlocks;
 
     @BeforeAll
     static void load() throws Exception {
         TestBoar.start();
         table = BedrockBlockTable.get();
-        java = BlockTable.get();
+        javaBlocks = GeyserFixtures.blocks();
+    }
+
+    // The Bedrock names of a Java block's states, its default state's first
+    private static List<String> namesOf(String[] javaBlock) {
+        return Arrays.stream(javaBlock.length > 3 ? javaBlock[3].split(",") : new String[]{javaBlock[0]}).map(GeyserFixtures::name).toList();
     }
 
     private static BedrockBlock block(String name) {
@@ -161,15 +169,12 @@ class BedrockBlockTest {
     @Test
     void aliasesAgreeWithGeyser() {
         Map<String, Set<String>> javaGroups = new TreeMap<>();
-        for (int b = 0; b < java.blockCount(); b++) {
-            Set<String> names = new TreeSet<>();
-            for (int s = java.firstState(b); s < java.firstState(b) + java.blockStateCount(b); s++) {
-                names.add(table.name(java.toRuntime(s, false)));
-            }
-            if (names.size() > 1 && !java.blockName(b).equals("minecraft:piston_head")) {
+        for (String[] javaBlock : javaBlocks) {
+            List<String> names = namesOf(javaBlock);
+            if (names.size() > 1 && !javaBlock[0].equals("piston_head")) {
                 Set<BedrockBlock> blocks = new HashSet<>();
                 names.forEach(name -> blocks.add(BedrockBlock.named(name)));
-                assertEquals(1, blocks.size(), java.blockName(b) + " " + names);
+                assertEquals(1, blocks.size(), javaBlock[0] + " " + names);
                 javaGroups.computeIfAbsent(blocks.iterator().next().name(), key -> new TreeSet<>()).addAll(names);
             }
         }
@@ -209,10 +214,11 @@ class BedrockBlockTest {
 
         // Bedrock's hardness is Java's destroy time, except for these.
         Map<String, String> differs = new TreeMap<>();
-        for (int b = 0; b < java.blockCount(); b++) {
-            BedrockBlock block = BedrockBlock.of(java.toRuntime(java.defaultState(b), false));
-            if (block.destroyTime() != java.destroyTime(b)) {
-                differs.put(java.blockName(b), block.destroyTime() + " " + java.destroyTime(b));
+        for (String[] javaBlock : javaBlocks) {
+            BedrockBlock block = BedrockBlock.named(namesOf(javaBlock).getFirst());
+            float destroyTime = Float.parseFloat(javaBlock[1]);
+            if (block.destroyTime() != destroyTime) {
+                differs.put(GeyserFixtures.name(javaBlock[0]), block.destroyTime() + " " + destroyTime);
             }
         }
         assertEquals(Map.of(
@@ -284,27 +290,28 @@ class BedrockBlockTest {
         return names;
     }
 
-    // The Bedrock names of every state of Geyser's Java blocks in the list
-    private static Set<String> javaNames(List<Block> blocks) {
-        Set<String> names = new TreeSet<>();
-        for (Block block : blocks) {
-            int b = ((TableBlock) block).index();
-            for (int s = java.firstState(b); s < java.firstState(b) + java.blockStateCount(b); s++) {
-                names.add(table.name(java.toRuntime(s, false)));
+    // The Bedrock names of every state of the Java blocks in each of Boar's Java block lists
+    private static Map<String, Set<String>> javaNames() {
+        Map<String, Set<String>> lists = new HashMap<>();
+        for (String[] javaBlock : javaBlocks) {
+            if (!javaBlock[2].equals("-")) {
+                for (String list : javaBlock[2].split(",")) {
+                    lists.computeIfAbsent(list, key -> new TreeSet<>()).addAll(namesOf(javaBlock));
+                }
             }
         }
-        return names;
+        return lists;
     }
 
     @Test
     void categoriesAgreeWithGeyser() {
         BlockMappings bedrock = new BedrockBlockMappings(Map.of());
-        BlockMappings geyser = new TableBlockMappings(Map.of());
+        Map<String, Set<String>> java = javaNames();
         Map<String, Function<BlockMappings, List<Block>>> lists = new LinkedHashMap<>();
         lists.put("stairs", BlockMappings::getStairsBlocks);
         lists.put("leaves", BlockMappings::getLeavesBlocks);
         lists.put("shulker", BlockMappings::getShulkerBlocks);
-        lists.put("fence gate", BlockMappings::getFenceGateBlocks);
+        lists.put("fence_gate", BlockMappings::getFenceGateBlocks);
         lists.put("wall", BlockMappings::getWallBlocks);
         lists.put("fence", BlockMappings::getFenceBlocks);
         lists.put("climbable", BlockMappings::getClimbableBlocks);
@@ -332,7 +339,7 @@ class BedrockBlockTest {
         Map<String, Integer> sizes = new LinkedHashMap<>();
         lists.forEach((list, get) -> {
             Set<String> ours = bedrockNames(get.apply(bedrock));
-            Set<String> theirs = javaNames(get.apply(geyser));
+            Set<String> theirs = java.getOrDefault(list, Set.of());
             Set<String> onlyOurs = new TreeSet<>(ours);
             onlyOurs.removeAll(theirs);
             Set<String> onlyTheirs = new TreeSet<>(theirs);
