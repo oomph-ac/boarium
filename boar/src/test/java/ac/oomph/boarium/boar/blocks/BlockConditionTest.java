@@ -36,6 +36,14 @@ class BlockConditionTest {
         assertEquals(false, test("!q.block_state('open')", (byte) 1, 0, "red"));
     }
 
+    // The client keeps the first property of a name in one place and the last in another.
+    @Test
+    void doesNotReadAPropertyListedTwice() {
+        List<String> keys = List.of("open", "open", "age");
+        assertNull(BlockCondition.parse("q.block_state('open') == true", keys, 10));
+        assertEquals(true, BlockCondition.parse("q.block_state('age') == 3", keys, 10).test(new Object[]{(byte) 0, (byte) 1, 3}));
+    }
+
     @Test
     void combinesWithPrecedence() {
         // ! binds tighter than ==, which binds tighter than &&, which binds tighter than ||.

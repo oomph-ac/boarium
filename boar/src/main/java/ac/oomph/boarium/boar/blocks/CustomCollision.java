@@ -51,9 +51,10 @@ final class CustomCollision {
      * The collision of each state of a custom block.
      *
      * @param keys the block's property names
-     * @param values each property's values, where the first property changes fastest from one state to the next
+     * @param values each property's values
+     * @param radices how many permutations each property spans in the block's states, where the first property changes fastest from one state to the next
      */
-    static CustomCollision of(List<String> keys, List<NbtList<?>> values, int stateCount, NbtMap properties, Budget budget) {
+    static CustomCollision of(List<String> keys, List<NbtList<?>> values, int[] radices, int stateCount, NbtMap properties, Budget budget) {
         if (!budget.take(stateCount)) {
             return guessed(SPENT);
         }
@@ -100,9 +101,8 @@ final class CustomCollision {
         for (int s = 0; s < stateCount; s++) {
             int rest = s;
             for (int p = 0; p < state.length; p++) {
-                NbtList<?> list = values.get(p);
-                state[p] = list.get(rest % list.size());
-                rest /= list.size();
+                state[p] = CustomBlock.value(values.get(p), rest % radices[p]);
+                rest /= radices[p];
             }
             // Each permutation that applies replaces the components it has, in list order, so the last matching collision_box wins (BlockDefinitionGroup::initializeBlockFromDefinition; Block::Block lets a block's components be replaced).
             Component collision = base;
@@ -273,7 +273,7 @@ final class CustomCollision {
         return this.shapes.size() + " shapes" + (this.guess == null ? "" : ", guessed: " + this.guess);
     }
 
-    // The work Boar may spend on the custom blocks of one StartGame, counted in states, characters, boxes and condition nodes, and the shapes it added
+    // The work Boar may spend on the custom blocks of one StartGame, counted in states, characters, boxes and condition nodes, and the shapes it added; BedrockPalette also counts hashed bytes and clash steps with one
     static final class Budget {
         static final long MAX = 1L << 24;
         private long left;

@@ -42,9 +42,11 @@ import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.nbt.NBTOutputStream;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
 import org.cloudburstmc.nbt.NbtType;
+import org.cloudburstmc.nbt.NbtUtils;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
@@ -1032,11 +1034,11 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
-    // Boar cannot read a block listed twice, so with sorted IDs it knows none of the client's runtime IDs.
+    // Boar cannot read a property without values, nor can the client, so with sorted IDs Boar knows none of the client's runtime IDs.
     @Test
     void leavesThePlayerUncheckedWhenItsRuntimeIdsAreUnknown() throws Exception {
         TestBoar.mitigations(true);
-        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe(), pipe())));
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe(), noValues())));
         assertFalse(this.startGame.isBlockNetworkIdsHashed());
         assertNull(Boar.getInstance().getPlayerManager().get(session));
         String log = this.logged.toString(StandardCharsets.UTF_8);
@@ -1064,7 +1066,7 @@ class BoarSessionTest {
     @Test
     void keepsMitigationsOnWhenItCannotReadTheCustomBlocks() throws Exception {
         TestBoar.mitigations(true);
-        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), true, List.of(pipe(), pipe())));
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), true, List.of(pipe(), noValues())));
         assertTrue(this.startGame.isBlockNetworkIdsHashed());
         BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
         assertFalse(player.disableMitigations());
@@ -1080,6 +1082,29 @@ class BoarSessionTest {
             return null;
         });
         assertEquals(unread, this.resentLayerZero(floor).getDefinition().getRuntimeId());
+    }
+
+    // The client keeps the last of two blocks with the same name: the pipe's 2 states, which move stone and air by 2.
+    @Test
+    void checksAPlayerWhoseServerListsABlockTwice() throws Exception {
+        TestBoar.mitigations(true);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(plainBlock("cubecraft:pipe"), pipe())));
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+        BoarPlayer player = this.withMitigations(session);
+        this.readItemsOnTheClient();
+        int air = AIR_RUNTIME_ID + 2;
+        int stone = STONE_RUNTIME_ID + 2;
+        assertEquals(air, player.mappingInfo.airId());
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, air, stone, 20));
+        Vector3i floor = Vector3i.from((this.startGame.getPlayerPosition().getFloorX() & ~15) + 3, 0, (this.startGame.getPlayerPosition().getFloorZ() & ~15) + 5);
+        BoarBlockState floorState = onLoop(session, () -> player.compensatedWorld.getBlockState(floor, 0));
+        assertEquals("minecraft:stone", floorState.block().toString());
+        assertEquals(stone, floorState.definition(player).getRuntimeId());
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+        this.assertNothingFailed();
     }
 
     @Test
@@ -1301,6 +1326,41 @@ class BoarSessionTest {
             return null;
         });
         assertEquals(unknown, this.resentLayerZero(floor).getDefinition().getRuntimeId());
+        this.assertNothingFailed();
+    }
+
+    // A custom state with stone's network hash comes before stone in the sorted palette, so it takes stone's ID and stone takes the next.
+    @Test
+    void standsOnStoneThatACustomStateMoved() throws Exception {
+        TestBoar.mitigations(true);
+        // A value found by search, whose state has stone's network hash
+        BlockPropertyData clash = new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, NbtMap.builder().putString("name", "n").putList("enum", NbtType.STRING, "vajo54aake").build()).build());
+        BedrockBlockTable table = BedrockBlockTable.get();
+        int stone = table.networkHash(table.firstIndex("minecraft:stone"));
+        ByteArrayOutputStream state = new ByteArrayOutputStream();
+        try (NBTOutputStream out = NbtUtils.createWriterLE(state)) {
+            out.writeTag(NbtMap.builder().putString("name", "cubecraft:pipe").putCompound("states", NbtMap.builder().putString("n", "vajo54aake").build()).build());
+        }
+        int hash = 0x811c9dc5;
+        for (byte b : state.toByteArray()) {
+            hash = (hash ^ (b & 0xFF)) * 0x01000193;
+        }
+        assertEquals(stone, hash);
+        assertTrue(table.indexOfHash(stone + 1) < 0);
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), true, List.of(clash)));
+        assertTrue(this.startGame.isBlockNetworkIdsHashed());
+        BoarPlayer player = this.withMitigations(session);
+        this.readItemsOnTheClient();
+        int air = table.networkHash(table.firstIndex("minecraft:air"));
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, air, stone + 1, 20));
+        Vector3i floor = Vector3i.from((this.startGame.getPlayerPosition().getFloorX() & ~15) + 3, 0, (this.startGame.getPlayerPosition().getFloorZ() & ~15) + 5);
+        BoarBlockState floorState = onLoop(session, () -> player.compensatedWorld.getBlockState(floor, 0));
+        assertEquals("minecraft:stone", floorState.block().toString());
+        assertEquals(stone + 1, floorState.definition(player).getRuntimeId());
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
         this.assertNothingFailed();
     }
 
@@ -1888,6 +1948,12 @@ class BoarSessionTest {
     private static NbtMap collisionBox(float minX, float minY, float minZ, float maxX, float maxY, float maxZ) {
         NbtMap box = NbtMap.builder().putFloat("minX", minX).putFloat("minY", minY).putFloat("minZ", minZ).putFloat("maxX", maxX).putFloat("maxY", maxY).putFloat("maxZ", maxZ).build();
         return NbtMap.builder().putBoolean("enabled", true).putList("boxes", NbtType.COMPOUND, box).build();
+    }
+
+    // A block with a property without values, which the client cannot read
+    private static BlockPropertyData noValues() {
+        NbtMap open = NbtMap.builder().putString("name", "open").putList("enum", NbtType.BYTE, List.of()).build();
+        return new BlockPropertyData("cubecraft:broken", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).build());
     }
 
     // A custom block of 2 states

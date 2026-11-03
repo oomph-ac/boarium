@@ -215,9 +215,11 @@ final class BlockCondition {
                 case "q.block_state", "query.block_state" -> {
                     this.expect("(");
                     this.skipSpaces();
-                    int property = this.keys.indexOf(this.string());
+                    String name = this.string();
+                    int property = this.keys.indexOf(name);
                     this.expect(")");
-                    if (property < 0) {
+                    // Of two properties with the same name, BlockType::addState keeps the last and BlockStateGroup::registerBlockStateDefinition the first, so Boar cannot tell which the client reads.
+                    if (property < 0 || property != this.keys.lastIndexOf(name)) {
                         throw new Unreadable();
                     }
                     return this.count(new BlockState(property));
