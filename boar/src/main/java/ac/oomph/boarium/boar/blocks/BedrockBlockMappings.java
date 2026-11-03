@@ -22,6 +22,7 @@ public final class BedrockBlockMappings implements BlockMappings {
     // Boar's interactive list holds Java names; these are the Bedrock names it misses. Java's stonecutter is Bedrock's stonecutter_block; Bedrock's stonecutter is an old block Java does not have.
     private static final Set<String> INTERACTIVE = Set.of("bed", "fence_gate", "trapdoor", "noteblock", "unpowered_comparator", "unpowered_repeater", "stonecutter_block");
 
+    private final Map<Item, Block> itemToBlock;
     private final List<Block> stairs = blocks(name -> name.endsWith("_stairs"));
     private final List<Block> leaves = blocks(name -> name.endsWith("_leaves") || name.equals("azalea_leaves_flowered"));
     private final List<Block> shulker = blocks(name -> name.endsWith("shulker_box"));
@@ -43,6 +44,11 @@ public final class BedrockBlockMappings implements BlockMappings {
     private final List<Block> anvil = blocks(ANVILS::contains);
     private final List<Block> cauldron = blocks(name -> name.equals("cauldron"));
     private final List<Block> interactive = blocks(name -> InteractiveBlocks.isInteractive(name) && !name.equals("stonecutter") || INTERACTIVE.contains(name));
+
+    // The block each block item places
+    public BedrockBlockMappings(Map<Item, Block> itemToBlock) {
+        this.itemToBlock = itemToBlock;
+    }
 
     private static List<Block> blocks(Predicate<String> test) {
         List<Block> blocks = new ArrayList<>();
@@ -149,9 +155,8 @@ public final class BedrockBlockMappings implements BlockMappings {
         return this.interactive;
     }
 
-    // Empty: block items are not mapped to Bedrock blocks yet.
     @Override
     public Map<Item, Block> getItemToBlock() {
-        return Map.of();
+        return this.itemToBlock;
     }
 }

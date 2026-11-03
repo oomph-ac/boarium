@@ -1,15 +1,20 @@
 package ac.oomph.boarium.boar;
 
+import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.data.inventory.BoarItemStack;
 import ac.boar.anticheat.util.Reference;
+import ac.boar.anticheat.util.math.Box;
 import ac.boar.mappings.block.Block;
 import ac.boar.mappings.block.BlockMappings;
 import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
+import ac.oomph.boarium.boar.blocks.BedrockBlock;
+import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockState;
 import ac.oomph.boarium.boar.blocks.BlockTable;
-import ac.oomph.boarium.boar.blocks.TableBlock;
 import ac.oomph.boarium.protocol.Definitions;
+import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
@@ -18,6 +23,9 @@ import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.Field;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -77,25 +85,71 @@ class BedrockItemsTest {
         assertFalse(stone.is(Items.BOW));
     }
 
-    // Expected blocks come from mappings/items.json in the same Geyser jar: the Java item with the Bedrock name, and the block of its firstBlockRuntimeId.
     @Test
-    void mapsEachBlockItemToTheJavaBlockItPlaces() {
-        assertPlaces("minecraft:stone", "minecraft:stone", 1);
-        assertPlaces("minecraft:oak_planks", "minecraft:oak_planks", 15);
-        assertPlaces("minecraft:wooden_door", "minecraft:oak_door", 5655);
-        assertPlaces("minecraft:oak_sign", "minecraft:oak_sign", 5335);
-        // The 16 Java beds and the 16 Java banners share a Bedrock name; the one with data value 0 wins.
-        assertPlaces("minecraft:bed", "minecraft:white_bed", 1931);
-        assertPlaces("minecraft:banner", "minecraft:black_banner", 13167);
-        assertPlaces("minecraft:powder_snow_bucket", "minecraft:powder_snow", 27162);
-        assertPlaces("minecraft:wheat_seeds", "minecraft:wheat", 5311);
+    void mapsEachBlockItemToTheBedrockBlockItPlaces() {
+        assertPlaces("minecraft:stone", "minecraft:stone");
+        assertPlaces("minecraft:wooden_door", "minecraft:wooden_door");
+        assertPlaces("minecraft:bed", "minecraft:bed");
+        assertPlaces("minecraft:oak_sign", "minecraft:standing_sign");
+        assertPlaces("minecraft:dark_oak_sign", "minecraft:darkoak_standing_sign");
+        assertPlaces("minecraft:cherry_sign", "minecraft:cherry_standing_sign");
+        assertPlaces("minecraft:cherry_hanging_sign", "minecraft:cherry_hanging_sign");
+        assertPlaces("minecraft:banner", "minecraft:standing_banner");
+        assertPlaces("minecraft:powder_snow_bucket", "minecraft:powder_snow");
+        assertPlaces("minecraft:wheat_seeds", "minecraft:wheat");
+        assertPlaces("minecraft:repeater", "minecraft:unpowered_repeater");
+        assertPlaces("minecraft:light_block", "minecraft:light_block_15");
+        // A furnace item places an unlit furnace, Bedrock Dedicated Server's default.
+        assertPlaces("minecraft:furnace", "minecraft:furnace");
+        BoarBlockState furnace = BlockMappings.get().getItemToBlock().get(item("minecraft:furnace")).defaultBlockState(Vector3i.ZERO, 0);
+        assertEquals("minecraft:furnace", BedrockBlockTable.get().name(furnace.intermediaryId()));
+        // Bedrock only
+        assertPlaces("minecraft:border_block", "minecraft:border_block");
+        assertPlaces("minecraft:frame", "minecraft:frame");
 
         assertNotABlock("minecraft:bow");
-        // Geyser's name for test_block and test_instance_block
-        assertNotABlock("minecraft:unknown");
-        // Bedrock only
-        assertNotABlock("minecraft:border_block");
-        assertEquals(1022, BlockMappings.get().getItemToBlock().size());
+        assertNotABlock("minecraft:air");
+        // The food and the crop item, not the crop blocks of the same names
+        assertNotABlock("minecraft:beetroot");
+        assertNotABlock("minecraft:wheat");
+        assertNotABlock("minecraft:item.wheat");
+        // A double slab item places a full block, which the slab's default state is not.
+        assertNotABlock("minecraft:oak_double_slab");
+        assertNotABlock("minecraft:waxed_double_cut_copper_slab");
+    }
+
+    // Where an item is named after a block, the state Boar places has the boxes of that block's default state.
+    @Test
+    void placesTheBoxesOfTheBlockAnItemIsNamedAfter() {
+        BedrockBlockTable table = BedrockBlockTable.get();
+        int compared = 0;
+        for (Map.Entry<Item, Block> entry : BlockMappings.get().getItemToBlock().entrySet()) {
+            int own = table.defaultIndex(entry.getKey().toString());
+            if (own >= 0) {
+                List<Box> placed = entry.getValue().defaultBlockState(Vector3i.ZERO, 0).getCollisionBoxes();
+                assertEquals(BedrockState.FACTORY.create(own, Vector3i.ZERO, 0).getCollisionBoxes(), placed, entry.getKey().toString());
+                compared++;
+            }
+        }
+        assertEquals(1283, compared);
+    }
+
+    // The Java model's block items, from Geyser, are each mapped to the Bedrock block of the Java block's default state. The other block items are Bedrock blocks Java does not have, or other names of a block, such as minecraft:lit_furnace.
+    @Test
+    void placesTheBlocksOfTheJavaModel() {
+        BlockTable java = BlockTable.get();
+        Map<Item, Block> blocks = BlockMappings.get().getItemToBlock();
+        java.itemBlocks().forEach((name, javaBlock) -> assertSame(BedrockBlock.of(java.toRuntime(java.defaultState(javaBlock), false)), blocks.get(item(name)), name));
+        Set<String> others = new TreeSet<>();
+        blocks.forEach((item, block) -> {
+            if (!java.itemBlocks().containsKey(item.toString())) {
+                assertSame(BedrockBlock.named(item.toString()), block, item.toString());
+                others.add(item.toString());
+            }
+        });
+        assertEquals(1022, java.itemBlocks().size());
+        assertEquals(292, others.size());
+        assertTrue(others.containsAll(List.of("minecraft:lit_furnace", "minecraft:wall_sign", "minecraft:hard_glass", "minecraft:frame", "minecraft:water")));
     }
 
     @Test
@@ -161,12 +215,10 @@ class BedrockItemsTest {
         return BoarItemStack.of(null, stack(new SimpleItemDefinition(name, 0, false), 1)).item();
     }
 
-    private static void assertPlaces(String name, String block, int firstState) {
+    private static void assertPlaces(String name, String block) {
         Item item = item(name);
         assertTrue(item.isBlock(), name);
-        Block placed = BlockMappings.get().getItemToBlock().get(item);
-        assertEquals(block, placed.toString());
-        assertEquals(firstState, BlockTable.get().firstState(((TableBlock) placed).index()));
+        assertSame(BedrockBlock.named(block), BlockMappings.get().getItemToBlock().get(item), name);
     }
 
     private static void assertNotABlock(String name) {

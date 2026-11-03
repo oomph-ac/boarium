@@ -9,8 +9,7 @@ import ac.boar.mappings.block.Block;
 import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
-import ac.oomph.boarium.boar.blocks.BlockTable;
-import ac.oomph.boarium.boar.blocks.TableBlock;
+import ac.oomph.boarium.boar.blocks.BedrockBlock;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
@@ -36,12 +35,37 @@ import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /**
- * Boar's items by Bedrock name, as in an ItemDefinition. An item is a block when the block table gives its name a Java block; a server's own items never are.
+ * Boar's items by Bedrock name, as in an ItemDefinition. A block item is named after the Bedrock block it places, except the signs and the items in PLACES; a server's own items are never blocks.
  * Boar names its item references by Java identifier, and each of those is also the item's Bedrock name.
  */
 final class BedrockItems implements ItemStackProvider, ItemMappings {
     private static final Logger LOG = LoggerFactory.getLogger(BedrockItems.class);
     private static final List<String> NAMES = readNames();
+    // The items that place a block of another name, besides the signs that block() renames
+    private static final Map<String, String> PLACES = Map.ofEntries(
+            Map.entry("minecraft:banner", "minecraft:standing_banner"),
+            Map.entry("minecraft:beetroot_seeds", "minecraft:beetroot"),
+            Map.entry("minecraft:carrot", "minecraft:carrots"),
+            Map.entry("minecraft:cocoa_beans", "minecraft:cocoa"),
+            Map.entry("minecraft:comparator", "minecraft:unpowered_comparator"),
+            Map.entry("minecraft:dark_oak_sign", "minecraft:darkoak_standing_sign"),
+            Map.entry("minecraft:glow_berries", "minecraft:cave_vines"),
+            Map.entry("minecraft:light_block", "minecraft:light_block_15"),
+            Map.entry("minecraft:melon_seeds", "minecraft:melon_stem"),
+            Map.entry("minecraft:oak_sign", "minecraft:standing_sign"),
+            Map.entry("minecraft:pitcher_pod", "minecraft:pitcher_crop"),
+            Map.entry("minecraft:potato", "minecraft:potatoes"),
+            Map.entry("minecraft:powder_snow_bucket", "minecraft:powder_snow"),
+            Map.entry("minecraft:pumpkin_seeds", "minecraft:pumpkin_stem"),
+            Map.entry("minecraft:redstone", "minecraft:redstone_wire"),
+            Map.entry("minecraft:repeater", "minecraft:unpowered_repeater"),
+            Map.entry("minecraft:string", "minecraft:trip_wire"),
+            Map.entry("minecraft:sugar_cane", "minecraft:reeds"),
+            Map.entry("minecraft:sweet_berries", "minecraft:sweet_berry_bush"),
+            Map.entry("minecraft:torchflower_seeds", "minecraft:torchflower_crop"),
+            Map.entry("minecraft:wheat_seeds", "minecraft:wheat"));
+    // Items named after a block that do not place it: the beetroot and wheat a player eats or crafts with (the crops' own block items are minecraft:item.beetroot and minecraft:item.wheat), and air and the camera, which Geyser's Java mapping gives no block either.
+    private static final Set<String> NOT_BLOCKS = Set.of("minecraft:air", "minecraft:beetroot", "minecraft:wheat", "minecraft:camera");
     // One item for each 1.26.30 name, made at start, so items compare by identity.
     private static final Map<String, BedrockItem> ITEMS = NAMES.stream().collect(Collectors.toUnmodifiableMap(name -> name, name -> new BedrockItem(name, block(name))));
     static final Map<Item, Block> ITEM_TO_BLOCK = itemToBlock();
@@ -115,20 +139,26 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         return this.heads;
     }
 
-    // Null for a Bedrock item that Geyser gives no Java block, such as minecraft:border_block.
-    private static Block block(String name) {
-        Integer block = BlockTable.get().itemBlocks().get(name);
-        return block == null ? null : TableBlock.of(block);
+    // The block an item places, or null
+    private static BedrockBlock block(String name) {
+        // A double slab item places a full block, but its block is the slab, whose default is the bottom half.
+        if (NOT_BLOCKS.contains(name) || name.endsWith("_slab") && name.contains("double")) {
+            return null;
+        } else if (PLACES.containsKey(name)) {
+            return BedrockBlock.named(PLACES.get(name));
+        } else if (name.endsWith("_sign") && BedrockBlock.named(name) == null) {
+            // A sign item places the standing sign; the wall sign is another block.
+            return BedrockBlock.named(name.replace("_sign", "_standing_sign"));
+        }
+        return BedrockBlock.named(name);
     }
 
     private static Map<Item, Block> itemToBlock() {
         Map<Item, Block> blocks = new HashMap<>();
-        for (String name : BlockTable.get().itemBlocks().keySet()) {
-            BedrockItem item = ITEMS.get(name);
-            if (item == null) {
-                throw new IllegalStateException("The block table's block item " + name + " is not a 1.26.30 item");
+        for (BedrockItem item : ITEMS.values()) {
+            if (item.block != null) {
+                blocks.put(item, item.block);
             }
-            blocks.put(item, item.block);
         }
         return Map.copyOf(blocks);
     }

@@ -25,8 +25,9 @@ import java.util.Set;
 
 /**
  * A Bedrock block state for Boar, answered from the Bedrock block table.
+ * A custom block's state is air to Boar, but keeps its custom ID so that Boar can send it back to the client.
  *
- * @param intermediaryId the palette index
+ * @param intermediaryId the palette index, or a custom ID from {@link BedrockPalette}
  */
 public record BedrockState(int intermediaryId, Vector3i getPosition, int getLayer) implements BoarBlockStateDelegate {
     private static final BedrockBlockTable TABLE = BedrockBlockTable.get();
@@ -79,15 +80,15 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         }
     }
 
-    // Like Geyser, an ID the palette does not have is air.
+    // Like Geyser, an ID outside the palette and the custom IDs is air.
     public BedrockState {
-        intermediaryId = intermediaryId >= 0 && intermediaryId < TABLE.paletteSize() ? intermediaryId : AIR;
+        intermediaryId = intermediaryId >= 0 && intermediaryId - BedrockPalette.FIRST_CUSTOM_ID < BedrockPalette.MAX_CUSTOM_IDS ? intermediaryId : AIR;
     }
 
     // Honey, slime and beds get Boar's own state classes.
     private static BoarBlockState create(int id, Vector3i position, int layer) {
         BedrockState delegate = new BedrockState(id, position, layer);
-        return switch (CLASSES[delegate.intermediaryId]) {
+        return switch (CLASSES[delegate.index()]) {
             case HONEY -> new HoneyBlockState(delegate);
             case SLIME -> new SlimeBlockState(delegate);
             case BED -> new BedBlockState(delegate);
@@ -117,28 +118,33 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         return List.copyOf(list);
     }
 
+    // The palette index, which is air for a custom state
+    private int index() {
+        return this.intermediaryId < TABLE.paletteSize() ? this.intermediaryId : AIR;
+    }
+
     @Override
     public Block block() {
-        return BedrockBlock.of(this.intermediaryId);
+        return BedrockBlock.of(this.index());
     }
 
     @Override
     public BlockDefinition definition(BoarPlayer player) {
-        throw new UnsupportedOperationException("Bedrock states are not mapped to runtime IDs yet");
+        return BedrockPalette.definition(player, this.intermediaryId);
     }
 
     @Override
     public boolean is(Block block) {
-        return BedrockBlock.of(this.intermediaryId).is(block);
+        return BedrockBlock.of(this.index()).is(block);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T extends Comparable<T>> BoarBlockState with(Property<T> property, T value) {
         BedrockProperty<T> bound = (BedrockProperty<T>) property;
-        int changed = bound.with(this.intermediaryId, value);
+        int changed = bound.with(this.index(), value);
         if (changed < 0) {
-            throw new IllegalArgumentException(TABLE.name(this.intermediaryId) + " has no " + bound.key() + " " + value);
+            throw new IllegalArgumentException(TABLE.name(this.index()) + " has no " + bound.key() + " " + value);
         }
         return create(changed, this.getPosition, this.getLayer);
     }
@@ -147,32 +153,32 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
     @Override
     @SuppressWarnings("unchecked")
     public <T extends Comparable<T>> T get(Property<T> property) {
-        return ((BedrockProperty<T>) property).get(this.intermediaryId);
+        return ((BedrockProperty<T>) property).get(this.index());
     }
 
     @Override
     public boolean isWaterlogged() {
-        return Boolean.TRUE.equals(WATERLOGGED.get(this.intermediaryId));
+        return Boolean.TRUE.equals(WATERLOGGED.get(this.index()));
     }
 
     @Override
     public List<Box> getCollisionBoxes() {
-        return BOXES[this.intermediaryId];
+        return BOXES[this.index()];
     }
 
     @Override
     public boolean isFaceSturdy(BoarPlayer player) {
-        return FACE_STURDY.get(this.intermediaryId);
+        return FACE_STURDY.get(this.index());
     }
 
     @Override
     public boolean isReplaceable(BoarPlayer player) {
-        return REPLACEABLE.get(this.intermediaryId);
+        return REPLACEABLE.get(this.index());
     }
 
     @Override
     public List<Box> connectionCollisionOverride(BoarPlayer player, Vector3i pos) {
-        return BedrockConnections.collisionOverride(player, this.intermediaryId, pos.getX(), pos.getY(), pos.getZ());
+        return BedrockConnections.collisionOverride(player, this.index(), pos.getX(), pos.getY(), pos.getZ());
     }
 
     // The 1.26.30 states of fences, panes, bars, chorus plants and stairs hold no connections, so connectionCollisionOverride builds those shapes instead.

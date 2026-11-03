@@ -16,7 +16,7 @@ import ac.boar.mappings.entity.Entity;
 import ac.boar.protocol.BoarBatchAcknowledger;
 import ac.boar.protocol.BoarConnection;
 import ac.oomph.boarium.Boarium;
-import ac.oomph.boarium.boar.blocks.TablePalette;
+import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.session.Session;
 import io.netty.channel.Channel;
@@ -27,6 +27,7 @@ import org.cloudburstmc.protocol.bedrock.netty.codec.packet.BedrockPacketCodec;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.TextPacket;
+import org.cloudburstmc.protocol.bedrock.packet.UpdateBlockPacket;
 import org.jose4j.json.JsonUtil;
 import org.jose4j.lang.JoseException;
 import org.slf4j.Logger;
@@ -64,7 +65,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         if (!missing.isEmpty() && LOGGED_MISSING_ITEMS.add(missing)) {
             LOG.warn("The server of {} lacks Boar's items {}", session.client().identity().displayName(), missing);
         }
-        this.adding.put(session, TablePalette.mappingInfo(startGame));
+        this.adding.put(session, BedrockPalette.mappingInfo(startGame));
         try {
             return this.add(session);
         } finally {
@@ -251,6 +252,10 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
                 return;
             }
             BoarPlayer player = this.players.get(this.session);
+            // Boar resends layer 1 as water only under a state it thinks is waterlogged, but a Bedrock block keeps its water in layer 1 and not in its state, so the resend takes what Boar's world holds in layer 1 instead.
+            if (player != null && packet instanceof UpdateBlockPacket update && update.getDataLayer() == 1) {
+                update.setDefinition(player.compensatedWorld.getBlockState(update.getBlockPosition(), 1).definition(player));
+            }
             if (player != null && BoarProcessor.passes(player, packet, false)) {
                 this.session.sendToClient(packet, immediately);
                 if (!immediately) {

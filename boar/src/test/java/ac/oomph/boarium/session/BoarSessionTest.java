@@ -10,8 +10,13 @@ import ac.boar.anticheat.data.enchantment.Enchantment;
 import ac.boar.anticheat.data.vanilla.StatusEffect;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.player.data.VehicleType;
+import ac.boar.anticheat.util.MathUtil;
 import ac.boar.anticheat.util.math.Box;
+import ac.boar.anticheat.util.math.Vec3;
+import ac.boar.anticheat.violation.Violation;
+import ac.boar.anticheat.violation.ViolationListener;
 import ac.boar.mappings.block.Blocks;
+import ac.boar.mappings.block.Properties;
 import ac.boar.mappings.entity.Entity;
 import ac.boar.mappings.entity.EntityDefinitions;
 import ac.boar.mappings.entity.EntityTypes;
@@ -21,7 +26,7 @@ import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
 import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.TestBoar;
-import ac.oomph.boarium.boar.blocks.BlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.client.TestClient;
@@ -36,6 +41,7 @@ import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtMapBuilder;
 import org.cloudburstmc.nbt.NbtType;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
@@ -106,6 +112,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -114,6 +121,7 @@ import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
@@ -278,7 +286,7 @@ class BoarSessionTest {
 
         int x = (chunkX << 4) + 3;
         int z = (chunkZ << 4) + 5;
-        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0).intermediaryId() != 0);
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(x, 0, z, 0).isAir());
         BoarBlockState floor = onLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0));
         assertEquals("minecraft:stone", floor.block().toString());
         assertTrue(floor.isFaceSturdy(player));
@@ -319,8 +327,8 @@ class BoarSessionTest {
         // Boar ran its movement prediction there, not only its checks for a teleport or a loading screen.
         assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
 
-        // A fence in the line joins the fences east and west of it, as oak_fence[east=true,north=false,south=false,waterlogged=false,west=true] (Java state 6979 in Geyser).
-        List<Box> expected = BoarBlockState.create(6979, fence, 0).getCollisionBoxes().stream().map(box -> box.offset(fence.getX(), fence.getY(), fence.getZ())).toList();
+        // A fence in the line joins the fences east and west of it: one bar from west to east, as the client's FenceBlock::addCollisionShapes builds it.
+        List<Box> expected = List.of(new Box(0, 0, 0.375F, 1, 1.5F, 0.625F).offset(fence.getX(), fence.getY(), fence.getZ()));
         List<Box> boxes = onLoop(session, () -> player.compensatedWorld.getBlockState(fence, 0).findCollision(player, fence, null, false));
         assertArrayEquals(corners(expected), corners(boxes));
         this.assertNothingFailed();
@@ -348,7 +356,7 @@ class BoarSessionTest {
 
         int x = (chunkX << 4) + 3;
         int z = (chunkZ << 4) + 5;
-        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0).intermediaryId() != 0);
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(x, 0, z, 0).isAir());
         BoarBlockState floor = onLoop(session, () -> player.compensatedWorld.getBlockState(x, 0, z, 0));
         assertEquals("minecraft:stone", floor.block().toString());
         assertEquals(stone, floor.definition(player).getRuntimeId());
@@ -356,6 +364,155 @@ class BoarSessionTest {
         assertEquals(air, player.mappingInfo.airId());
         // Without custom blocks, stone has another ID.
         assertNotEquals(floor.intermediaryId(), player.mappingInfo.toIntermediary().applyAsInt(STONE_RUNTIME_ID));
+
+        // The pipe's states are air with IDs of their own, which Boar sends back as the pipe.
+        int pipes = 0;
+        for (int runtimeId = 0; runtimeId < AIR_RUNTIME_ID + 2; runtimeId++) {
+            int id = player.mappingInfo.toIntermediary().applyAsInt(runtimeId);
+            BoarBlockState state = BoarBlockState.create(id, Vector3i.ZERO, 0);
+            if (id >= BedrockBlockTable.get().paletteSize()) {
+                assertTrue(state.isAir());
+                assertEquals(runtimeId, state.definition(player).getRuntimeId());
+                pipes++;
+            }
+        }
+        assertEquals(2, pipes);
+        this.assertNothingFailed();
+    }
+
+    // Flowing lava and the top half of a double slab are Bedrock states that Geyser's Java mapping folds into others.
+    @Test
+    void readsStatesThatOnlyBedrockHas() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        BedrockBlockTable table = BedrockBlockTable.get();
+        int lava = state("minecraft:flowing_lava", "liquid_depth", 3);
+        int slab = state("minecraft:oak_double_slab", "minecraft:vertical_half", "top");
+
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        int[] blocks = new int[4096];
+        Arrays.fill(blocks, AIR_RUNTIME_ID);
+        blocks[3 << 8 | 5 << 4 | 1] = lava;
+        blocks[4 << 8 | 5 << 4 | 1] = slab;
+        this.sendChunk(chunkX, chunkZ, subChunk(0, blocks));
+
+        Vector3i lavaPos = Vector3i.from((chunkX << 4) + 3, 1, (chunkZ << 4) + 5);
+        Vector3i slabPos = lavaPos.add(1, 0, 0);
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(slabPos, 0).isAir());
+        BoarBlockState lavaState = onLoop(session, () -> player.compensatedWorld.getBlockState(lavaPos, 0));
+        assertTrue(lavaState.is(Blocks.LAVA));
+        assertEquals(3, lavaState.get(Properties.LEVEL));
+        assertEquals(lava, lavaState.intermediaryId());
+        assertEquals(lava, lavaState.definition(player).getRuntimeId());
+
+        BoarBlockState slabState = onLoop(session, () -> player.compensatedWorld.getBlockState(slabPos, 0));
+        assertEquals("minecraft:oak_slab", slabState.block().toString());
+        assertEquals("double", slabState.get(Properties.SLAB_TYPE));
+        assertEquals("minecraft:oak_double_slab", table.name(slabState.intermediaryId()));
+        assertEquals(slab, slabState.definition(player).getRuntimeId());
+        assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(slabState.getCollisionBoxes()));
+        this.assertNothingFailed();
+    }
+
+    // Walks east on top of a line of fences, which holds the player up only where the fences join each other.
+    @Test
+    void walksAlongTheTopOfAFenceLine() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        this.sendChunk(chunkX, chunkZ, fenceLine());
+        Vector3i fence = Vector3i.from((chunkX << 4) + 2, 1, (chunkZ << 4) + FENCE_Z);
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(fence, 0).block().toString().equals("minecraft:oak_fence"));
+
+        List<Violation> violations = new CopyOnWriteArrayList<>();
+        ViolationListener listener = violation -> {
+            if (violation.player() == player) {
+                violations.add(violation);
+            }
+        };
+        Boar.getInstance().getViolationRegistry().register(listener);
+        try {
+            // Standing still first, then walking east slowly, as the client moves on a block of friction 0.6: its input times 0.98 at speed 0.1 a tick, and velocity times 0.546 after each tick.
+            // Each step is shorter than the 0.15 between two places where the posts alone would hold the player, so it stops between posts.
+            // The client also sends its velocity after the tick, with the gravity that the block under it stops in the next tick.
+            float feetY = fence.getY() + 1.5F;
+            float x = fence.getX() + 0.5F;
+            float z = fence.getZ() + 0.5F;
+            Vec3 velocity = Vec3.ZERO.clone();
+            for (int tick = 1; tick <= 70; tick++) {
+                boolean walking = tick > 10;
+                if (walking) {
+                    Vec3 input = MathUtil.getInputVector(new Vec3(0, 0, 0.3F * 0.98F), 0.1F, -90);
+                    velocity = velocity.add(input);
+                    x += velocity.x;
+                    z += velocity.z;
+                    velocity = velocity.multiply(0.546F, 1, 0.546F);
+                }
+                this.answerLatency();
+                PlayerAuthInputPacket input = authInput();
+                input.setRotation(Vector3f.from(0, -90, -90));
+                // A real client's eyes are 1.62001 above its feet.
+                input.setPosition(Vector3f.from(x, feetY + 1.62001F, z));
+                if (walking) {
+                    input.getInputData().add(PlayerAuthInputData.UP);
+                    input.setMotion(Vector2f.from(0, 0.3F));
+                    input.setRawMoveVector(Vector2f.from(0, 0.3F));
+                    input.setAnalogMoveVector(Vector2f.from(0, 0.3F));
+                }
+                input.setDelta(Vector3f.from(velocity.x, -0.0784F, velocity.z));
+                input.setTick(tick);
+                this.client.session.get().sendPacket(input);
+                Thread.sleep(50);
+            }
+            awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= 70);
+            // The player crossed several fences, and Boar predicted every step there.
+            assertTrue(x > fence.getX() + 3, "x " + x);
+            assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+            assertTrue(onLoop(session, () -> player.onGround));
+            assertEquals(List.of(), violations.stream().map(violation -> violation.check().getClass().getSimpleName() + " " + violation.verbose()).toList());
+        } finally {
+            Boar.getInstance().getViolationRegistry().unregister(listener);
+        }
+        this.assertNothingFailed();
+    }
+
+    // Boar resends layer 1 when it undoes a block, and a Bedrock stair holds its water there, which the resend must keep.
+    @Test
+    void keepsTheWaterOfAWaterloggedStairBoarResends() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+        int stairs = BedrockBlockTable.get().defaultIndex("minecraft:oak_stairs");
+        int water = player.mappingInfo.waterId();
+
+        // The block undoOutOfReach clicks
+        Vector3i clicked = this.startGame.getPlayerPosition().toInt().add(30, -2, 0);
+        int[] layer0 = new int[4096];
+        int[] layer1 = new int[4096];
+        Arrays.fill(layer0, AIR_RUNTIME_ID);
+        Arrays.fill(layer1, AIR_RUNTIME_ID);
+        int index = (clicked.getX() & 15) << 8 | (clicked.getZ() & 15) << 4 | clicked.getY() & 15;
+        layer0[index] = stairs;
+        layer1[index] = water;
+        this.sendChunk(clicked.getX() >> 4, clicked.getZ() >> 4, subChunk(clicked.getY() >> 4, layer0, layer1));
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(clicked, 1).is(Blocks.WATER));
+        assertFalse(onLoop(session, () -> player.compensatedWorld.getBlockState(clicked, 0).isWaterlogged()));
+
+        this.client.received.clear();
+        this.undoOutOfReach(session, 0, stones(64, 1));
+        List<UpdateBlockPacket> resent = new ArrayList<>();
+        while (resent.size() < 4) {
+            if (this.client.received.poll(10, TimeUnit.SECONDS) instanceof UpdateBlockPacket update) {
+                resent.add(update);
+            }
+        }
+        UpdateBlockPacket stairLayer0 = resent.stream().filter(update -> update.getBlockPosition().equals(clicked) && update.getDataLayer() == 0).findFirst().orElseThrow();
+        UpdateBlockPacket stairLayer1 = resent.stream().filter(update -> update.getBlockPosition().equals(clicked) && update.getDataLayer() == 1).findFirst().orElseThrow();
+        assertEquals(stairs, stairLayer0.getDefinition().getRuntimeId());
+        assertEquals(water, stairLayer1.getDefinition().getRuntimeId());
+        assertTrue(onLoop(session, () -> player.compensatedWorld.getBlockState(clicked, 1).is(Blocks.WATER)));
         this.assertNothingFailed();
     }
 
@@ -1151,8 +1308,7 @@ class BoarSessionTest {
 
     // A sub-chunk at Y 0 to 15 with a stone floor at Y 0 and a line of oak fences along X at Y 1 and local Z FENCE_Z.
     private static ByteBuf fenceLine() {
-        BlockTable table = BlockTable.get();
-        int fence = table.toRuntime(table.defaultState(table.block("minecraft:oak_fence")), false);
+        int fence = BedrockBlockTable.get().defaultIndex("minecraft:oak_fence");
         ByteBuf data = Unpooled.buffer();
         data.writeByte(9).writeByte(1).writeByte(0);
         // Two bits per block, so 16 blocks in each word, at index x << 8 | z << 4 | y: one word is one column of Y 0 to 15.
@@ -1167,6 +1323,50 @@ class BoarSessionTest {
         VarInts.writeInt(data, STONE_RUNTIME_ID);
         VarInts.writeInt(data, fence);
         return data;
+    }
+
+    // A sub-chunk at this section Y with these runtime IDs, one array for each layer, by block index x << 8 | z << 4 | y.
+    private static ByteBuf subChunk(int sectionY, int[]... layers) {
+        ByteBuf data = Unpooled.buffer();
+        data.writeByte(9).writeByte(layers.length).writeByte(sectionY);
+        for (int[] blocks : layers) {
+            List<Integer> palette = Arrays.stream(blocks).distinct().boxed().toList();
+            // 8 bits per block, so 4 blocks in each word
+            data.writeByte(8 << 1 | 1);
+            for (int word = 0; word < 4096 / 4; word++) {
+                int bits = 0;
+                for (int b = 0; b < 4; b++) {
+                    bits |= palette.indexOf(blocks[word * 4 + b]) << b * 8;
+                }
+                data.writeIntLE(bits);
+            }
+            VarInts.writeInt(data, palette.size());
+            palette.forEach(id -> VarInts.writeInt(data, id));
+        }
+        return data;
+    }
+
+    private void sendChunk(int chunkX, int chunkZ, ByteBuf data) throws Exception {
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(data);
+        this.server.send(chunk);
+        this.server.send(new Flush());
+    }
+
+    // The palette index, and so the runtime ID without custom blocks, of the state of this block with these values instead
+    private static int state(String name, Object... values) {
+        BedrockBlockTable table = BedrockBlockTable.get();
+        NbtMapBuilder states = table.states(table.firstIndex(name)).toBuilder();
+        for (int i = 0; i < values.length; i += 2) {
+            states.put((String) values[i], values[i + 1]);
+        }
+        int index = table.index(name, states.build());
+        assertTrue(index >= 0, name + " " + List.of(values));
+        return index;
     }
 
     // Each box's minX, minY, minZ, maxX, maxY, maxZ in a row, since Box does not override equals(Object)

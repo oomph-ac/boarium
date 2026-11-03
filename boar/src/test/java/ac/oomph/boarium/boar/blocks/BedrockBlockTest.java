@@ -298,7 +298,7 @@ class BedrockBlockTest {
 
     @Test
     void categoriesAgreeWithGeyser() {
-        BlockMappings bedrock = new BedrockBlockMappings();
+        BlockMappings bedrock = new BedrockBlockMappings(Map.of());
         BlockMappings geyser = new TableBlockMappings(Map.of());
         Map<String, Function<BlockMappings, List<Block>>> lists = new LinkedHashMap<>();
         lists.put("stairs", BlockMappings::getStairsBlocks);
@@ -347,12 +347,11 @@ class BedrockBlockTest {
         assertEquals(11, sizes.get("lantern"));
         assertEquals(1, sizes.get("bed"));
         assertEquals(List.of(block("cauldron")), bedrock.getCauldronBlocks());
-        assertTrue(bedrock.getItemToBlock().isEmpty());
     }
 
     @Test
     void interactiveBlocks() {
-        List<Block> interactive = new BedrockBlockMappings().getInteractiveBlocks();
+        List<Block> interactive = new BedrockBlockMappings(Map.of()).getInteractiveBlocks();
         for (String name : List.of("wooden_door", "iron_door", "trapdoor", "acacia_trapdoor", "fence_gate", "birch_fence_gate", "bed", "standing_sign", "wall_sign", "acacia_standing_sign",
                 "oak_hanging_sign", "wooden_button", "lit_furnace", "lit_smoker", "noteblock", "powered_comparator", "unpowered_repeater", "daylight_detector_inverted",
                 "stonecutter_block", "flower_pot", "cauldron", "undyed_shulker_box", "white_candle_cake", "chest", "ender_chest", "copper_chest", "crafting_table", "lever", "anvil")) {

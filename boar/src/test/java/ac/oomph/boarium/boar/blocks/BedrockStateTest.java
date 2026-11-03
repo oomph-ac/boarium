@@ -1,7 +1,6 @@
 package ac.oomph.boarium.boar.blocks;
 
 import ac.boar.anticheat.data.block.BoarBlockState;
-import ac.boar.anticheat.data.block.BoarBlockStateDelegate;
 import ac.boar.anticheat.data.block.VanillaBoarBlockState;
 import ac.boar.anticheat.data.block.impl.BedBlockState;
 import ac.boar.anticheat.data.block.impl.HoneyBlockState;
@@ -11,15 +10,12 @@ import ac.boar.anticheat.util.Dimension;
 import ac.boar.anticheat.util.math.Box;
 import ac.boar.anticheat.util.math.Direction;
 import ac.boar.api.anticheat.model.NetworkSession;
-import ac.boar.mappings.block.Block;
 import ac.boar.mappings.block.ChestType;
-import ac.boar.mappings.block.Property;
 import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockProperties.BedrockProperty;
 import ac.oomph.boarium.boar.blocks.TableProperties.TableProperty;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
-import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -443,82 +439,22 @@ class BedrockStateTest {
         assertInstanceOf(SlimeBlockState.class, state(table.firstIndex("minecraft:slime")));
         assertInstanceOf(BedBlockState.class, state(table.firstIndex("minecraft:bed") + 5));
         assertInstanceOf(VanillaBoarBlockState.class, state(table.firstIndex("minecraft:stone")));
-        assertEquals(table.firstIndex("minecraft:air"), state(table.paletteSize()).intermediaryId());
+        // A custom ID keeps its ID and is air; an ID past them is air.
+        assertEquals(table.paletteSize(), state(table.paletteSize()).intermediaryId());
+        assertTrue(state(table.paletteSize()).isAir());
+        assertTrue(state(table.paletteSize()).getCollisionBoxes().isEmpty());
+        assertEquals(table.firstIndex("minecraft:air"), state(table.paletteSize() + BedrockPalette.MAX_CUSTOM_IDS).intermediaryId());
         assertEquals(table.firstIndex("minecraft:air"), state(-1).intermediaryId());
-        assertEquals(table.firstIndex("minecraft:air"), new BedrockState(table.paletteSize(), POS, 0).intermediaryId());
-    }
-
-    // Boar's Blocks and Properties are bound to the Java table in this JVM, so the Bedrock state goes through Boar's collision with Geyser's Java block and its properties found by key.
-    private record JavaBlockBedrockProperties(BedrockState state) implements BoarBlockStateDelegate {
-        @Override
-        public int intermediaryId() {
-            return this.state.intermediaryId();
-        }
-
-        @Override
-        public Block block() {
-            return TableBlock.of(java.blockOf(java.paletteToJava(this.state.intermediaryId())));
-        }
-
-        @Override
-        public BlockDefinition definition(BoarPlayer player) {
-            return this.state.definition(player);
-        }
-
-        @Override
-        public <T extends Comparable<T>> BoarBlockState with(Property<T> property, T value) {
-            throw new UnsupportedOperationException();
-        }
-
-        @Override
-        public boolean isWaterlogged() {
-            return this.state.isWaterlogged();
-        }
-
-        @Override
-        public boolean is(Block block) {
-            return this.block().is(block);
-        }
-
-        @Override
-        public <T extends Comparable<T>> T get(Property<T> property) {
-            return this.state.get(BedrockProperties.INSTANCE.<T>get(((TableProperty<?>) property).key()));
-        }
-
-        @Override
-        public List<Box> getCollisionBoxes() {
-            return this.state.getCollisionBoxes();
-        }
-
-        @Override
-        public boolean isFaceSturdy(BoarPlayer player) {
-            return this.state.isFaceSturdy(player);
-        }
-
-        @Override
-        public Vector3i getPosition() {
-            return this.state.getPosition();
-        }
-
-        @Override
-        public int getLayer() {
-            return this.state.getLayer();
-        }
-
-        @Override
-        public BoarBlockState applyConnectionShape(BoarPlayer player, BoarBlockState self, Vector3i pos) {
-            return this.state.applyConnectionShape(player, self, pos);
-        }
     }
 
     private static BoarPlayer player() {
-        BoarPlayer player = new BoarPlayer(new Offline(), null, null, TablePalette.mappingInfo(new StartGamePacket()), null, null, null, Map.of(), true);
+        BoarPlayer player = new BoarPlayer(new Offline(), null, null, BedrockPalette.mappingInfo(new StartGamePacket()), null, null, null, Map.of(), true);
         player.compensatedWorld.setDimension(Dimension.OVERWORLD);
         return player;
     }
 
     private static List<Box> boarCollision(BoarPlayer player, int index) {
-        return new VanillaBoarBlockState(new JavaBlockBedrockProperties(new BedrockState(index, POS, 0))).findCollision(player, POS, Box.EMPTY, false);
+        return state(index).findCollision(player, POS, Box.EMPTY, false);
     }
 
     // The table's boxes at POS
@@ -544,8 +480,8 @@ class BedrockStateTest {
         }
     }
 
-    // Where Boar's collision picks a box by direction, half or hanging, the Bedrock state ends with the BDS box and with the box of Geyser's Java state.
-    // The BDS data has one box for every door state, so doors are only compared with Java.
+    // Where Boar's collision picks a box by direction, half or hanging, the Bedrock state ends with the BDS box.
+    // The BDS data has one box for every door state, so doors are compared with the box of Geyser's Java state instead, which is 0.005 thicker than Boar's.
     @Test
     void boarsCollisionShapesFollowTheBindings() {
         BoarPlayer player = player();
@@ -560,10 +496,12 @@ class BedrockStateTest {
                 }
                 List<Box> boxes = boarCollision(player, i);
                 String state = name + " " + table.states(i);
-                if (!name.endsWith("_door")) {
+                if (name.endsWith("_door")) {
+                    List<Box> javaBoxes = TableBlockState.FACTORY.create(javaState, POS, 0).getCollisionBoxes().stream().map(box -> box.offset(POS.getX(), POS.getY(), POS.getZ())).toList();
+                    assertArrayEquals(flatten(javaBoxes), flatten(boxes), 0.0051F, state);
+                } else {
                     assertArrayEquals(bedrockBoxes(i), flatten(boxes), state);
                 }
-                assertArrayEquals(flatten(TableBlockState.FACTORY.create(javaState, POS, 0).findCollision(player, POS, Box.EMPTY, false)), flatten(boxes), state);
                 compared++;
             }
         }
