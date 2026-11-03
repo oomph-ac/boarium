@@ -16,6 +16,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -34,6 +35,9 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
     // Past 32 bits, the client's 32-bit shifts wrap around, so a later property reads the bits of the first ones, which Boar does not follow.
     private static final int MAX_BITS = 32;
     private static final String PLACEMENT_FILTER = "minecraft:placement_filter";
+    // The block_archetype types of BlockArchetypeDispatcherImpl::getLoaders. Each makes a block of a vanilla class, whose own states or shape Boar does not know.
+    private static final Set<String> ARCHETYPES = Set.of("bush_block", "button_block", "crop_block", "door_block", "fence_block", "fence_gate_block", "flower_bed_block", "hanging_sign_block", "leaves_block", "log_block", "planks_block",
+            "pressure_plate_block", "pumpkin_block", "sapling_block", "shelf_block", "sign_block", "slab_block", "stair_block", "stripped_log_block", "trapdoor_block", "wall_sign_block");
     // The client's CompoundTag sorts its keys by their UTF-8 bytes.
     private static final Comparator<String> KEY_ORDER = (a, b) -> Arrays.compareUnsigned(a.getBytes(StandardCharsets.UTF_8), b.getBytes(StandardCharsets.UTF_8));
 
@@ -51,6 +55,11 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
      */
     static CustomBlock of(BlockPropertyData data, CustomCollision.Budget collisionBudget, CustomCollision.Budget componentsBudget) {
         String name = data.getName();
+        // As BlockDefinitionGroup::digestServerBlockProperties: it reads a string "type" from a block_archetype compound in vanilla_block_data, and ignores a type it does not know.
+        if (data.getProperties().get("vanilla_block_data") instanceof NbtMap vanilla && vanilla.get("block_archetype") instanceof NbtMap archetype
+                && archetype.get("type") instanceof String type && ARCHETYPES.contains(type)) {
+            throw malformed(name, "it has the block archetype " + type + ", whose block class Boar does not know");
+        }
         List<String> keys = new ArrayList<>();
         List<NbtList<?>> values = new ArrayList<>();
         int bits = 0;
@@ -61,24 +70,19 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
             values.add(state.values());
         }
         int traitStates = keys.size();
-        // As BlockDefinitionGroup::digestServerBlockProperties: it reads properties only from a list of compounds, skips a property without an "enum" list, and names a property without a string "name" "".
-        if (data.getProperties().get("properties") instanceof NbtList<?> list && list.getType() == NbtType.COMPOUND) {
-            for (Object element : list) {
-                NbtMap property = (NbtMap) element;
-                if (!(property.get("enum") instanceof NbtList<?> enumValues)) {
-                    continue;
-                }
-                // The client reads the first value without checking that there is one.
-                if (enumValues.isEmpty()) {
-                    throw malformed(name, "a property has no values, which the client cannot read");
-                }
-                bits += bits(enumValues.size());
-                if (bits > MAX_BITS) {
-                    throw malformed(name, "its states need more than " + MAX_BITS + " bits");
-                }
-                keys.add(property.get("name") instanceof String key ? key : "");
-                values.add(enumValues);
+        for (NbtMap property : properties(data.getProperties())) {
+            NbtList<?> enumValues = (NbtList<?>) property.get("enum");
+            // The client reads the first value without checking that there is one.
+            if (enumValues.isEmpty()) {
+                throw malformed(name, "a property has no values, which the client cannot read");
             }
+            bits += bits(enumValues.size());
+            if (bits > MAX_BITS) {
+                throw malformed(name, "its states need more than " + MAX_BITS + " bits");
+            }
+            // The client names a property "" when it has no string "name".
+            keys.add(property.get("name") instanceof String key ? key : "");
+            values.add(enumValues);
         }
         int[] radices = radices(values);
         int states = 1;
@@ -88,6 +92,38 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         CustomComponents components = CustomComponents.of(keys, values, radices, states, data.getProperties(), componentsBudget);
         CustomCollision collision = CustomCollision.of(keys, values, radices, states, data.getProperties(), collisionBudget, components);
         return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), traitStates, placementFilter(data.getProperties()), states, collision, components);
+    }
+
+    // As BlockDefinitionGroup::digestServerBlockProperties: it reads properties only from a list of compounds, and skips a property without an "enum" list.
+    private static List<NbtMap> properties(NbtMap properties) {
+        List<NbtMap> read = new ArrayList<>();
+        if (properties.get("properties") instanceof NbtList<?> list && list.getType() == NbtType.COMPOUND) {
+            for (Object element : list) {
+                if (((NbtMap) element).get("enum") instanceof NbtList<?>) {
+                    read.add((NbtMap) element);
+                }
+            }
+        }
+        return read;
+    }
+
+    /**
+     * Checks a block that StartGame sends with the name of a vanilla block. BlockDefinitionGroup::registerBlockFromDefinition adds its traits and properties to the states of the vanilla block, and so to its runtime IDs.
+     * Each property is a new state. A trait's state is new unless the vanilla block has a state of its name, since BlockType::addState skips a state the block has.
+     * Throws IllegalArgumentException when the block gives the vanilla block a new state. Returns whether its traits add any states, all of which the vanilla block has.
+     */
+    static boolean keepsVanillaStates(BlockPropertyData data, NbtMap vanillaStates) {
+        String name = data.getName();
+        if (!properties(data.getProperties()).isEmpty()) {
+            throw malformed(name, "the client adds its properties to the vanilla block of that name as new states");
+        }
+        List<CustomTraits.State> traitStates = CustomTraits.states(name, data.getProperties());
+        for (CustomTraits.State state : traitStates) {
+            if (!vanillaStates.containsKey(state.name())) {
+                throw malformed(name, "the client adds the state " + state.name() + " of its traits to the vanilla block of that name");
+            }
+        }
+        return !traitStates.isEmpty();
     }
 
     private static boolean placementFilter(NbtMap properties) {

@@ -1065,6 +1065,22 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // The client makes a block with a door archetype a vanilla door, whose states Boar does not know, so with sorted IDs Boar knows none of the client's runtime IDs.
+    @Test
+    void leavesThePlayerUncheckedWhenTheServerAddsAnArchetypeBlock() throws Exception {
+        NbtMap archetype = NbtMap.builder().putString("type", "door_block").build();
+        BlockPropertyData door = new BlockPropertyData("cubecraft:pipe", pipe().getProperties().toBuilder().putCompound("vanilla_block_data", VANILLA_BLOCK_DATA.toBuilder().putCompound("block_archetype", archetype).build()).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(door)));
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+        assertNull(Boar.getInstance().getPlayerManager().get(session));
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertTrue(log.contains("cubecraft:pipe: it has the block archetype door_block, whose block class Boar does not know"), log);
+        assertTrue(log.contains("Boar does not check Tester, since it does not know the client's block runtime IDs"), log);
+        this.logged.reset();
+        this.readItemsOnTheClient();
+        this.assertNothingFailed();
+    }
+
     // With hashed IDs, Boar keeps the runtime ID of each block it cannot read, so it can send the block back.
     @Test
     void keepsMitigationsOnWhenItCannotReadTheCustomBlocks() throws Exception {

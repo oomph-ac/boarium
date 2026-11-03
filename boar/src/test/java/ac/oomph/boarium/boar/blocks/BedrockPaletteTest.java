@@ -579,6 +579,133 @@ class BedrockPaletteTest {
         }
     }
 
+    // pipe, with a block_archetype compound in its vanilla_block_data
+    private static BlockPropertyData archetypePipe(NbtMap archetype) {
+        return new BlockPropertyData("cubecraft:pipe", pipe().getProperties().toBuilder().putCompound("vanilla_block_data", VANILLA_BLOCK_DATA.toBuilder().putCompound("block_archetype", archetype).build()).build());
+    }
+
+    // The client makes a door archetype block a vanilla door, whose own states come before the pipe's, so Boar cannot read the block.
+    @Test
+    void anArchetypeBlockIsUnread() throws IOException {
+        BlockPropertyData door = archetypePipe(NbtMap.builder().putString("type", "door_block").build());
+        assertTrue(BedrockPalette.runtimeIdsUnknown(BedrockPalette.mappingInfo(startGame(false, door))));
+        BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, door, lamp()));
+        assertFalse(BedrockPalette.runtimeIdsUnknown(hashed));
+        assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build())) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:lamp", state("level", 0))) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(hashed.isKnownRawId(hashed.fromIntermediary().applyAsInt(SORTED_STONE)));
+
+        // The client ignores a type it does not know, such as one of a later version, and a type that is not a string.
+        List<NbtMap> pipeStates = new ArrayList<>();
+        for (byte lit = 0; lit <= 1; lit++) {
+            for (String facing : List.of("north", "east", "south", "west")) {
+                pipeStates.add(NbtMap.builder().putString("facing", facing).putByte("lit", lit).build());
+            }
+        }
+        assertStatesBeforeStone(archetypePipe(NbtMap.builder().putString("type", "wall_foliage_block").build()), pipeStates);
+        assertStatesBeforeStone(archetypePipe(NbtMap.builder().putString("type", "Door_block").build()), pipeStates);
+        assertStatesBeforeStone(archetypePipe(NbtMap.builder().putInt("type", 3).build()), pipeStates);
+        // It reads block_archetype only in vanilla_block_data.
+        assertStatesBeforeStone(new BlockPropertyData("cubecraft:pipe", pipe().getProperties().toBuilder().putCompound("block_archetype", NbtMap.builder().putString("type", "door_block").build()).build()), pipeStates);
+    }
+
+    @Test
+    void warnsOnceOfAnArchetypeBlock() {
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            BedrockPalette.mappingInfo(startGame(false, archetypePipe(NbtMap.builder().putString("type", "stair_block").build()), lamp()));
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("cubecraft:pipe: it has the block archetype stair_block, whose block class Boar does not know", -1).length - 1, log);
+        assertFalse(log.contains("cubecraft:lamp"), log);
+    }
+
+    // A block of a vanilla name gives the vanilla block its properties and the states of its traits, which the vanilla block does not have, so its runtime IDs change.
+    @Test
+    void aVanillaBlockWithNewStatesIsUnread() throws IOException {
+        String gate = "minecraft:fence_gate";
+        assertTrue(table.states(table.firstIndex(gate)).containsKey("minecraft:cardinal_direction"));
+        assertFalse(table.states(table.firstIndex(gate)).containsKey("minecraft:facing_direction"));
+        BlockPropertyData withProperty = block("minecraft:stone", property("level", NbtType.INT, List.of(0, 1, 2)));
+        BlockPropertyData withTrait = new BlockPropertyData(gate, block(gate).getProperties().toBuilder().putList("traits", NbtType.COMPOUND, direction("facing_direction")).build());
+        for (BlockPropertyData merged : List.of(withProperty, withTrait)) {
+            assertTrue(BedrockPalette.runtimeIdsUnknown(BedrockPalette.mappingInfo(startGame(false, merged, pipe()))), merged.getName());
+            BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, merged, pipe()));
+            assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build())) > BedrockPalette.UNKNOWN_ID, merged.getName());
+        }
+        // The client skips a copy without vanilla_block_data before it adds anything.
+        assertSame(BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false))), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(withProperty)))));
+    }
+
+    // A trait whose states the vanilla block already has keeps the vanilla block's states and runtime IDs, so Boar logs it once and keeps the vanilla block.
+    @Test
+    void aVanillaBlockWithItsOwnTraitStatesIsKept() {
+        String gate = "minecraft:fence_gate";
+        BlockPropertyData withTrait = new BlockPropertyData(gate, block(gate).getProperties().toBuilder().putList("traits", NbtType.COMPOUND, direction("cardinal_direction")).build());
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            for (boolean hashed : new boolean[]{false, true}) {
+                assertSame(BedrockPalette.of(BedrockPalette.mappingInfo(startGame(hashed))), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(hashed, withTrait, withTrait))));
+            }
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        // Once for each of the two palettes
+        assertEquals(2, log.split("vanilla block " + gate + " traits whose states it already has", -1).length - 1, log);
+    }
+
+    // The client keeps the last copy of a vanilla name, so a copy with a property that a plain copy follows adds nothing.
+    @Test
+    void theLastCopyOfAVanillaBlockCounts() {
+        BlockPropertyData withProperty = block("minecraft:stone", property("level", NbtType.INT, List.of(0, 1, 2)));
+        assertSame(BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false))), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false, withProperty, block("minecraft:stone")))));
+        assertTrue(BedrockPalette.runtimeIdsUnknown(BedrockPalette.mappingInfo(startGame(false, block("minecraft:stone"), withProperty))));
+    }
+
+    // The client runs an archetype's factory only for a new name, so a vanilla block with an archetype keeps its states.
+    @Test
+    void aVanillaBlockIgnoresItsArchetype() {
+        BlockPropertyData stairs = new BlockPropertyData("minecraft:oak_stairs", NbtMap.builder().putCompound("vanilla_block_data", VANILLA_BLOCK_DATA.toBuilder().putCompound("block_archetype", NbtMap.builder().putString("type", "stair_block").build()).build()).build());
+        for (boolean hashed : new boolean[]{false, true}) {
+            assertSame(BedrockPalette.of(BedrockPalette.mappingInfo(startGame(hashed))), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(hashed, stairs))));
+        }
+    }
+
+    @Test
+    void warnsOnceOfAVanillaBlockWithComponents() {
+        NbtMap collision = NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).build()).build();
+        BlockPropertyData withComponents = new BlockPropertyData("minecraft:dirt", block("minecraft:dirt").getProperties().toBuilder().putCompound("components", collision).build());
+        BlockPropertyData withPermutations = new BlockPropertyData("minecraft:sand", block("minecraft:sand").getProperties().toBuilder().putList("permutations", NbtType.COMPOUND, NbtMap.builder().putCompound("components", collision).build()).build());
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            assertSame(BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false))), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false, withComponents, withComponents, withPermutations, block("minecraft:gravel")))));
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("vanilla block minecraft:dirt components or permutations", -1).length - 1, log);
+        assertEquals(1, log.split("vanilla block minecraft:sand components or permutations", -1).length - 1, log);
+        // An empty components compound, as block() writes, is none.
+        assertFalse(log.contains("minecraft:gravel"), log);
+    }
+
+    private static NbtMap direction(String... states) {
+        NbtMapBuilder enabled = NbtMap.builder();
+        for (String state : states) {
+            enabled.putByte(state, (byte) 1);
+        }
+        return NbtMap.builder().putString("name", "minecraft:placement_direction").putCompound("enabled_states", enabled.build()).build();
+    }
+
     @Test
     void playersWithTheSameBlocksShareOnePalette() {
         BedrockPalette first = BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false, pipe(), lamp())));

@@ -12,6 +12,7 @@ import it.unimi.dsi.fastutil.ints.Int2ObjectMap;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.ints.IntList;
+import org.cloudburstmc.nbt.NbtList;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
@@ -222,29 +223,40 @@ public final class BedrockPalette {
     private static BedrockPalette build(Key key) {
         // As BlockDefinitionGroup::digestServerBlockProperties: it skips a block without a vanilla_block_data compound before it reads the block's properties, so the block has no states, and an earlier block of its name stays. Of the other blocks, it keeps the last of a name.
         Map<String, BlockPropertyData> byName = new LinkedHashMap<>();
+        Map<String, BlockPropertyData> vanilla = new LinkedHashMap<>();
         Set<String> skipped = new LinkedHashSet<>();
         for (BlockPropertyData data : key.blocks()) {
+            boolean read = data.getProperties().get("vanilla_block_data") instanceof NbtMap;
+            // A block of a vanilla name: the client adds its traits and properties to that vanilla block, since the name is in the minecraft namespace.
             if (TABLE.firstIndex(data.getName()) >= 0) {
-                continue;
-            }
-            if (data.getProperties().get("vanilla_block_data") instanceof NbtMap) {
+                if (read) {
+                    vanilla.put(data.getName(), data);
+                }
+            } else if (read) {
                 byName.put(data.getName(), data);
             } else {
                 skipped.add(data.getName());
             }
         }
-        int warned = 0;
-        for (String name : skipped) {
-            if (++warned > MAX_WARNED_NAMES) {
-                break;
-            }
-            LOG.warn("A copy of custom block {} has no vanilla_block_data compound, so the client skips that copy, and so does Boar{}", name, warned == MAX_WARNED_NAMES ? ", and logs no more skipped blocks of this palette" : "");
-        }
+        warn(skipped, "A copy of custom block {} has no vanilla_block_data compound, so the client skips that copy, and so does Boar{}");
         List<CustomBlock> blocks = new ArrayList<>();
         CustomCollision.Budget collisionBudget = new CustomCollision.Budget();
         CustomCollision.Budget componentsBudget = new CustomCollision.Budget();
         long states = 0;
         try {
+            Set<String> merged = new LinkedHashSet<>();
+            Set<String> withComponents = new LinkedHashSet<>();
+            for (BlockPropertyData data : vanilla.values()) {
+                if (CustomBlock.keepsVanillaStates(data, TABLE.states(TABLE.firstIndex(data.getName())))) {
+                    merged.add(data.getName());
+                }
+                if (data.getProperties().get("components") instanceof NbtMap components && !components.isEmpty()
+                        || data.getProperties().get("permutations") instanceof NbtList<?> permutations && !permutations.isEmpty()) {
+                    withComponents.add(data.getName());
+                }
+            }
+            warn(merged, "StartGame gives vanilla block {} traits whose states it already has, so the client keeps its states, and so does Boar{}");
+            warn(withComponents, "StartGame gives vanilla block {} components or permutations, which the client adds to that block and which can change its collision shape, but Boar keeps the vanilla shape{}");
             for (BlockPropertyData data : byName.values()) {
                 CustomBlock block = CustomBlock.of(data, collisionBudget, componentsBudget);
                 states += block.stateCount();
@@ -257,6 +269,17 @@ public final class BedrockPalette {
         } catch (IllegalArgumentException e) {
             LOG.error("StartGame has custom blocks Boar cannot read ({}), so Boar treats {} as unknown", e.getMessage(), key.hashed() ? "their block IDs" : "every block ID");
             return key.hashed() ? Vanilla.UNREAD_HASHED : Vanilla.UNKNOWN;
+        }
+    }
+
+    // Logs each of these block names with this message, which takes the name and a suffix for the last name logged, up to MAX_WARNED_NAMES of them
+    private static void warn(Set<String> names, String message) {
+        int warned = 0;
+        for (String name : names) {
+            if (++warned > MAX_WARNED_NAMES) {
+                break;
+            }
+            LOG.warn(message, name, warned == MAX_WARNED_NAMES ? ", and logs no more such blocks of this palette" : "");
         }
     }
 
