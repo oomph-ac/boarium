@@ -26,8 +26,9 @@ import java.util.TreeMap;
  * @param traitStates how many of the keys its traits add
  * @param placementFilter whether it or any of its permutations has a minecraft:placement_filter component
  * @param collision each state's collision boxes
+ * @param components each state's friction, replaceability and destroy time
  */
-record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int traitStates, boolean placementFilter, int stateCount, CustomCollision collision) {
+record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int traitStates, boolean placementFilter, int stateCount, CustomCollision collision, CustomComponents components) {
     // BlockType::createBlockPermutations makes a permutation for each value of the lowest 16 bits.
     private static final int PERMUTATION_BITS = 16;
     // Past 32 bits, the client's 32-bit shifts wrap around, so a later property reads the bits of the first ones, which Boar does not follow.
@@ -40,8 +41,15 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         return of(data, new CustomCollision.Budget());
     }
 
-    // Throws IllegalArgumentException when Boar cannot make the block's states as the client does.
-    static CustomBlock of(BlockPropertyData data, CustomCollision.Budget budget) {
+    static CustomBlock of(BlockPropertyData data, CustomCollision.Budget collisionBudget) {
+        return of(data, collisionBudget, new CustomCollision.Budget());
+    }
+
+    /**
+     * Throws IllegalArgumentException when Boar cannot make the block's states as the client does.
+     * The collision and the other components each have a budget of their own, so that a block's friction cannot leave a later block's boxes guessed.
+     */
+    static CustomBlock of(BlockPropertyData data, CustomCollision.Budget collisionBudget, CustomCollision.Budget componentsBudget) {
         String name = data.getName();
         List<String> keys = new ArrayList<>();
         List<NbtList<?>> values = new ArrayList<>();
@@ -77,7 +85,9 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         for (int radix : radices) {
             states *= radix;
         }
-        return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), traitStates, placementFilter(data.getProperties()), states, CustomCollision.of(keys, values, radices, states, data.getProperties(), budget));
+        CustomCollision collision = CustomCollision.of(keys, values, radices, states, data.getProperties(), collisionBudget);
+        CustomComponents components = CustomComponents.of(keys, values, radices, states, data.getProperties(), componentsBudget);
+        return new CustomBlock(name, List.copyOf(keys), List.copyOf(values), traitStates, placementFilter(data.getProperties()), states, collision, components);
     }
 
     private static boolean placementFilter(NbtMap properties) {

@@ -342,6 +342,56 @@ class BedrockPaletteTest {
         }
     }
 
+    // An open path is icy and can be built over, and no state can be mined.
+    @Test
+    void customStatesHaveTheirBlocksFrictionReplaceableAndDestroyTime() throws IOException {
+        NbtMap icy = NbtMap.builder().putCompound("minecraft:friction", NbtMap.builder().putFloat("value", 0.02F).build()).putCompound("minecraft:replaceable", NbtMap.EMPTY).build();
+        BlockPropertyData path = new BlockPropertyData("cubecraft:path", NbtMap.builder()
+                .putList("properties", NbtType.COMPOUND, property("open", NbtType.BYTE, List.of((byte) 0, (byte) 1)))
+                .putCompound("components", NbtMap.builder().putCompound("minecraft:destructible_by_mining", NbtMap.builder().putFloat("value", -1).build()).build())
+                .putList("permutations", NbtType.COMPOUND, NbtMap.builder().putString("condition", "q.block_state('open')").putCompound("components", icy).build())
+                .putCompound("vanilla_block_data", VANILLA_BLOCK_DATA)
+                .build());
+        for (boolean hashed : new boolean[]{false, true}) {
+            BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(hashed, path));
+            List<Integer> runtimeIds = hashed
+                    ? List.of(referenceHash("cubecraft:path", NbtMap.builder().putByte("open", (byte) 0).build()), referenceHash("cubecraft:path", NbtMap.builder().putByte("open", (byte) 1).build()))
+                    : customRuntimeIds(info);
+            BoarBlockState closed = BedrockState.FACTORY.create(info.toIntermediary().applyAsInt(runtimeIds.get(0)), null, 0);
+            BoarBlockState opened = BedrockState.FACTORY.create(info.toIntermediary().applyAsInt(runtimeIds.get(1)), null, 0);
+            assertEquals(0.6F, closed.getFriction());
+            assertFalse(closed.isReplaceable(null));
+            assertEquals(1 - 0.02F, opened.getFriction());
+            assertTrue(opened.isReplaceable(null));
+            assertEquals(-1, opened.block().destroyTime());
+        }
+        // A state of no custom block has the friction of a block Boar does not know.
+        assertEquals(0.6F, BedrockState.FACTORY.create(BedrockPalette.UNKNOWN_ID, null, 0).getFriction());
+    }
+
+    @Test
+    void warnsOnceForABlockWithComponentsItCannotRead() {
+        NbtMap icy = NbtMap.builder().putCompound("minecraft:friction", NbtMap.builder().putFloat("value", 0.02F).build()).build();
+        NbtMap permutation = NbtMap.builder().putString("condition", "q.cardinal_facing == 2").putCompound("components", icy).build();
+        BlockPropertyData pipe = new BlockPropertyData("cubecraft:pipe", pipe().getProperties().toBuilder().putList("permutations", NbtType.COMPOUND, permutation).build());
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            BedrockPalette palette = new BedrockPalette(false, List.of(CustomBlock.of(pipe)), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, BedrockPalette.MAX_CUSTOM_IDS));
+            BlockMappingInfo info = palette.mappingInfo();
+            for (int runtimeId : customRuntimeIds(info)) {
+                info.toIntermediary().applyAsInt(runtimeId);
+            }
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        String warning = "Boar may not predict the friction, replaceability or destroy time of some states of custom block cubecraft:pipe (Boar cannot read the permutation condition \"q.cardinal_facing == 2\")";
+        assertEquals(1, log.split(Pattern.quote(warning), -1).length - 1, log);
+        assertFalse(log.contains("shape"), log);
+    }
+
     // The nth runtime ID from 0x5EED0000 up that is no vanilla network hash
     private static int unknownHash(int n) {
         int hash = 0x5EED0000 - 1;

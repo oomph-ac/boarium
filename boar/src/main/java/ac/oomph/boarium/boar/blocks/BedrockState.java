@@ -27,7 +27,7 @@ import java.util.Set;
 /**
  * A Bedrock block state for Boar, answered from the Bedrock block table.
  * A custom state's block is its custom block's CustomBlockType, and that of any other state past the vanilla palette is UNKNOWN_BLOCK. Each keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
- * A custom state has its block's collision boxes from {@link BedrockPalette}, and any other ID past the palette is a full solid 1x1x1 block.
+ * A custom state has its block's collision boxes, friction and replaceability from {@link BedrockPalette}, and any other ID past the palette is a full solid 1x1x1 block.
  *
  * @param intermediaryId the palette index, or an ID past it from {@link BedrockPalette}
  */
@@ -90,11 +90,11 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         intermediaryId = intermediaryId >= 0 && intermediaryId < BedrockPalette.END_ID ? intermediaryId : AIR;
     }
 
-    // Honey, slime and beds get Boar's own state classes.
+    // Honey, slime and beds get Boar's own state classes, and a state past the vanilla palette gets its custom block's friction.
     private static BoarBlockState create(int id, Vector3i position, int layer) {
         BedrockState delegate = new BedrockState(id, position, layer);
         if (!delegate.isVanilla()) {
-            return new VanillaBoarBlockState(delegate);
+            return new CustomState(delegate);
         }
         return switch (CLASSES[delegate.intermediaryId]) {
             case HONEY -> new HoneyBlockState(delegate);
@@ -190,7 +190,10 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
 
     @Override
     public boolean isReplaceable(BoarPlayer player) {
-        return this.isVanilla() && REPLACEABLE.get(this.intermediaryId);
+        if (this.isVanilla()) {
+            return REPLACEABLE.get(this.intermediaryId);
+        }
+        return this.intermediaryId < BedrockPalette.UNKNOWN_ID && BedrockPalette.customReplaceable(this.intermediaryId);
     }
 
     @Override
@@ -202,6 +205,18 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
     @Override
     public BoarBlockState applyConnectionShape(BoarPlayer player, BoarBlockState self, Vector3i pos) {
         return self;
+    }
+
+    // Boar keeps friction in its state classes, not in the delegate.
+    private static final class CustomState extends VanillaBoarBlockState {
+        CustomState(BedrockState delegate) {
+            super(delegate);
+        }
+
+        @Override
+        public float getFriction() {
+            return BedrockPalette.customFriction(this.intermediaryId());
+        }
     }
 
     // The block of every state past the vanilla palette that has no custom ID. Its hardness of 0 only tells Boar that it can be broken.

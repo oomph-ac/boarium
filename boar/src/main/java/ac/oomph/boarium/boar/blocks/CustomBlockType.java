@@ -9,7 +9,6 @@ import java.util.List;
 
 /**
  * Boar's block of a custom block with custom IDs, which every palette with that block shares, as it shares the custom IDs.
- * Its hardness of 0 only tells Boar that it can be broken.
  */
 final class CustomBlockType implements Block {
     // Bounds the states compared for one block, which a real block's traits never come near.
@@ -67,7 +66,7 @@ final class CustomBlockType implements Block {
 
     @Override
     public float destroyTime() {
-        return 0;
+        return this.block.components().destroyTime();
     }
 
     // Permutation 0, where every state has its first value: BlockType::createBlockPermutations makes it the default state.

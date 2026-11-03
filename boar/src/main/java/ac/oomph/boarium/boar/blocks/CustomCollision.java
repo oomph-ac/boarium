@@ -36,7 +36,7 @@ final class CustomCollision {
     private static final float[] X_TURN = {1, 0, 0, 0, 0, 1, 0, -1, 0};
     private static final float[] Y_TURN = {0, 0, -1, 0, 1, 0, 1, 0, 0};
     private static final float[] Z_TURN = {0, 1, 0, -1, 0, 0, 0, 0, 1};
-    private static final String SPENT = "Boar has spent its time on the custom blocks of this StartGame";
+    static final String SPENT = "Boar has spent its time on the custom blocks of this StartGame";
 
     static {
         SHAPES.put(new Corners(new float[]{0, 0, 0, 1, 1, 1}), FULL_CUBE);

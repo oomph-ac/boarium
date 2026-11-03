@@ -241,11 +241,12 @@ public final class BedrockPalette {
             LOG.warn("A copy of custom block {} has no vanilla_block_data compound, so the client skips that copy, and so does Boar{}", name, warned == MAX_WARNED_NAMES ? ", and logs no more skipped blocks of this palette" : "");
         }
         List<CustomBlock> blocks = new ArrayList<>();
-        CustomCollision.Budget budget = new CustomCollision.Budget();
+        CustomCollision.Budget collisionBudget = new CustomCollision.Budget();
+        CustomCollision.Budget componentsBudget = new CustomCollision.Budget();
         long states = 0;
         try {
             for (BlockPropertyData data : byName.values()) {
-                CustomBlock block = CustomBlock.of(data, budget);
+                CustomBlock block = CustomBlock.of(data, collisionBudget, componentsBudget);
                 states += block.stateCount();
                 if (key.hashed() && states > MAX_STATES) {
                     throw new IllegalArgumentException("Boar hashes no more than " + MAX_STATES + " custom states");
@@ -306,6 +307,15 @@ public final class BedrockPalette {
         return CUSTOM_IDS.faceSturdy(id);
     }
 
+    // The friction of a custom ID, or that of a block Boar does not know when no custom block has it
+    static float customFriction(int id) {
+        return CUSTOM_IDS.friction(id);
+    }
+
+    static boolean customReplaceable(int id) {
+        return CUSTOM_IDS.replaceable(id);
+    }
+
     static Block customType(int id) {
         return CUSTOM_IDS.type(id);
     }
@@ -349,13 +359,14 @@ public final class BedrockPalette {
         }
     }
 
-    // Logs the custom block at this index in customBlocks, then in cappedBlocks, the first time it is read, when Boar takes some of its states for full cubes.
+    // Logs the custom block at this index in customBlocks, then in cappedBlocks, the first time it is read, when Boar takes some of its states for full cubes or may not predict their friction, replaceability or destroy time.
     private void warnBlock(int index) {
         if (this.warnedBlocks[index] || this.warnedNames >= MAX_WARNED_NAMES) {
             return;
         }
-        String guess = index < this.customBlocks.length ? this.customBlocks[index].collision().guess() : "Boar has no custom IDs left for it";
-        if (guess == null) {
+        String shape = index < this.customBlocks.length ? this.customBlocks[index].collision().guess() : "Boar has no custom IDs left for it";
+        String components = index < this.customBlocks.length ? this.customBlocks[index].components().guess() : null;
+        if (shape == null && components == null) {
             return;
         }
         synchronized (this.warnedBlocks) {
@@ -365,7 +376,13 @@ public final class BedrockPalette {
             this.warnedBlocks[index] = true;
             this.warnedNames++;
             CustomBlock block = index < this.customBlocks.length ? this.customBlocks[index] : this.cappedBlocks[index - this.customBlocks.length];
-            LOG.warn("Boar does not know the shape of custom block {} ({}), so it treats the states it cannot read as full 1x1x1 blocks{}", block.name(), guess, this.warnedNames == MAX_WARNED_NAMES ? ", and logs no more custom blocks of this palette" : "");
+            String last = this.warnedNames == MAX_WARNED_NAMES ? ", and logs no more custom blocks of this palette" : "";
+            String unknownComponents = "the friction, replaceability or destroy time of some states of custom block " + block.name() + " (" + components + ")";
+            if (shape == null) {
+                LOG.warn("Boar may not predict {}{}", unknownComponents, last);
+            } else {
+                LOG.warn("Boar does not know the shape of custom block {} ({}), so it treats the states it cannot read as full 1x1x1 blocks{}{}", block.name(), shape, components == null ? "" : ". It also may not predict " + unknownComponents, last);
+            }
         }
     }
 
@@ -602,6 +619,18 @@ public final class BedrockPalette {
             Assigned assigned = this.assigned;
             int i = assigned.blockOf(id);
             return i < 0 || assigned.blocks()[i].collision().faceSturdy(id - assigned.starts()[i]);
+        }
+
+        float friction(int id) {
+            Assigned assigned = this.assigned;
+            int i = assigned.blockOf(id);
+            return i < 0 ? CustomComponents.DEFAULT_FRICTION : assigned.blocks()[i].components().friction(id - assigned.starts()[i]);
+        }
+
+        boolean replaceable(int id) {
+            Assigned assigned = this.assigned;
+            int i = assigned.blockOf(id);
+            return i >= 0 && assigned.blocks()[i].components().replaceable(id - assigned.starts()[i]);
         }
 
         // Boar's block of the custom block with this custom ID, or null

@@ -1414,6 +1414,125 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // A click on a custom block with minecraft:replaceable, like grass, places the stone in its place, as the client does.
+    @Test
+    void placesABlockIntoACustomGrass() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap components = NbtMap.builder()
+                .putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).build())
+                .putCompound("minecraft:replaceable", NbtMap.EMPTY)
+                .build();
+        // cubecraft:tall_grass sorts after stone and air by name hash, so it moves neither.
+        BlockPropertyData grass = new BlockPropertyData("cubecraft:tall_grass", NbtMap.builder().putCompound("components", components).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(grass)));
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+        int grassId = this.customRuntimeId(session, player);
+
+        // A stone floor at Y 0 with the grass on it, two blocks east of the player's feet
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        Vector3i feet = Vector3i.from((chunkX << 4) + 3, 1, (chunkZ << 4) + 5);
+        Vector3i clicked = feet.add(2, 0, 0);
+        int[] blocks = new int[4096];
+        Arrays.fill(blocks, AIR_RUNTIME_ID);
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                blocks[x << 8 | z << 4] = STONE_RUNTIME_ID;
+            }
+        }
+        blocks[(clicked.getX() & 15) << 8 | (clicked.getZ() & 15) << 4 | 1] = grassId;
+        this.sendChunk(chunkX, chunkZ, subChunk(0, blocks));
+        awaitOnLoop(session, () -> player.compensatedWorld.getBlockState(clicked, 0).block().toString().equals("cubecraft:tall_grass"));
+
+        List<String> violations = this.violationsWhile(player, () -> {
+            for (int tick = 1; tick <= 5; tick++) {
+                this.answerLatency();
+                PlayerAuthInputPacket input = authInput();
+                input.setPosition(eyes(feet));
+                input.setDelta(Vector3f.from(0, -0.0784F, 0));
+                input.setTick(tick);
+                this.client.session.get().sendPacket(input);
+                Thread.sleep(50);
+            }
+            this.client.session.get().sendPacket(place(clicked, eyes(feet), stones(64, 1)));
+            InventoryTransactionPacket placed = null;
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            for (BedrockPacket packet; placed == null && (packet = this.server.received.poll(deadline - System.nanoTime(), TimeUnit.NANOSECONDS)) != null; ) {
+                if (packet instanceof InventoryTransactionPacket transaction && transaction.getTransactionType() == InventoryTransactionType.ITEM_USE) {
+                    placed = transaction;
+                }
+            }
+            assertNotNull(placed, "the placement did not reach the server");
+            return null;
+        });
+        assertEquals(List.of(), violations);
+        assertEquals("minecraft:stone", onLoop(session, () -> player.compensatedWorld.getBlockState(clicked, 0).block().toString()));
+        assertTrue(onLoop(session, () -> player.compensatedWorld.getBlockState(clicked.add(0, 1, 0), 0).isAir()));
+        this.assertNothingFailed();
+    }
+
+    // A custom block whose minecraft:friction value is 0.02 is as slippery as ice to the client, whose friction is 1 minus the value.
+    // The player walks east on a floor of it, then lets go and slides, with no violations.
+    @Test
+    void walksAndStopsOnACustomIceFloor() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap components = NbtMap.builder().putCompound("minecraft:friction", NbtMap.builder().putFloat("value", 0.02F).build()).build();
+        BlockPropertyData ice = new BlockPropertyData("cubecraft:tiles", NbtMap.builder().putCompound("components", components).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(ice)));
+        BoarPlayer player = this.withMitigations(session);
+        int iceId = this.customRuntimeId(session, player);
+
+        float friction = 1 - 0.02F;
+        // Where the player is when it lets go, and where it ends
+        float[] x = new float[2];
+        Vector3i[] feet = new Vector3i[1];
+        List<String> violations = this.violationsWhile(player, () -> {
+            feet[0] = this.standOnAFloor(session, AIR_RUNTIME_ID, iceId, 5);
+            // As the client moves on a block of this friction (GroundTravelTypeSystemImpl::_calcGroundFrictionV2): its input times 0.98 at speed 0.1 times (0.546 / (friction * 0.91))^3 a tick, and velocity times friction * 0.91 after each tick.
+            float drag = friction * 0.91F;
+            float ratio = 0.54600006F / drag;
+            float speed = ratio * ratio * ratio * 0.1F;
+            x[1] = feet[0].getX() + 0.5F;
+            Vec3 velocity = Vec3.ZERO.clone();
+            long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
+            for (int tick = 6, walked = 0; walked < 60; tick++, walked++) {
+                boolean walking = walked < 20;
+                if (walking) {
+                    velocity = velocity.add(MathUtil.getInputVector(new Vec3(0, 0, 0.3F * 0.98F), speed, -90));
+                }
+                x[1] += velocity.x;
+                velocity = velocity.multiply(drag, 1, drag);
+                if (walked == 19) {
+                    x[0] = x[1];
+                }
+                this.answerLatency();
+                PlayerAuthInputPacket input = authInput();
+                input.setRotation(Vector3f.from(0, -90, -90));
+                input.setPosition(Vector3f.from(x[1], feet[0].getY() + 1.62001F, feet[0].getZ() + 0.5F));
+                if (walking) {
+                    input.getInputData().add(PlayerAuthInputData.UP);
+                    input.setMotion(Vector2f.from(0, 0.3F));
+                    input.setRawMoveVector(Vector2f.from(0, 0.3F));
+                    input.setAnalogMoveVector(Vector2f.from(0, 0.3F));
+                }
+                input.setDelta(Vector3f.from(velocity.x, -0.0784F, 0));
+                input.setTick(tick);
+                this.client.session.get().sendPacket(input);
+                Thread.sleep(50);
+            }
+            awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + 60);
+            return null;
+        });
+        // On ice the player slides more than 0.4 blocks after it lets go, where on stone it would stop within 0.08.
+        assertTrue(x[1] - x[0] > 0.4F, "slid " + (x[1] - x[0]));
+        assertEquals(List.of(), violations);
+        assertEquals(friction, onLoop(session, () -> player.compensatedWorld.getBlockState(feet[0].sub(0, 1, 0), 0).getFriction()));
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        this.assertNothingFailed();
+    }
+
     // A server sends the item of its custom block named after the block, with version NONE, as Geyser and dragonfly do. The client places the block's first state, and so does Boar, before the server sends the block.
     @Test
     void standsOnTheCustomBlockItPlacedBeforeTheServerSendsIt() throws Exception {
