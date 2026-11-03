@@ -50,9 +50,9 @@ final class CustomCollision {
     /**
      * The collision of each state of a custom block.
      *
-     * @param keys the block's property names
-     * @param values each property's values
-     * @param radices how many permutations each property spans in the block's states, where the first property changes fastest from one state to the next
+     * @param keys the block's keys, as {@link CustomBlock} has them
+     * @param values each key's values
+     * @param radices how many permutations each key spans in the block's states, where the first key changes fastest from one state to the next
      */
     static CustomCollision of(List<String> keys, List<NbtList<?>> values, int[] radices, int stateCount, NbtMap properties, Budget budget) {
         if (!budget.take(stateCount)) {

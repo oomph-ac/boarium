@@ -32,7 +32,7 @@ final class BlockCondition {
     /**
      * The condition, or null when Boar cannot read it.
      *
-     * @param keys the block's property names, in the order of its states' values
+     * @param keys the block's keys, as {@link CustomBlock} has them
      * @param molangVersion the block's molangVersion, which the client takes as 0 when it is missing, not an int, or not from 0 to 13
      */
     static BlockCondition parse(String text, List<String> keys, int molangVersion) {

@@ -1134,6 +1134,32 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // The pipe's placement_direction trait gives it 4 states of minecraft:cardinal_direction, which move stone and air by 4.
+    @Test
+    void checksAPlayerWhoseServerSendsABlockWithTraits() throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap direction = NbtMap.builder().putString("name", "minecraft:placement_direction").putCompound("enabled_states", NbtMap.builder().putByte("cardinal_direction", (byte) 1).build()).putFloat("y_rotation_offset", 0).build();
+        BlockPropertyData pipe = new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("traits", NbtType.COMPOUND, direction).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(pipe)));
+        assertFalse(this.startGame.isBlockNetworkIdsHashed());
+        BoarPlayer player = this.withMitigations(session);
+        this.readItemsOnTheClient();
+        int air = AIR_RUNTIME_ID + 4;
+        int stone = STONE_RUNTIME_ID + 4;
+        assertEquals(air, player.mappingInfo.airId());
+
+        List<String> violations = this.violationsWhile(player, () -> this.standOnAFloor(session, air, stone, 20));
+        Vector3i floor = Vector3i.from((this.startGame.getPlayerPosition().getFloorX() & ~15) + 3, 0, (this.startGame.getPlayerPosition().getFloorZ() & ~15) + 5);
+        BoarBlockState floorState = onLoop(session, () -> player.compensatedWorld.getBlockState(floor, 0));
+        assertEquals("minecraft:stone", floorState.block().toString());
+        assertEquals(stone, floorState.definition(player).getRuntimeId());
+        assertFalse(BedrockPalette.runtimeIdsUnknown(player.mappingInfo));
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertTrue(onLoop(session, () -> player.onGround));
+        assertEquals(List.of(), violations);
+        this.assertNothingFailed();
+    }
+
     @Test
     void keepsMitigationsOnWhenItReadsEveryCustomBlock() throws Exception {
         TestBoar.mitigations(true);

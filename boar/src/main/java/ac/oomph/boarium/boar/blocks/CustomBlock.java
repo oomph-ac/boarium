@@ -19,10 +19,10 @@ import java.util.Map;
 import java.util.TreeMap;
 
 /**
- * A block that a server adds in StartGame's block properties, with its properties, from which {@link #state(int)} gives the states the client makes, in the client's order.
+ * A block that a server adds in StartGame's block properties, with its traits and properties, from which {@link #state(int)} gives the states the client makes, in the client's order.
  *
- * @param keys the property names, in the order of the block properties, where a name may be listed twice
- * @param values each property's values, of any NBT type
+ * @param keys the names of the states its traits add, then the property names in the order of the block properties, where a name may be listed twice
+ * @param values each key's values, of any NBT type
  * @param collision each state's collision boxes
  */
 record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int stateCount, CustomCollision collision) {
@@ -43,6 +43,12 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         List<String> keys = new ArrayList<>();
         List<NbtList<?>> values = new ArrayList<>();
         int bits = 0;
+        // BlockDefinitionGroup::registerBlockFromDefinition adds the states of the traits before those of the properties, so they take the lowest bits.
+        for (CustomTraits.State state : CustomTraits.states(name, data.getProperties())) {
+            bits += bits(state.values().size());
+            keys.add(state.name());
+            values.add(state.values());
+        }
         // As BlockDefinitionGroup::digestServerBlockProperties: it reads properties only from a list of compounds, skips a property without an "enum" list, and names a property without a string "name" "".
         if (data.getProperties().get("properties") instanceof NbtList<?> list && list.getType() == NbtType.COMPOUND) {
             for (Object element : list) {
@@ -56,7 +62,7 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
                 }
                 bits += bits(enumValues.size());
                 if (bits > MAX_BITS) {
-                    throw malformed(name, "its properties need more than " + MAX_BITS + " bits");
+                    throw malformed(name, "its states need more than " + MAX_BITS + " bits");
                 }
                 keys.add(property.get("name") instanceof String key ? key : "");
                 values.add(enumValues);
@@ -76,9 +82,9 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
     }
 
     /**
-     * How many permutations each property spans in the client's states. BlockType::addState gives each property the bits for its values, the first property the lowest bits.
-     * BlockType::createBlockPermutations makes a state for each value of the lowest 16 bits where every property that fits in them is in range.
-     * So the first property that does not fit spans every value of its bits below 16, and the properties after it span one.
+     * How many permutations each key spans in the client's states. BlockType::addState gives each key the bits for its values, the first key the lowest bits.
+     * BlockType::createBlockPermutations makes a state for each value of the lowest 16 bits where every key that fits in them is in range.
+     * So the first key that does not fit spans every value of its bits below 16, and the keys after it span one.
      */
     static int[] radices(List<NbtList<?>> values) {
         int[] radices = new int[values.size()];
@@ -96,8 +102,8 @@ record CustomBlock(String name, List<String> keys, List<NbtList<?>> values, int 
         return values.get(bits(values.size()) > PERMUTATION_BITS ? 0 : place);
     }
 
-    // The client lists the states in order of their permutation index, so the first property changes fastest.
-    // Of two properties with the same name, the state shows the last, as Block::buildSerializationId writes the properties in the order of the block properties.
+    // The client lists the states in order of their permutation index, so the first key changes fastest.
+    // Of two equal keys, the state shows the last, as Block::buildSerializationId writes the keys in the order of their IDs: those of the traits' built-in states are the lowest, then come the properties in list order.
     NbtMap state(int index) {
         Map<String, Object> state = new TreeMap<>(KEY_ORDER);
         int[] radices = radices(this.values);
