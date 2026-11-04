@@ -1368,6 +1368,51 @@ class BoarSessionTest {
         assertNotEquals(List.of(), lie.violations());
     }
 
+    // A cube at X 725 whose random_offset moves it -0.5 to 0.5 blocks on X stays in place on Windows, whose seed takes X in 64 bits, and stands a block west on Android, whose seed cuts it to 32 bits.
+    @Test
+    void walksAgainstAFarRandomOffsetCubeOnWindows() throws Exception {
+        List<Walk> walks = this.walkToAFarRandomOffsetCube(7, true, 725, 726);
+        assertEquals(List.of(), walks.get(0).violations());
+        assertNotEquals(List.of(), walks.get(1).violations());
+    }
+
+    @Test
+    void flagsAWindowsClientThatStopsAtTheCubeOfAndroid() throws Exception {
+        assertNotEquals(List.of(), this.walkToAFarRandomOffsetCube(7, true, 724).get(0).violations());
+    }
+
+    @Test
+    void walksAgainstAFarRandomOffsetCubeOnAndroid() throws Exception {
+        List<Walk> walks = this.walkToAFarRandomOffsetCube(1, false, 724, 725);
+        assertEquals(List.of(), walks.get(0).violations());
+        assertNotEquals(List.of(), walks.get(1).violations());
+    }
+
+    // Spawns a client of this DeviceOS in chunk 45, past X 686 where the two seeds start to differ, and walks east to stop at each of these faces in turn.
+    private List<Walk> walkToAFarRandomOffsetCube(int deviceOs, boolean wideSeed, int... faces) throws Exception {
+        TestBoar.mitigations(true);
+        NbtMap offset = NbtMap.builder().putCompound("x", offsetAxis(-8, 8)).putCompound("y", offsetAxis(0, 0)).putCompound("z", offsetAxis(0, 0)).build();
+        BlockPropertyData built = customBlock("cubecraft:reed", null, collisionBox(0, 0, 0, 16, 16, 16), null);
+        BlockPropertyData reed = new BlockPropertyData(built.getName(), built.getProperties().toBuilder()
+                .putCompound("components", built.getProperties().getCompound("components").toBuilder().putCompound("minecraft:random_offset", offset).build()).build());
+        Session session = this.spawn(login -> new AddsCustomBlocks(processors.apply(login), false, List.of(reed), 45 * 16 + 2.5F), deviceOs);
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertFalse(player.disableMitigations());
+        assertEquals(wideSeed, player.getSession().wideRandomOffsetSeed());
+        Vector3i wall = this.sendAWall(session, player, this.customRuntimeId(session, player), -1);
+        assertEquals(Vector3i.from(725, 1, 8), wall);
+
+        List<Walk> walks = new ArrayList<>();
+        for (int face : faces) {
+            Walk walk = walks.isEmpty() ? this.walkEast(session, player, wall, face) : this.walkEast(session, player, wall, face, walks.getLast().x(), 0, walks.getLast().nextTick());
+            assertEquals(face - 0.3F, walk.x(), 1e-6F);
+            walks.add(walk);
+        }
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        this.assertNothingFailed();
+        return walks;
+    }
+
     // One axis of a minecraft:random_offset as BlockRandomOffsetDescription's schema reads it: any value from min to max, in 1/16 of a block
     private static NbtMap offsetAxis(float min, float max) {
         return NbtMap.builder().putCompound("range", NbtMap.builder().putFloat("min", min).putFloat("max", max).build()).putInt("steps", 0).build();
@@ -2287,12 +2332,17 @@ class BoarSessionTest {
     }
 
     private Session spawn(Function<ClientLogin, Processor> processors) throws Exception {
+        return this.spawn(processors, 7);
+    }
+
+    private Session spawn(Function<ClientLogin, Processor> processors, int deviceOs) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         String addr = this.server.address();
         SessionSettings settings = new SessionSettings(null, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), processors);
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1), login -> this.session.complete(Session.login(login, transport, CODEC, addr, settings)));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.client.deviceOs = deviceOs;
         this.client.connect(this.group, this.listener.address());
         this.client.loginDone.get(10, TimeUnit.SECONDS);
 
@@ -2375,8 +2425,12 @@ class BoarSessionTest {
         return new BlockPropertyData("cubecraft:pipe", NbtMap.builder().putList("properties", NbtType.COMPOUND, open).putCompound("vanilla_block_data", VANILLA_BLOCK_DATA).build());
     }
 
-    // Boar's processor, with these custom blocks added to the StartGame the client is sent, and its hashed IDs set
-    private record AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks) implements Processor {
+    // Boar's processor, with these custom blocks added to the StartGame the client is sent, its hashed IDs set, and the player's X set to spawnX unless it is null
+    private record AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks, Float spawnX) implements Processor {
+        AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks) {
+            this(boar, hashedIds, blocks, null);
+        }
+
         @Override
         public Set<Integer> clientDecode() {
             return this.boar.clientDecode();
@@ -2396,6 +2450,10 @@ class BoarSessionTest {
         public void startGame(Session session, StartGamePacket startGame) {
             startGame.getBlockProperties().addAll(this.blocks);
             startGame.setBlockNetworkIdsHashed(this.hashedIds);
+            if (this.spawnX != null) {
+                Vector3f spawn = startGame.getPlayerPosition();
+                startGame.setPlayerPosition(Vector3f.from(this.spawnX, spawn.getY(), spawn.getZ()));
+            }
             this.boar.startGame(session, startGame);
         }
 

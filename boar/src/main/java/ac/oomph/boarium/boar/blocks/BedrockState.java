@@ -218,7 +218,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
             return BedrockPalette.customFriction(this.intermediaryId());
         }
 
-        // A random offset moves the boxes as if the block stood that many blocks away. For a player it uses the 32-bit X seed that boarium's sessions always give Boar.
+        // A random offset moves the boxes as if the block stood that many blocks away.
         @Override
         public List<Box> findCollision(BoarPlayer player, Vector3i pos, Box playerAABB, boolean checkAAB) {
             CustomComponents.RandomOffset offset = BedrockPalette.customOffset(this.intermediaryId());

@@ -299,7 +299,7 @@ class BedrockItemsTest {
 
     // A session whose client was sent this StartGame
     private static BoariumPlayerManager.BoariumNetworkSession session(List<ItemDefinition> items, StartGamePacket startGame) {
-        return new BoariumPlayerManager.BoariumNetworkSession(null, false, new BedrockItems.SessionItems(Definitions.items(items), BedrockPalette.mappingInfo(startGame)));
+        return new BoariumPlayerManager.BoariumNetworkSession(null, 0, new BedrockItems.SessionItems(Definitions.items(items), BedrockPalette.mappingInfo(startGame)));
     }
 
     private static StartGamePacket startGame(BlockPropertyData... blocks) {

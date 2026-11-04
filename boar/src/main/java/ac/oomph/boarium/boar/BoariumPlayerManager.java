@@ -99,7 +99,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected NetworkSession createNetworkSession(Session session) {
-        return new BoariumNetworkSession(session, deviceOs(session) == BuildPlatform.SONY.getId(), new BedrockItems.SessionItems(session.itemDefinitions(), this.getMappingInfo(session)));
+        return new BoariumNetworkSession(session, deviceOs(session.client().clientData()), new BedrockItems.SessionItems(session.itemDefinitions(), this.getMappingInfo(session)));
     }
 
     @Override
@@ -175,10 +175,10 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         return !this.mitigations;
     }
 
-    // The client data's DeviceOS, or 0 when it has none.
-    private static int deviceOs(Session session) {
+    // The client data's DeviceOS, or 0 (unknown) when it has none or it does not fit in an int.
+    static int deviceOs(byte[] clientData) {
         try {
-            return JsonUtil.parseJson(new String(session.client().clientData(), StandardCharsets.UTF_8)).get("DeviceOS") instanceof Number os ? os.intValue() : 0;
+            return JsonUtil.parseJson(new String(clientData, StandardCharsets.UTF_8)).get("DeviceOS") instanceof Number os && os.doubleValue() == os.intValue() ? os.intValue() : 0;
         } catch (JoseException e) {
             return 0;
         }
@@ -188,7 +188,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         return session.client().session().getPeer().getChannel();
     }
 
-    record BoariumNetworkSession(Session session, boolean playStation, BedrockItems.SessionItems items) implements NetworkSession {
+    record BoariumNetworkSession(Session session, int deviceOs, BedrockItems.SessionItems items) implements NetworkSession {
         @Override
         public String name() {
             return this.session.client().identity().displayName();
@@ -229,7 +229,13 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         // A PlayStation answers Boar's NetworkStackLatency with the timestamp times a thousand, not a million.
         @Override
         public boolean requiresPingMagnitude() {
-            return this.playStation;
+            return this.deviceOs == BuildPlatform.SONY.getId();
+        }
+
+        // Windows seeds random offsets from 64-bit X; Xbox is untested and assumed to match it, as in Boar.
+        @Override
+        public boolean wideRandomOffsetSeed() {
+            return this.deviceOs == BuildPlatform.UWP.getId() || this.deviceOs == BuildPlatform.WIN32.getId() || this.deviceOs == BuildPlatform.XBOX.getId();
         }
 
         // Boar asks this when the client stops answering its NetworkStackLatency packets; the client's answers sent before it spawned never reach Boar, so a slow login would look like that.

@@ -58,6 +58,8 @@ public final class TestClient {
     public final BlockingQueue<BedrockPacket> received = new LinkedBlockingQueue<>();
     public final CompletableFuture<BedrockClientSession> session = new CompletableFuture<>();
     public final CompletableFuture<Void> loginDone = new CompletableFuture<>();
+    // The client data's DeviceOS: 7 is Windows.
+    public int deviceOs = 7;
 
     // Knobs for tests of logins the proxy must turn away.
     KeyPair chainSigner = this.key;
@@ -169,7 +171,7 @@ public final class TestClient {
         LoginPacket login = new LoginPacket();
         login.setProtocolVersion(this.protocolVersion);
         login.setAuthPayload(this.sendToken ? new TokenPayload(this.sign(this.tokenClaims, this.chainSigner), this.authType) : new CertificateChainPayload(List.of(chain), this.authType));
-        login.setClientJwt(this.sign(Map.of("ThirdPartyName", this.name, "DeviceOS", 7, "GameVersion", this.codec.getMinecraftVersion()), this.clientDataSigner));
+        login.setClientJwt(this.sign(Map.of("ThirdPartyName", this.name, "DeviceOS", this.deviceOs, "GameVersion", this.codec.getMinecraftVersion()), this.clientDataSigner));
         return login;
     }
 
