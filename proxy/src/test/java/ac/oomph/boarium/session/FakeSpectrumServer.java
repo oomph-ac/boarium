@@ -20,6 +20,7 @@ import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.handler.codec.LengthFieldBasedFrameDecoder;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
+import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
@@ -118,7 +119,18 @@ public final class FakeSpectrumServer {
 
     // Sends one of the gophertunnel packets, with the decode flag or as bytes the proxy passes through.
     void send(String name, boolean decode) throws Exception {
-        this.send(this.connection.get(10, TimeUnit.SECONDS), gophertunnel.get(name), decode);
+        this.send(this.connection.get(10, TimeUnit.SECONDS), this.gophertunnelPacket(name), decode);
+    }
+
+    // gophertunnel wrote its packets for protocol 1001, so a server on another protocol sends them decoded and encoded again by Cloudburst.
+    private byte[] gophertunnelPacket(String name) {
+        byte[] bytes = gophertunnel.get(name);
+        if (this.codec.getProtocolVersion() == Bedrock_v1001.CODEC.getProtocolVersion()) {
+            return bytes;
+        }
+        ByteBuf in = Unpooled.wrappedBuffer(bytes);
+        int id = VarInts.readUnsignedInt(in) & SpectrumPackets.PACKET_ID_MASK;
+        return this.encode(Bedrock_v1001.CODEC.tryDecode(Bedrock_v1001.CODEC.createHelper(), in, id, PacketRecipient.CLIENT));
     }
 
     // Sends a packet the proxy is asked to decode, encoded by Cloudburst rather than gophertunnel.
@@ -145,7 +157,7 @@ public final class FakeSpectrumServer {
         for (Object packet : packets) {
             byte[] body;
             if (packet instanceof String name) {
-                body = gophertunnel.get(name);
+                body = this.gophertunnelPacket(name);
             } else {
                 ByteBuf encoded = SpectrumPackets.encode(connection.alloc(), (SpectrumPacket) packet);
                 body = ByteBufUtil.getBytes(encoded);
@@ -202,13 +214,13 @@ public final class FakeSpectrumServer {
                     ByteBuf response = SpectrumPackets.encode(ctx.alloc(), new ConnectionResponse(RUNTIME_ID, UNIQUE_ID));
                     FakeSpectrumServer.this.send(ctx.channel(), ByteBufUtil.getBytes(response), true);
                     response.release();
-                    FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("StartGame"), true);
+                    FakeSpectrumServer.this.send(ctx.channel(), FakeSpectrumServer.this.gophertunnelPacket("StartGame"), true);
                     if (FakeSpectrumServer.this.items != null) {
                         ItemComponentPacket itemList = new ItemComponentPacket();
                         itemList.getItems().addAll(FakeSpectrumServer.this.items);
                         FakeSpectrumServer.this.send(ctx.channel(), FakeSpectrumServer.this.encode(itemList), true);
                     } else {
-                        FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("ItemComponent"), true);
+                        FakeSpectrumServer.this.send(ctx.channel(), FakeSpectrumServer.this.gophertunnelPacket("ItemComponent"), true);
                     }
                     if (FakeSpectrumServer.this.transferDuringSequence != null) {
                         ByteBuf transfer = SpectrumPackets.encode(ctx.alloc(), new Transfer(FakeSpectrumServer.this.transferDuringSequence));
@@ -231,8 +243,8 @@ public final class FakeSpectrumServer {
             }
             BedrockPacket packet = FakeSpectrumServer.this.codec.tryDecode(helper, body, id, PacketRecipient.SERVER);
             if (packet instanceof RequestChunkRadiusPacket) {
-                FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("ChunkRadiusUpdated"), true);
-                FakeSpectrumServer.this.send(ctx.channel(), gophertunnel.get("PlayStatus"), true);
+                FakeSpectrumServer.this.send(ctx.channel(), FakeSpectrumServer.this.gophertunnelPacket("ChunkRadiusUpdated"), true);
+                FakeSpectrumServer.this.send(ctx.channel(), FakeSpectrumServer.this.gophertunnelPacket("PlayStatus"), true);
             }
             FakeSpectrumServer.this.received.add(packet);
             if (packet instanceof SetLocalPlayerAsInitializedPacket && FakeSpectrumServer.this.closeAfterSpawn) {

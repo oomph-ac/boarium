@@ -30,6 +30,11 @@ public final class TestBoar {
         ((BoariumPlayerManager) Boar.getInstance().getPlayerManager()).mitigations = on;
     }
 
+    // Lets Boar warn again about players on a protocol it does not check.
+    public static void forgetWarnings() {
+        BoariumBoar.WARNED_PROTOCOLS.clear();
+    }
+
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {
         if (processors == null) {
             processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false);

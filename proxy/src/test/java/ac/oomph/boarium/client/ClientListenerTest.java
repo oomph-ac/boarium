@@ -1,5 +1,6 @@
 package ac.oomph.boarium.client;
 
+import ac.oomph.boarium.protocol.BedrockVersions;
 import io.netty.channel.EventLoopGroup;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -48,7 +49,7 @@ class ClientListenerTest {
 
     private void listen(boolean requireXbox, Duration loginTimeout) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival").playerCount(0).maximumPlayerCount(10);
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, requireXbox, loginTimeout, this.login::complete);
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, requireXbox, loginTimeout, this.login::complete);
     }
 
     @BeforeEach
@@ -413,7 +414,7 @@ class ClientListenerTest {
     @Test
     void tellsANewerClientThatTheServerIsOld() throws Exception {
         this.listen(false);
-        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion() + 1);
+        TestClient client = new TestClient("Tester", BedrockVersions.LATEST, BedrockVersions.LATEST.getProtocolVersion() + 1);
         client.connect(this.group, this.listener.address());
 
         assertThrows(ExecutionException.class, () -> client.loginDone.get(10, TimeUnit.SECONDS));

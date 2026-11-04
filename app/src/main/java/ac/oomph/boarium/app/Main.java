@@ -4,6 +4,7 @@ import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.BoariumConfig;
 import ac.oomph.boarium.boar.BoariumBoar;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.SessionSettings;
 import org.slf4j.Logger;
@@ -50,7 +51,7 @@ public final class Main {
             System.exit(1);
             return;
         }
-        LOG.info("listening on {}, sending players to {}", boarium.address(), config.server());
+        LOG.info("listening on {}, sending players to {}, for Bedrock {}", boarium.address(), config.server(), BedrockVersions.names());
         // The event loops keep the JVM running until the shutdown hook below closes them.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("shutting down");

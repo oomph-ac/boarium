@@ -1,5 +1,6 @@
 package ac.oomph.boarium.client;
 
+import ac.oomph.boarium.protocol.BedrockVersions;
 import io.netty.channel.EventLoop;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
@@ -57,7 +58,6 @@ final class LoginHandler implements BedrockPacketHandler {
     private static final Executor VERIFIER = Executors.newVirtualThreadPerTaskExecutor();
 
     private final BedrockServerSession session;
-    private final BedrockCodec codec;
     private final boolean requireXbox;
     private final Consumer<ClientLogin> onLogin;
 
@@ -68,9 +68,8 @@ final class LoginHandler implements BedrockPacketHandler {
     private boolean clientCacheSupported;
     private final ScheduledFuture<?> timeout;
 
-    LoginHandler(BedrockServerSession session, BedrockCodec codec, boolean requireXbox, Duration timeout, Consumer<ClientLogin> onLogin) {
+    LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, Consumer<ClientLogin> onLogin) {
         this.session = session;
-        this.codec = codec;
         this.requireXbox = requireXbox;
         this.onLogin = onLogin;
         if (timeout.toMillis() < 1) {
@@ -113,16 +112,18 @@ final class LoginHandler implements BedrockPacketHandler {
         }
 
         int protocol = packet.getProtocolVersion();
-        if (protocol != this.codec.getProtocolVersion()) {
+        BedrockCodec codec = BedrockVersions.codec(protocol);
+        if (codec == null) {
             PlayStatusPacket status = new PlayStatusPacket();
-            status.setStatus(protocol > this.codec.getProtocolVersion() ? PlayStatusPacket.Status.LOGIN_FAILED_SERVER_OLD : PlayStatusPacket.Status.LOGIN_FAILED_CLIENT_OLD);
-            this.session.setCodec(this.codec);
+            status.setStatus(BedrockVersions.refusal(protocol));
+            // Any codec will do here, since PlayStatus is the same in every version.
+            this.session.setCodec(BedrockVersions.LATEST);
             this.session.sendPacketImmediately(status);
             // The PlayStatus already shows the client why, as gophertunnel does.
             return this.fail(null);
         }
 
-        this.session.setCodec(this.codec);
+        this.session.setCodec(codec);
         NetworkSettingsPacket settings = new NetworkSettingsPacket();
         settings.setCompressionAlgorithm(PacketCompressionAlgorithm.ZLIB);
         settings.setCompressionThreshold(COMPRESSION_THRESHOLD);
@@ -254,7 +255,7 @@ final class LoginHandler implements BedrockPacketHandler {
         switch (packet.getStatus()) {
             case HAVE_ALL_PACKS -> {
                 ResourcePackStackPacket stack = new ResourcePackStackPacket();
-                stack.setGameVersion(this.codec.getMinecraftVersion());
+                stack.setGameVersion(this.session.getCodec().getMinecraftVersion());
                 stack.getExperiments().add(new ExperimentData("cameras", true));
                 stack.getResourcePacks().addAll(EXEMPTED_PACKS);
                 this.session.sendPacket(stack);

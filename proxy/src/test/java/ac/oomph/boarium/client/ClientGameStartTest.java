@@ -72,7 +72,7 @@ class ClientGameStartTest {
         this.startGame = (StartGamePacket) gophertunnel("StartGame");
         this.items = (ItemComponentPacket) gophertunnel("ItemComponent");
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1), login -> {
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1), login -> {
             this.login.complete(login);
             this.spawned.complete(ClientGameStart.start(login.session(), this.startGame, this.items.getItems(), chunkRadius));
         });
@@ -202,7 +202,7 @@ class ClientGameStartTest {
         this.startGame = (StartGamePacket) gophertunnel("StartGame");
         this.items = (ItemComponentPacket) gophertunnel("ItemComponent");
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1), login -> {
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1), login -> {
             // Cloudburst still counts the session as connected right after this.
             ClientDisconnect.disconnect(login.session(), "disconnectionScreen.internalError.cantConnect");
             this.spawned.complete(ClientGameStart.start(login.session(), this.startGame, this.items.getItems(), 0));

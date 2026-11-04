@@ -94,17 +94,18 @@ public final class Session {
     private String queuedAddr;
     private CompletableFuture<Void> queued;
 
-    private Session(ClientLogin client, Transport transport, BedrockCodec codec, SessionSettings settings) {
+    private Session(ClientLogin client, Transport transport, SessionSettings settings) {
         this.client = client;
         this.session = client.session();
         this.loop = this.session.getPeer().getChannel().eventLoop();
         this.transport = transport;
-        this.codec = codec;
+        // Every server of the session speaks the client's protocol, as with spectrum-internal's sync_protocol on.
+        this.codec = this.session.getCodec();
         this.settings = settings;
         this.processor = settings.processors().apply(client);
         this.clientDecode = Set.copyOf(this.processor.clientDecode());
         this.serverDecode = Set.copyOf(this.processor.serverDecode());
-        this.serverHelper = codec.createHelper();
+        this.serverHelper = this.codec.createHelper();
         this.serverHelper.setEncodingSettings(EncodingSettings.CLIENT);
         this.serverHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
         this.clientAddr = address((InetSocketAddress) this.session.getPeer().getChannel().remoteAddress());
@@ -118,12 +119,12 @@ public final class Session {
      *
      * @return completes once the player has spawned on the server, and fails if the login does
      */
-    public static CompletableFuture<Session> login(ClientLogin client, Transport transport, BedrockCodec codec, String addr, SessionSettings settings) {
+    public static CompletableFuture<Session> login(ClientLogin client, Transport transport, String addr, SessionSettings settings) {
         BedrockServerSession session = client.session();
         session.getPeer().getChannel().eventLoop().execute(() -> ClientBatchDecoder.holdAfterSpawn(session));
         Session joined;
         try {
-            joined = new Session(client, transport, codec, settings);
+            joined = new Session(client, transport, settings);
         } catch (RuntimeException e) {
             // Such as client data that cannot be read.
             ClientDisconnect.disconnect(session, CANT_CONNECT);
@@ -624,6 +625,13 @@ public final class Session {
 
     public ClientLogin client() {
         return this.client;
+    }
+
+    /**
+     * The codec of the client's protocol.
+     */
+    public BedrockCodec codec() {
+        return this.codec;
     }
 
     /**

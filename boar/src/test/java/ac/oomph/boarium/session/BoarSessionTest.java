@@ -25,7 +25,6 @@ import ac.boar.mappings.item.Items;
 import ac.boar.protocol.PacketEvents;
 import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
-import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
@@ -50,6 +49,7 @@ import org.cloudburstmc.nbt.NbtUtils;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
+import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.GameType;
@@ -144,7 +144,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // In the session package to reach the fake server's own sends.
 class BoarSessionTest {
-    private static final BedrockCodec CODEC = Boarium.CODEC;
+    private static final BedrockCodec CODEC = Bedrock_v1001.CODEC;
     // Every packet Boar's listeners see, after them.
     private static final Recorder RECORDER = new Recorder();
     // The 1.26.30 runtime IDs of air and stone when StartGame does not ask for hashed IDs
@@ -2340,7 +2340,7 @@ class BoarSessionTest {
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         String addr = this.server.address();
         SessionSettings settings = new SessionSettings(null, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), processors);
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1), login -> this.session.complete(Session.login(login, transport, CODEC, addr, settings)));
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1), login -> this.session.complete(Session.login(login, transport, addr, settings)));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         this.client.deviceOs = deviceOs;
         this.client.connect(this.group, this.listener.address());

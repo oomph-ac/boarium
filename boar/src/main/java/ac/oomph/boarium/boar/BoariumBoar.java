@@ -5,9 +5,9 @@ import ac.boar.anticheat.ack.BoarDefaultAcknowledgments;
 import ac.boar.anticheat.check.api.BoarDefaultChecks;
 import ac.boar.anticheat.config.Config;
 import ac.boar.protocol.BoarDefaultPacketListeners;
-import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,6 +20,8 @@ import java.io.InputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 /**
@@ -27,6 +29,8 @@ import java.util.function.Function;
  */
 public final class BoariumBoar {
     private static final Logger LOG = LoggerFactory.getLogger(BoariumBoar.class);
+    // Not private, so that the tests can clear it.
+    static final Set<Integer> WARNED_PROTOCOLS = ConcurrentHashMap.newKeySet();
     private static boolean started;
 
     private BoariumBoar() {
@@ -47,8 +51,8 @@ public final class BoariumBoar {
         readConfig(dataFolder);
         // A block table that cannot load fails here with its cause; later uses would only see NoClassDefFoundError.
         BedrockBlockTable table = BedrockBlockTable.get();
-        if (table.protocol() != Boarium.CODEC.getProtocolVersion()) {
-            throw new IllegalStateException("The block table is for protocol " + table.protocol() + ", but boarium speaks " + Boarium.CODEC.getProtocolVersion());
+        if (BedrockVersions.codec(table.protocol()) == null) {
+            throw new IllegalStateException("The block table is for protocol " + table.protocol() + ", which boarium does not speak");
         }
         started = true;
         BoariumPlayerManager players = new BoariumPlayerManager(mitigations);
@@ -56,12 +60,22 @@ public final class BoariumBoar {
         BoarDefaultChecks.registerAll(Boar.getInstance().getCheckRegistry());
         BoarDefaultAcknowledgments.registerAll(Boar.getInstance().getAcknowledgmentRegistry());
         BoarDefaultPacketListeners.registerAll();
-        BoarProcessor processor = new BoarProcessor(players);
+        BoarProcessor processor = new BoarProcessor(players, BedrockVersions.codec(table.protocol()));
         // Boar's default disable-mitigations: false disagrees with boarium's default, so only a true is worth a warning.
         if (Boar.getConfig().disableMitigations() && mitigations) {
             LOG.warn("Boar's config says disable-mitigations: true, but boarium's boar_mitigations: true decides");
         }
-        return login -> processor;
+        return login -> {
+            int protocol = login.session().getCodec().getProtocolVersion();
+            if (protocol == table.protocol()) {
+                return processor;
+            }
+            // Block runtime IDs change between protocols, and the block table is for one.
+            if (WARNED_PROTOCOLS.add(protocol)) {
+                LOG.warn("Boar does not check players on protocol {}, since it has no block table for it", protocol);
+            }
+            return Processor.NONE;
+        };
     }
 
     // Boar's config in dataFolder, written from Boar's default first if there is none. Boar would replace a config it cannot read with its defaults, and only log that.

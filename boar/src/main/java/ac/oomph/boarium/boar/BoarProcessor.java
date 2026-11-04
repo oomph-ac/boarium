@@ -4,12 +4,12 @@ import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.protocol.PacketEvents;
 import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
-import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.session.PacketContext;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.Session;
+import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AddPlayerPacket;
 import org.cloudburstmc.protocol.bedrock.packet.AnimatePacket;
@@ -84,15 +84,17 @@ final class BoarProcessor implements Processor {
             PlayerHotbarPacket.class, SetEntityLinkPacket.class, ChangeDimensionPacket.class, RespawnPacket.class, AddPlayerPacket.class, AddEntityPacket.class);
 
     private final BoariumPlayerManager players;
-    private final Set<Integer> clientDecode = ids(CLIENT_PACKETS);
-    private final Set<Integer> serverDecode = ids(SERVER_PACKETS);
+    private final Set<Integer> clientDecode;
+    private final Set<Integer> serverDecode;
 
-    BoarProcessor(BoariumPlayerManager players) {
+    BoarProcessor(BoariumPlayerManager players, BedrockCodec codec) {
         this.players = players;
+        this.clientDecode = ids(codec, CLIENT_PACKETS);
+        this.serverDecode = ids(codec, SERVER_PACKETS);
     }
 
-    private static Set<Integer> ids(List<Class<? extends BedrockPacket>> packets) {
-        return packets.stream().map(packet -> Boarium.CODEC.getPacketDefinition(packet).getId()).collect(Collectors.toUnmodifiableSet());
+    private static Set<Integer> ids(BedrockCodec codec, List<Class<? extends BedrockPacket>> packets) {
+        return packets.stream().map(packet -> codec.getPacketDefinition(packet).getId()).collect(Collectors.toUnmodifiableSet());
     }
 
     @Override

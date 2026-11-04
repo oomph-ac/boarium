@@ -15,7 +15,6 @@ import ac.boar.api.anticheat.model.NetworkSession;
 import ac.boar.mappings.entity.Entity;
 import ac.boar.protocol.BoarBatchAcknowledger;
 import ac.boar.protocol.BoarConnection;
-import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.session.Session;
@@ -246,7 +245,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
         @Override
         public int protocolVersion() {
-            return Boarium.CODEC.getProtocolVersion();
+            return this.session.codec().getProtocolVersion();
         }
     }
 

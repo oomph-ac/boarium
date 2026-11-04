@@ -92,8 +92,8 @@ class SessionTest {
     private void connect(String addr, Duration timeout) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1),
-                (ClientLogin login) -> this.session.complete(Session.login(login, transport, CODEC, addr, new SessionSettings(null, timeout, SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1),
+                (ClientLogin login) -> this.session.complete(Session.login(login, transport, addr, new SessionSettings(null, timeout, SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         this.client.connect(this.group, this.listener.address());
     }
@@ -385,8 +385,8 @@ class SessionTest {
     private void connectWithFallback(String fallback) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), CODEC, pong, false, Duration.ofMinutes(1),
-                login -> this.session.complete(Session.login(login, transport, CODEC, this.server.address(), new SessionSettings(fallback, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1),
+                login -> this.session.complete(Session.login(login, transport, this.server.address(), new SessionSettings(fallback, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         this.client.connect(this.group, this.listener.address());
         this.client.loginDone.get(10, TimeUnit.SECONDS);

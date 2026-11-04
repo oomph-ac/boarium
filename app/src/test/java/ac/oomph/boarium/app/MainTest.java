@@ -1,10 +1,10 @@
 package ac.oomph.boarium.app;
 
-import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.client.TestClient;
 import ac.oomph.boarium.session.FakeSpectrumServer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
@@ -46,7 +46,7 @@ class MainTest {
     @Test
     void runsBoarAndShutsDown(@TempDir Path dir) throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
-        FakeSpectrumServer server = new FakeSpectrumServer(group, Boarium.CODEC);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
         Process process = this.start(dir, server.address());
         try {
             this.awaitLine("Boar started with its config in " + dir.resolve("boar") + ", mitigations off");
@@ -54,7 +54,7 @@ class MainTest {
             assertTrue(listening.find());
             assertTrue(Files.exists(dir.resolve("boar").resolve("config.yml")));
 
-            TestClient client = new TestClient("Tester", Boarium.CODEC, Boarium.CODEC.getProtocolVersion());
+            TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(listening.group(1))));
             client.loginDone.get(10, TimeUnit.SECONDS);
             StartGamePacket startGame = client.await(StartGamePacket.class);

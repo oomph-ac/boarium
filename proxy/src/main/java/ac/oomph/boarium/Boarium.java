@@ -3,6 +3,7 @@ package ac.oomph.boarium;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.Session;
 import ac.oomph.boarium.session.SessionSettings;
@@ -13,8 +14,6 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
-import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
-import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,8 +34,6 @@ import java.util.function.Function;
  * The proxy: it takes players on its listen address and runs a {@link Session} for each, as spectrum-internal's Spectrum does.
  */
 public final class Boarium implements AutoCloseable {
-    // The Bedrock version boarium speaks, to clients and to servers.
-    public static final BedrockCodec CODEC = Bedrock_v1001.CODEC;
     private static final Duration DIAL_TIMEOUT = Duration.ofSeconds(5);
     // How long a client may take from its first packet to the end of its login, before it starts the game on a server.
     private static final Duration CLIENT_LOGIN_TIMEOUT = Duration.ofMinutes(1);
@@ -58,7 +55,7 @@ public final class Boarium implements AutoCloseable {
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
         SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), processors);
-        this.listener = ClientListener.bind(group, listenAddress(config.listen()), CODEC, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT,
+        this.listener = ClientListener.bind(group, listenAddress(config.listen()), this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT,
                 login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
@@ -101,7 +98,7 @@ public final class Boarium implements AutoCloseable {
             ClientDisconnect.disconnect(login.session(), this.config.shutdownMessage());
             return;
         }
-        Session.login(login, transport, CODEC, this.config.server(), settings).whenComplete((session, error) -> {
+        Session.login(login, transport, this.config.server(), settings).whenComplete((session, error) -> {
             this.joining.remove(login);
             if (error != null) {
                 Throwable cause = error instanceof CompletionException && error.getCause() != null ? error.getCause() : error;
@@ -125,8 +122,8 @@ public final class Boarium implements AutoCloseable {
                 .playerCount(this.sessions.size())
                 .maximumPlayerCount(this.config.maxPlayers())
                 .gameType("Survival")
-                .protocolVersion(CODEC.getProtocolVersion())
-                .version(CODEC.getMinecraftVersion());
+                .protocolVersion(BedrockVersions.LATEST.getProtocolVersion())
+                .version(BedrockVersions.SUPPORTED.getLast().names().getLast());
     }
 
     /**

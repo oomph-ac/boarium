@@ -5,6 +5,7 @@ import ac.oomph.boarium.session.FakeSpectrumServer;
 import ac.oomph.boarium.session.SessionSettings;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
@@ -24,11 +25,11 @@ class BoariumTest {
     @Test
     void sendsPlayersToTheServerAndDisconnectsThemOnClose() throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
-        FakeSpectrumServer server = new FakeSpectrumServer(group, Boarium.CODEC);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
         Boarium boarium = Boarium.start(new BoariumConfig("127.0.0.1:0", server.address(), null, false, "boarium", "test", 10, Duration.ofSeconds(3), "bye", false, false),
                 SessionSettings.DEFAULT.processors());
         try {
-            TestClient client = new TestClient("Tester", Boarium.CODEC, Boarium.CODEC.getProtocolVersion());
+            TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, boarium.address());
             client.loginDone.get(10, TimeUnit.SECONDS);
             StartGamePacket startGame = client.await(StartGamePacket.class);

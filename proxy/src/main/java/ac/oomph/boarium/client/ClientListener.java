@@ -13,7 +13,6 @@ import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
-import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchDecoder;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockServerInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
@@ -24,7 +23,7 @@ import java.time.Duration;
 import java.util.function.Consumer;
 
 /**
- * Accepts Bedrock clients over RakNet and logs them in. Clients on another protocol than {@code codec}'s are turned away.
+ * Accepts Bedrock clients over RakNet and logs them in. Clients on a protocol that {@link ac.oomph.boarium.protocol.BedrockVersions} lacks are turned away.
  */
 public final class ClientListener {
     private static final String VALIDATE_ENCRYPTION = "cloudburst.validateEncryption";
@@ -44,7 +43,7 @@ public final class ClientListener {
      * @param loginTimeout how long a client may take to log in before it is disconnected
      * @param onLogin      runs on the client's event loop once a client has logged in
      */
-    public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockCodec codec, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
+    public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
         }
@@ -93,7 +92,7 @@ public final class ClientListener {
                             return;
                         }
                         session.getPeer().getChannel().attr(SESSION).set(session);
-                        session.setPacketHandler(new LoginHandler(session, codec, requireXbox, loginTimeout, onLogin));
+                        session.setPacketHandler(new LoginHandler(session, requireXbox, loginTimeout, onLogin));
                     }
                 })
                 .bind(address)
