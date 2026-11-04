@@ -27,6 +27,7 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackClientResponsePacket
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
+import org.cloudburstmc.protocol.bedrock.packet.SubClientLoginPacket;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.cloudburstmc.protocol.common.util.VarInts;
@@ -143,7 +144,7 @@ public final class TestClient {
                 .connect(address)
                 .addListener(connected -> {
                     if (!connected.isSuccess()) {
-                        this.loginDone.completeExceptionally(new IllegalStateException("could not connect", connected.cause()));
+                        this.loginDone.completeExceptionally(new IllegalStateException("could not connect: " + connected.cause(), connected.cause()));
                     }
                 });
     }
@@ -204,6 +205,12 @@ public final class TestClient {
                     this.session.getPeer().getChannel().writeAndFlush(BedrockPacketWrapper.create(0, 0, 0, null, Unpooled.buffer()));
                 }
                 if (TestClient.this.sendSubClientPacket) {
+                    // Cloudburst only opens a second player's session with its SubClientLogin.
+                    LoginPacket login = TestClient.this.login();
+                    SubClientLoginPacket subLogin = new SubClientLoginPacket();
+                    subLogin.setAuthPayload(login.getAuthPayload());
+                    subLogin.setClientJwt(login.getClientJwt());
+                    this.session.getPeer().sendPacketImmediately(0, 1, subLogin);
                     ClientCacheStatusPacket cache = new ClientCacheStatusPacket();
                     cache.setSupported(true);
                     this.session.getPeer().sendPacketImmediately(0, 1, cache);

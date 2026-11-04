@@ -115,13 +115,15 @@ class ClientListenerTest {
 
     @Test
     void ignoresASecondPlayerOnTheSameConnection() throws Exception {
-        this.listen(false);
+        this.listen(false, Duration.ofSeconds(2));
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.sendSubClientPacket = true;
         client.connect(this.group, this.listener.address());
 
         assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
         client.loginDone.get(10, TimeUnit.SECONDS);
+        // Wait past the login timeout, which must not disconnect anyone.
+        Thread.sleep(3000);
         assertTrue(client.received.stream().noneMatch(DisconnectPacket.class::isInstance));
     }
 

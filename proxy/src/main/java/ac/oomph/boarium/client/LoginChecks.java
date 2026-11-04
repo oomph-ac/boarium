@@ -14,7 +14,8 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 
 /**
- * The login checks Cloudburst's EncryptionUtils does not make, mostly from gophertunnel's login.Parse, with the self-signed token checks from PocketMine-MP. Each throws an exception when a check fails.
+ * Login checks beyond Cloudburst's EncryptionUtils, mostly from gophertunnel's login.Parse, with the self-signed token checks from PocketMine-MP. Cloudburst checks the time claims only of the Mojang-signed chain entries and Mojang tokens.
+ * Each throws an exception when a check fails.
  */
 final class LoginChecks {
     // go-jose's default leeway for the time claims.

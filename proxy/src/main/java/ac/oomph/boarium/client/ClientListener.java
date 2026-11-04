@@ -48,7 +48,7 @@ public final class ClientListener {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
         }
-        // Cloudburst only checks the checksum at the end of each encrypted batch when this is set; gophertunnel always checks it.
+        // Turns on Cloudburst's check of the checksum at the end of each encrypted batch unless it is set already, as gophertunnel always checks it.
         // Cloudburst reads it once, when the first encrypted session starts in this JVM.
         if (System.getProperty(VALIDATE_ENCRYPTION) == null) {
             System.setProperty(VALIDATE_ENCRYPTION, "true");

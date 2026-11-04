@@ -415,7 +415,7 @@ public final class Session {
 
     /**
      * What a server sends, on the client's event loop, through the processor to the client; msg is released here or passed on.
-     * Packets are written to the client without a flush, and the server's Flush sends them, so each of the server's batches reaches the client as one batch at once.
+     * Packets are written to the client without a flush, and the server's Flush sends them, so each of the server's batches reaches the client as one batch at once, unless it is larger than RakNet can send as one message.
      * As in Spectrum's production proxy, which turns gophertunnel's flush timer off, there is no flush timer.
      */
     void fromServer(ServerConn server, Object msg) {
