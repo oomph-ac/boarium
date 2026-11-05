@@ -6,15 +6,26 @@ import io.netty.buffer.Unpooled;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscoverySignaling;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
+import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
+import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 import org.cloudburstmc.protocol.bedrock.BedrockClientSession;
+import org.cloudburstmc.protocol.bedrock.BedrockPeer;
+import org.cloudburstmc.protocol.bedrock.PacketDirection;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.PacketCompressionAlgorithm;
 import org.cloudburstmc.protocol.bedrock.data.auth.AuthType;
 import org.cloudburstmc.protocol.bedrock.data.auth.CertificateChainPayload;
 import org.cloudburstmc.protocol.bedrock.data.auth.TokenPayload;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
+import org.cloudburstmc.protocol.bedrock.netty.codec.compression.CompressionCodec;
+import org.cloudburstmc.protocol.bedrock.netty.codec.packet.BedrockPacketCodec;
+import org.cloudburstmc.protocol.bedrock.netty.codec.packet.BedrockPacketCodec_v3;
+import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockChannelInitializer;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockClientInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
@@ -132,14 +143,7 @@ public final class TestClient {
                 .handler(new BedrockClientInitializer() {
                     @Override
                     protected void initSession(BedrockClientSession session) {
-                        session.setCodec(TestClient.this.codec);
-                        session.setPacketHandler(new Handler(session));
-                        if (TestClient.this.sendNetworkSettingsRequest) {
-                            RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
-                            request.setProtocolVersion(TestClient.this.protocolVersion);
-                            session.sendPacketImmediately(request);
-                        }
-                        TestClient.this.session.complete(session);
+                        TestClient.this.start(session);
                     }
                 })
                 // Binds to a free port on the target's address first, since letting connect pick the port can fail on macOS with "Address already in use".
@@ -152,6 +156,62 @@ public final class TestClient {
                 .channel();
     }
 
+    /**
+     * Connects over NetherNet, through LAN discovery signaling, with the client's pipeline built as NetherNetInitializer builds the proxy's.
+     * {@code signalingIdentity} is the identity the offer carries, or null for an offer without one.
+     */
+    public Channel connectNetherNet(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity, TokenTrust serverTrust) {
+        Bootstrap bootstrap = new Bootstrap()
+                .group(group)
+                .channelFactory(NetherNetChannelFactory.client(new NetherNetDiscoverySignaling()))
+                .option(NetherChannelOption.NETHER_CLIENT_SERVER_TRUST, serverTrust)
+                .handler(new BedrockClientInitializer() {
+                    @Override
+                    protected void preInitChannel(Channel channel) {
+                        channel.attr(PacketDirection.ATTRIBUTE).set(PacketDirection.SERVER_BOUND);
+                        channel.pipeline()
+                                .addLast(NetherNetFrameCodec.NAME, NetherNetFrameCodec.INSTANCE)
+                                .addLast(CompressionCodec.NAME, new CompressionCodec(BedrockChannelInitializer.getCompression(PacketCompressionAlgorithm.ZLIB, NetherNetPeer.RAK_VERSION, true), false));
+                    }
+
+                    @Override
+                    protected void initPacketCodec(Channel channel) {
+                        channel.pipeline().addLast(BedrockPacketCodec.NAME, new BedrockPacketCodec_v3());
+                    }
+
+                    @Override
+                    protected BedrockPeer createPeer(Channel channel) {
+                        return new NetherNetPeer(channel, this::createSession);
+                    }
+
+                    @Override
+                    protected void initSession(BedrockClientSession session) {
+                        TestClient.this.start(session);
+                    }
+                });
+        if (signalingIdentity != null) {
+            bootstrap.option(NetherChannelOption.NETHER_CLIENT_IDENTITY, signalingIdentity);
+        }
+        return bootstrap.connect(address)
+                .addListener(connected -> {
+                    if (!connected.isSuccess()) {
+                        this.loginDone.completeExceptionally(new IllegalStateException("could not connect: " + connected.cause(), connected.cause()));
+                    }
+                })
+                .channel();
+    }
+
+    private void start(BedrockClientSession session) {
+        session.setCodec(this.codec);
+        session.setPacketHandler(new Handler(session));
+        if (this.sendNetworkSettingsRequest) {
+            RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
+            request.setProtocolVersion(this.protocolVersion);
+            session.sendPacketImmediately(request);
+        }
+        this.session.complete(session);
+    }
+
     private String sign(Map<String, Object> claims, KeyPair signer) throws Exception {
         JsonWebSignature jws = new JsonWebSignature();
         jws.setAlgorithmHeaderValue(AlgorithmIdentifiers.ECDSA_USING_P384_CURVE_AND_SHA384);
@@ -161,7 +221,7 @@ public final class TestClient {
         return jws.getCompactSerialization();
     }
 
-    private LoginPacket login() throws Exception {
+    LoginPacket login() throws Exception {
         long now = System.currentTimeMillis() / 1000;
         Map<String, Object> extraData = new HashMap<>(Map.of("displayName", this.name, "identity", this.identity.toString(), "XUID", ""));
         extraData.putAll(this.identityClaims);

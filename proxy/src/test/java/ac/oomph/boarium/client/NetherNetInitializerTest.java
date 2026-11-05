@@ -39,9 +39,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // A NetherNet channel hands the pipeline each message as a plain ByteBuf and takes one back, which an EmbeddedChannel stands in for.
 class NetherNetInitializerTest {
     private static final BedrockCodec CODEC = BedrockVersions.LATEST;
-    private static final byte ZLIB_HEADER = 0x00;
+    static final byte ZLIB_HEADER = 0x00;
+    private static final BedrockCodecHelper HELPER = CODEC.createHelper();
 
-    private final BedrockCodecHelper helper = CODEC.createHelper();
     private final EmbeddedChannel channel = new EmbeddedChannel(new NetherNetInitializer(false, Duration.ofMinutes(1), login -> {
     }));
 
@@ -54,10 +54,10 @@ class NetherNetInitializerTest {
     void decodesAClientBatchBeforeAndAfterCompression() throws DataFormatException {
         RequestNetworkSettingsPacket request = new RequestNetworkSettingsPacket();
         request.setProtocolVersion(CODEC.getProtocolVersion());
-        this.channel.writeInbound(this.batch(request));
+        this.channel.writeInbound(batch(request));
 
         // LoginHandler answers the request and then turns on compression, so the answer itself goes out uncompressed.
-        NetworkSettingsPacket settings = assertInstanceOf(NetworkSettingsPacket.class, this.decodeBatch(this.channel.readOutbound()).getFirst());
+        NetworkSettingsPacket settings = assertInstanceOf(NetworkSettingsPacket.class, decodeBatch(this.channel.readOutbound()).getFirst());
         assertEquals(PacketCompressionAlgorithm.ZLIB, settings.getCompressionAlgorithm());
 
         List<BedrockPacket> received = new ArrayList<>();
@@ -70,7 +70,7 @@ class NetherNetInitializerTest {
         });
         ClientCacheStatusPacket status = new ClientCacheStatusPacket();
         status.setSupported(true);
-        this.channel.writeInbound(Unpooled.buffer().writeByte(ZLIB_HEADER).writeBytes(deflate(this.batch(status))));
+        this.channel.writeInbound(Unpooled.buffer().writeByte(ZLIB_HEADER).writeBytes(deflate(batch(status))));
 
         assertEquals(1, received.size());
         assertTrue(assertInstanceOf(ClientCacheStatusPacket.class, received.getFirst()).isSupported());
@@ -84,7 +84,7 @@ class NetherNetInitializerTest {
         success.setStatus(PlayStatusPacket.Status.LOGIN_SUCCESS);
         PlayStatusPacket spawn = new PlayStatusPacket();
         spawn.setStatus(PlayStatusPacket.Status.PLAYER_SPAWN);
-        ByteBuf expected = this.batch(success, spawn);
+        ByteBuf expected = batch(success, spawn);
 
         this.writeAsSession(success, spawn);
         ByteBuf plain = this.channel.readOutbound();
@@ -120,22 +120,22 @@ class NetherNetInitializerTest {
     // Writes the packets as Session does, already encoded, then flushes once.
     private void writeAsSession(BedrockPacket... packets) {
         for (BedrockPacket packet : packets) {
-            this.channel.write(BedrockPacketWrapper.create(0, 0, 0, null, this.encode(packet)));
+            this.channel.write(BedrockPacketWrapper.create(0, 0, 0, null, encode(packet)));
         }
         this.channel.flush();
     }
 
-    private ByteBuf encode(BedrockPacket packet) {
+    private static ByteBuf encode(BedrockPacket packet) {
         ByteBuf buf = Unpooled.buffer();
         VarInts.writeUnsignedInt(buf, CODEC.getPacketDefinition(packet.getClass()).getId());
-        CODEC.tryEncode(this.helper, buf, packet);
+        CODEC.tryEncode(HELPER, buf, packet);
         return buf;
     }
 
-    private ByteBuf batch(BedrockPacket... packets) {
+    static ByteBuf batch(BedrockPacket... packets) {
         ByteBuf batch = Unpooled.buffer();
         for (BedrockPacket packet : packets) {
-            ByteBuf encoded = this.encode(packet);
+            ByteBuf encoded = encode(packet);
             VarInts.writeUnsignedInt(batch, encoded.readableBytes());
             batch.writeBytes(encoded);
             encoded.release();
@@ -143,18 +143,18 @@ class NetherNetInitializerTest {
         return batch;
     }
 
-    private List<BedrockPacket> decodeBatch(ByteBuf batch) {
+    static List<BedrockPacket> decodeBatch(ByteBuf batch) {
         List<BedrockPacket> packets = new ArrayList<>();
         while (batch.isReadable()) {
             ByteBuf packet = batch.readSlice(VarInts.readUnsignedInt(batch));
-            packets.add(CODEC.tryDecode(this.helper, packet, VarInts.readUnsignedInt(packet), PacketRecipient.CLIENT));
+            packets.add(CODEC.tryDecode(HELPER, packet, VarInts.readUnsignedInt(packet), PacketRecipient.CLIENT));
         }
         batch.release();
         return packets;
     }
 
     // Cloudburst's ZLIB compression is raw deflate, without zlib's header.
-    private static byte[] deflate(ByteBuf in) {
+    static byte[] deflate(ByteBuf in) {
         Deflater deflater = new Deflater(Deflater.DEFAULT_COMPRESSION, true);
         deflater.setInput(ByteBufUtil.getBytes(in));
         deflater.finish();
@@ -164,7 +164,7 @@ class NetherNetInitializerTest {
         return Arrays.copyOf(out, length);
     }
 
-    private static ByteBuf inflate(ByteBuf in) throws DataFormatException {
+    static ByteBuf inflate(ByteBuf in) throws DataFormatException {
         Inflater inflater = new Inflater(true);
         inflater.setInput(ByteBufUtil.getBytes(in));
         ByteBuf out = Unpooled.buffer();

@@ -1,7 +1,9 @@
 package ac.oomph.boarium.client;
 
 import ac.oomph.boarium.protocol.BedrockVersions;
+import io.netty.channel.Channel;
 import io.netty.channel.EventLoop;
+import org.cloudburstmc.netty.util.nethernet.TransportIdentityBinding;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.data.ExperimentData;
@@ -38,7 +40,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * Logs a client in the way gophertunnel's listener does, which Spectrum uses: network settings, login, encryption, then an empty resource pack exchange.
+ * Logs a client in the way gophertunnel's listener does, which Spectrum uses: network settings, login, encryption (on RakNet only), then an empty resource pack exchange.
  * Login packets that arrive out of that order disconnect the client.
  */
 final class LoginHandler implements BedrockPacketHandler {
@@ -58,6 +60,7 @@ final class LoginHandler implements BedrockPacketHandler {
     private static final Executor VERIFIER = Executors.newVirtualThreadPerTaskExecutor();
 
     private final BedrockServerSession session;
+    private final boolean netherNet;
     private final boolean requireXbox;
     private final Consumer<ClientLogin> onLogin;
 
@@ -70,6 +73,7 @@ final class LoginHandler implements BedrockPacketHandler {
 
     LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, Consumer<ClientLogin> onLogin) {
         this.session = session;
+        this.netherNet = session.getPeer() instanceof NetherNetPeer;
         this.requireXbox = requireXbox;
         this.onLogin = onLogin;
         if (timeout.toMillis() < 1) {
@@ -189,6 +193,18 @@ final class LoginHandler implements BedrockPacketHandler {
         if (clientData == null) {
             throw new IllegalStateException("client data is not signed by the identity key");
         }
+        // On RakNet the encryption handshake ties the login chain to the client. NetherNet has none, so the chain's key must be the one the client proved at signaling, or a copied chain could be replayed.
+        if (this.netherNet) {
+            Channel channel = this.session.getPeer().getChannel();
+            String refusal = TransportIdentityBinding.mismatch(channel, identityKey);
+            if (refusal != null) {
+                throw new IllegalStateException(refusal);
+            }
+            // mismatch passes any channel that is not a NetherNetChildChannel.
+            if (TransportIdentityBinding.state(channel) != TransportIdentityBinding.State.ACCEPTED) {
+                throw new IllegalStateException("the transport identity binding was not accepted");
+            }
+        }
         return new Verified(identity, clientData, result.signed(), identityKey);
     }
 
@@ -202,6 +218,14 @@ final class LoginHandler implements BedrockPacketHandler {
             return;
         }
 
+        this.identity = verified.identity();
+        this.clientData = verified.clientData();
+        this.xboxAuthenticated = verified.xboxSigned();
+        // NetherNet gets no handshake: DTLS already encrypts it, and a client that got one would encrypt packets the proxy cannot read.
+        if (this.netherNet) {
+            this.startResourcePacks();
+            return;
+        }
         try {
             KeyPair serverKey = EncryptionUtils.createKeyPair();
             byte[] token = EncryptionUtils.generateRandomToken();
@@ -213,9 +237,6 @@ final class LoginHandler implements BedrockPacketHandler {
             this.fail("disconnectionScreen.internalError.cantConnect");
             return;
         }
-        this.identity = verified.identity();
-        this.clientData = verified.clientData();
-        this.xboxAuthenticated = verified.xboxSigned();
         this.step = Step.HANDSHAKE;
     }
 
@@ -224,7 +245,11 @@ final class LoginHandler implements BedrockPacketHandler {
         if (this.step != Step.HANDSHAKE) {
             return this.outOfOrder();
         }
+        this.startResourcePacks();
+        return PacketSignal.HANDLED;
+    }
 
+    private void startResourcePacks() {
         PlayStatusPacket status = new PlayStatusPacket();
         status.setStatus(PlayStatusPacket.Status.LOGIN_SUCCESS);
         this.session.sendPacket(status);
@@ -234,7 +259,6 @@ final class LoginHandler implements BedrockPacketHandler {
         info.setWorldTemplateVersion("");
         this.session.sendPacket(info);
         this.step = Step.RESOURCE_PACKS;
-        return PacketSignal.HANDLED;
     }
 
     @Override
