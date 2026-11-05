@@ -3,13 +3,18 @@ package ac.oomph.boarium.boar.blocks;
 import org.cloudburstmc.nbt.NbtMap;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -155,6 +160,24 @@ class BedrockBlockUnionTest {
         assertThrows(IllegalArgumentException.class, () -> union.fromShared(1000, 0));
     }
 
+    // The resource must be what build makes from the tables beside it: ./gradlew :boar:generateBedrockBlockUnion writes it.
+    @Test
+    void resourceIsTheBuiltTable() {
+        BedrockBlockTable built = BedrockBlockUnion.build();
+        assertEquals(built.sourceVersion(), shared.sourceVersion());
+        assertEquals(built.paletteSize(), shared.paletteSize());
+        for (int id = 0; id < built.paletteSize(); id++) {
+            assertEquals(built.name(id), shared.name(id));
+            assertEquals(built.states(id), shared.states(id));
+            assertEquals(built.networkHash(id), shared.networkHash(id));
+            assertArrayEquals(built.collision(id), shared.collision(id));
+            assertEquals(built.flags(id), shared.flags(id));
+            assertEquals(built.hardness(id), shared.hardness(id));
+            assertEquals(built.friction(id), shared.friction(id));
+            assertEquals(built.defaultIndex(built.name(id)), shared.defaultIndex(shared.name(id)));
+        }
+    }
+
     // Builds a second union from the tables already loaded, so it measures the merge alone.
     @Test
     void timeAndHeap() throws InterruptedException {
@@ -169,12 +192,31 @@ class BedrockBlockUnionTest {
 
         long before = usedHeap();
         long start = System.nanoTime();
-        BedrockBlockUnion again = new BedrockBlockUnion();
+        BedrockBlockTable again = BedrockBlockUnion.build();
         long time = System.nanoTime() - start;
         long used = usedHeap() - before;
-        System.out.println("Seven block tables load in " + tablesTime / 1_000_000 + " ms; the shared table and its projections build in " + time / 1_000_000 + " ms and take " + used / 1024 + " KiB of heap");
-        assertEquals(shared.paletteSize(), again.table().paletteSize());
+        System.out.println("Seven block tables load in " + tablesTime / 1_000_000 + " ms; the shared table builds in " + time / 1_000_000 + " ms and takes " + used / 1024 + " KiB of heap");
+        assertEquals(shared.paletteSize(), again.paletteSize());
         assertTrue(used < 32L << 20, used / 1024 + " KiB");
+    }
+
+    // In a JVM of its own, so the other tests' tables do not count: Boar loads the shared table and the 1.26.30 table alone at start, not the other six.
+    @Test
+    void heapAtStart() throws Exception {
+        Path dir = Files.createDirectories(Path.of("build"));
+        Process process = new ProcessBuilder(Path.of(System.getProperty("java.home"), "bin", "java").toString(), "-cp", System.getProperty("java.class.path"), HeapAtStart.class.getName(), dir.toString())
+                .redirectErrorStream(true).start();
+        List<String> lines = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).lines().toList();
+        assertEquals(0, process.waitFor(), String.join("\n", lines));
+        Map<String, String[]> heap = new HashMap<>();
+        lines.stream().map(line -> line.split(" ")).filter(words -> words.length == 3).forEach(words -> heap.put(words[0], words));
+        long tables = Long.parseLong(heap.get("tables")[1]);
+        long start = Long.parseLong(heap.get("start")[1]);
+        long all = Long.parseLong(heap.get("all")[1]);
+        System.out.println("The shared and 1.26.30 block tables take " + tables / 1024 + " KiB of heap; Boar takes " + start / 1024 + " KiB at start with " + heap.get("start")[2] + " protocol table loaded, and " + all / 1024 + " KiB with all " + heap.get("all")[2]);
+        assertEquals("1", heap.get("start")[2]);
+        assertTrue(tables < 32L << 20, tables / 1024 + " KiB");
+        assertTrue(start < 80L << 20, start / 1024 + " KiB");
     }
 
     private static long usedHeap() throws InterruptedException {

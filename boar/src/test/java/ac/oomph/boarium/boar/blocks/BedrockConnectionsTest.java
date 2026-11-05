@@ -49,12 +49,12 @@ class BedrockConnectionsTest {
         table = BedrockBlockTable.get();
     }
 
-    // A player whose runtime IDs are palette indices, with one empty overworld chunk at chunk 0, 0
+    // A player whose runtime IDs are shared IDs, with one empty overworld chunk at chunk 0, 0
     @BeforeEach
     void world() {
         int airIndex = table.firstIndex("minecraft:air");
-        SimpleBlockDefinition air = new SimpleBlockDefinition("minecraft:air", airIndex, table.states(airIndex));
-        this.player = new BoarPlayer(new Offline(), null, null, new BlockMappingInfo(air, air, air, air, IntList.of(airIndex), definition -> false, id -> id, id -> id), null, null, null, Map.of(), true);
+        SimpleBlockDefinition air = new SimpleBlockDefinition("minecraft:air", SharedIds.shared(airIndex), table.states(airIndex));
+        this.player = new BoarPlayer(new Offline(), null, null, new BlockMappingInfo(air, air, air, air, IntList.of(air.getRuntimeId()), definition -> false, id -> id, id -> id), null, null, null, Map.of(), true);
         this.player.compensatedWorld.setDimension(Dimension.OVERWORLD);
         this.player.compensatedWorld.put(0, 0, new BoarChunkSection[24], new boolean[24]);
     }
@@ -79,12 +79,13 @@ class BedrockConnectionsTest {
         return find(name, "weirdo_direction", weirdoDirection, "upside_down_bit", (byte) upsideDown);
     }
 
+    // Boar's world holds the palette entry by its shared ID.
     private void set(Vector3i pos, int index) {
-        this.player.compensatedWorld.updateBlock(pos, 0, index);
+        this.player.compensatedWorld.updateBlock(pos, 0, SharedIds.shared(index));
     }
 
     private List<Box> override(int index) {
-        return new BedrockState(index, POS, 0).connectionCollisionOverride(this.player, POS);
+        return new BedrockState(SharedIds.shared(index), POS, 0).connectionCollisionOverride(this.player, POS);
     }
 
     @Test
@@ -307,7 +308,7 @@ class BedrockConnectionsTest {
     // A block outside the vanilla palette, such as a custom block, has no rule, so fences and panes join it; it is neither a stair nor a chorus plant.
     @Test
     void unknownBlocksHaveNoRule() {
-        int unknown = table.paletteSize() + 5;
+        int unknown = BedrockPalette.FIRST_CUSTOM_ID + 5;
         this.set(POS.north(), unknown);
         this.set(POS.east(), unknown);
         assertBoxes(this.override(find("oak_fence")), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F, 0.375F, 0, 0.375F, 1, 1.5F, 0.625F);
@@ -333,7 +334,7 @@ class BedrockConnectionsTest {
                 "dandelion", 0,
                 "stone", BedrockConnections.ALL,
                 "glass", BedrockConnections.ALL);
-        rules.forEach((name, rule) -> assertEquals(rule, BedrockConnections.rule(find(name)), name));
+        rules.forEach((name, rule) -> assertEquals(rule, BedrockConnections.rule(SharedIds.shared(find(name))), name));
     }
 
     // Every Bedrock state that Geyser maps a Java state to, beside a fence and a pane on each side, against the states.26_30.txt fixture. The Java table it came from called a face sturdy only for a block of one

@@ -18,3 +18,14 @@ dependencies {
     testImplementation(libs.junit.jupiter)
     testRuntimeOnly(libs.junit.launcher)
 }
+
+// Writes the shared block table (BedrockBlockUnion) from the block tables on its classpath, which :blockdata:generateBedrockBlocks writes first.
+tasks.register<JavaExec>("generateBedrockBlockUnion") {
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass = "ac.oomph.boarium.boar.blocks.BedrockBlockUnion"
+    args("src/main/resources/ac/oomph/boarium/boar/blocks/bedrock_blocks.union.bin.gz")
+}
+
+tasks.named("processResources") {
+    mustRunAfter(":blockdata:generateBedrockBlocks")
+}

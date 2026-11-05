@@ -99,6 +99,27 @@ class CustomIdsTest {
         assertTrue(sharedShapesAfterGc() < shapesBefore + 100);
     }
 
+    // A block keeps its IDs while a palette of any block table has it, and they are freed after the last one lets go.
+    @Test
+    void palettesOfEveryTableShareOnePool() {
+        long[] now = {0};
+        BedrockPalette.CustomIds ids = new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, 64, QUARANTINE, () -> now[0]);
+        CustomBlock pipe = block("cubecraft:shared_pipe", 8);
+        BlockMappingInfo v26_30 = new BedrockPalette(BedrockBlockTable.get(), true, List.of(pipe), ids).mappingInfo();
+        BlockMappingInfo v26_50 = new BedrockPalette(BedrockBlockTable.forProtocol(2193), true, List.of(pipe), ids).mappingInfo();
+        assertEquals(BedrockPalette.FIRST_CUSTOM_ID, firstId(v26_30, pipe));
+        assertEquals(BedrockPalette.FIRST_CUSTOM_ID, firstId(v26_50, pipe));
+
+        BedrockPalette.release(v26_30);
+        now[0] += QUARANTINE;
+        assertEquals(BedrockPalette.FIRST_CUSTOM_ID + 8, firstId(ids, block("cubecraft:after_one", 8)));
+        assertEquals("cubecraft:shared_pipe", ids.type(BedrockPalette.FIRST_CUSTOM_ID).toString());
+
+        BedrockPalette.release(v26_50);
+        now[0] += QUARANTINE;
+        assertEquals(BedrockPalette.FIRST_CUSTOM_ID, firstId(ids, block("cubecraft:after_both", 8)));
+    }
+
     @Test
     void freedIdsWaitOutTheQuarantineAndLeaveHoles() {
         long[] now = {0};

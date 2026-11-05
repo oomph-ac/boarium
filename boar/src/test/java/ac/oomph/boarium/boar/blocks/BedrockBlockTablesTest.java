@@ -76,40 +76,49 @@ class BedrockBlockTablesTest {
         assertNull(BedrockBlockTable.forProtocol(1000));
     }
 
-    // A palette of another table has the runtime IDs of its own clients, and custom IDs past its own vanilla states.
+    // A palette of each table has the runtime IDs of its own clients and the shared IDs of its states, and its custom blocks take IDs from the one pool past the shared table.
     @ParameterizedTest
     @MethodSource("versions")
     void paletteOfEachTable(Version version) {
         BedrockBlockTable table = BedrockBlockTable.forProtocol(version.protocol());
+        BedrockBlockUnion union = BedrockBlockUnion.get();
         for (boolean hashed : new boolean[]{false, true}) {
             BlockMappingInfo info = BedrockPalette.mappingInfo(table, startGame(hashed));
-            assertEquals(version.stone(), info.toIntermediary().applyAsInt(hashed ? STONE_HASH : version.stone()));
-            assertEquals(hashed ? version.blockHash() : version.blockIndex(), info.fromIntermediary().applyAsInt(version.blockIndex()));
+            assertEquals(union.toShared(version.protocol(), version.stone()), info.toIntermediary().applyAsInt(hashed ? STONE_HASH : version.stone()));
+            assertEquals(hashed ? version.blockHash() : version.blockIndex(), info.fromIntermediary().applyAsInt(union.toShared(version.protocol(), version.blockIndex())));
             assertEquals(hashed ? AIR_HASH : version.air(), info.airDefinition().getRuntimeId());
+            for (int i = 0; i < table.paletteSize(); i++) {
+                int runtimeId = hashed ? table.networkHash(i) : i;
+                int id = info.toIntermediary().applyAsInt(runtimeId);
+                assertEquals(union.toShared(version.protocol(), i), id);
+                assertEquals(runtimeId, info.fromIntermediary().applyAsInt(id));
+            }
 
             BlockMappingInfo custom = BedrockPalette.mappingInfo(table, startGame(hashed, pipe()));
+            BlockMappingInfo checked = BedrockPalette.mappingInfo(startGame(hashed, pipe()));
             int first = -1;
-            for (int id = table.paletteSize(); id < table.paletteSize() + BedrockPalette.MAX_CUSTOM_IDS && first < 0; id++) {
+            for (int id = BedrockPalette.FIRST_CUSTOM_ID; id < BedrockPalette.UNKNOWN_ID && first < 0; id++) {
                 if (!BedrockPalette.isUnknown(BedrockPalette.definition(custom, id))) {
                     first = id;
                 }
             }
-            assertTrue(first >= table.paletteSize(), version.source());
+            assertTrue(first >= BedrockPalette.FIRST_CUSTOM_ID, version.source());
             for (int state = 0; state < 8; state++) {
                 int runtimeId = BedrockPalette.definition(custom, first + state).getRuntimeId();
                 assertEquals(first + state, custom.toIntermediary().applyAsInt(runtimeId));
+                assertEquals(first + state, checked.toIntermediary().applyAsInt(BedrockPalette.definition(checked, first + state).getRuntimeId()));
             }
-            // Boar places a custom block only for its own table, whose IDs its block states have.
-            assertEquals(table == BedrockBlockTable.get(), BedrockPalette.placedBlock(custom, "cubecraft:pipe") != null);
+            assertNotNull(BedrockPalette.placedBlock(custom, "cubecraft:pipe"));
             if (table != BedrockBlockTable.get()) {
-                assertNotSame(BedrockPalette.of(custom), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(hashed, pipe()))));
+                assertNotSame(BedrockPalette.of(custom), BedrockPalette.of(checked));
             }
             BedrockPalette.release(info);
             BedrockPalette.release(custom);
+            BedrockPalette.release(checked);
         }
     }
 
-    // A table loaded again shares the palettes and custom IDs of its protocol's table.
+    // A table loaded again shares the palettes of its protocol's table.
     @Test
     void tableLoadedAgain() {
         BlockMappingInfo again = BedrockPalette.mappingInfo(BedrockBlockTable.load(), startGame(true, pipe()));

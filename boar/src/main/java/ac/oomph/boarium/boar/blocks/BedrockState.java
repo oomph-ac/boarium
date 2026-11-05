@@ -25,14 +25,14 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * A Bedrock block state for Boar, answered from the Bedrock block table.
- * A custom state's block is its custom block's CustomBlockType, and that of any other state past the vanilla palette is UNKNOWN_BLOCK. Each keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
- * A custom state has its block's collision boxes, friction and replaceability from {@link BedrockPalette}, and any other ID past the palette is a full solid 1x1x1 block.
+ * A Bedrock block state for Boar, answered from the shared block table of {@link BedrockBlockUnion}.
+ * A custom state's block is its custom block's CustomBlockType, and that of any other state past the shared table is UNKNOWN_BLOCK. Each keeps its ID so that Boar can send it back to the client, except UNKNOWN_ID.
+ * A custom state has its block's collision boxes, friction and replaceability from {@link BedrockPalette}, and any other ID past the shared table is a full solid 1x1x1 block.
  *
- * @param intermediaryId the palette index, or an ID past it from {@link BedrockPalette}
+ * @param intermediaryId the shared ID, or an ID past the shared table from {@link BedrockPalette}
  */
 public record BedrockState(int intermediaryId, Vector3i getPosition, int getLayer) implements BoarBlockStateDelegate {
-    private static final BedrockBlockTable TABLE = BedrockBlockTable.get();
+    private static final BedrockBlockTable TABLE = BedrockBlockUnion.get().table();
     private static final BedrockProperty<Boolean> WATERLOGGED = BedrockProperties.INSTANCE.get("waterlogged");
     private static final int AIR = TABLE.firstIndex("minecraft:air");
     private static final float[] FULL_CUBE = {0, 0, 0, 1, 1, 1};
@@ -90,7 +90,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         intermediaryId = intermediaryId >= 0 && intermediaryId < BedrockPalette.END_ID ? intermediaryId : AIR;
     }
 
-    // Honey, slime and beds get Boar's own state classes, and a state past the vanilla palette gets its custom block's friction.
+    // Honey, slime and beds get Boar's own state classes, and a state past the shared table gets its custom block's friction.
     private static BoarBlockState create(int id, Vector3i position, int layer) {
         BedrockState delegate = new BedrockState(id, position, layer);
         if (!delegate.isVanilla()) {
@@ -236,7 +236,7 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
         }
     }
 
-    // The block of every state past the vanilla palette that has no custom ID. Its hardness of 0 only tells Boar that it can be broken.
+    // The block of every state past the shared table that has no custom ID. Its hardness of 0 only tells Boar that it can be broken.
     private static final class UnknownBlock implements Block {
         @Override
         public boolean is(Block value) {

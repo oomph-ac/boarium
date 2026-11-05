@@ -3,6 +3,10 @@ package ac.oomph.boarium.boar.blocks;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
 
+import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -12,19 +16,24 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
  * One block table with every block state of every protocol's table, so a block state has one shared ID (its index in {@link #table()}) on every client version, and the mapping between shared IDs and each table's own palette indexes.
  * Entries with the same name are next to each other. Each name's default state is the one of the newest table that has the name.
+ * The table is a resource that {@link #main} writes from the protocols' tables, so that a server loads only the tables of the versions its clients use.
  */
 public final class BedrockBlockUnion {
+    static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/bedrock_blocks.union.bin.gz";
+
     private static final class Holder {
-        static final BedrockBlockUnion UNION = new BedrockBlockUnion();
+        static final BedrockBlockUnion UNION = new BedrockBlockUnion(BedrockBlockTable.load(RESOURCE));
     }
 
     private final BedrockBlockTable table;
-    private final Map<Integer, Projection> byProtocol = new HashMap<>();
+    // By game version, as BedrockBlockTable.version gives it
+    private final Map<String, Projection> byVersion = new ConcurrentHashMap<>();
 
     private record Key(String name, NbtMap states) {
     }
@@ -35,10 +44,24 @@ public final class BedrockBlockUnion {
     private record Type(Class<?> type, String version) {
     }
 
-    private record Projection(int[] toShared, int[] fromShared) {
+    // A table's shared ID of each of its palette indexes, and the closest palette index for each shared ID, or -1 where it has no block of that name
+    record Projection(int[] toShared, int[] fromShared) {
     }
 
-    BedrockBlockUnion() {
+    BedrockBlockUnion(BedrockBlockTable table) {
+        this.table = table;
+    }
+
+    // Writes the table that build makes to the file in args[0]: ./gradlew :boar:generateBedrockBlockUnion
+    public static void main(String[] args) throws IOException {
+        try (OutputStream out = Files.newOutputStream(Path.of(args[0]))) {
+            build().write(out);
+        }
+        System.out.println("Wrote " + args[0] + " (" + Files.size(Path.of(args[0])) + " bytes)");
+    }
+
+    // The shared table, from the table of every protocol
+    static BedrockBlockTable build() {
         List<BedrockBlockTable> newestFirst = BedrockBlockTable.VERSIONS.keySet().stream().sorted(Comparator.reverseOrder()).map(BedrockBlockTable::forProtocol).distinct().toList();
 
         // The newest table's names first, in its order, then names only older tables have; each name's states the same way.
@@ -97,23 +120,27 @@ public final class BedrockBlockUnion {
         }
         String sourceVersions = newestFirst.reversed().stream().map(BedrockBlockTable::sourceVersion).collect(Collectors.joining(", "));
         // The tables have different block versions and protocols, so the union has neither.
-        table = new BedrockBlockTable(-1, sourceVersions, -1, shapes, names, states, hashes, stateShape, flags, hardness, friction, defaults);
+        return new BedrockBlockTable(-1, sourceVersions, -1, shapes, names, states, hashes, stateShape, flags, hardness, friction, defaults);
+    }
 
-        for (BedrockBlockTable own : newestFirst) {
-            int[] toShared = new int[own.paletteSize()];
-            for (int i = 0; i < toShared.length; i++) {
-                toShared[i] = ids.get(new Key(own.name(i), own.states(i)));
+    // Throws when the shared table lacks a state of own, which means RESOURCE is older than own.
+    private Projection project(BedrockBlockTable own) {
+        int[] toShared = new int[own.paletteSize()];
+        for (int i = 0; i < toShared.length; i++) {
+            toShared[i] = this.table.index(own.name(i), own.states(i));
+            if (toShared[i] < 0 || this.table.networkHash(toShared[i]) != own.networkHash(i)) {
+                throw new IllegalStateException("The shared block table does not have " + own.name(i) + " " + own.states(i) + " of " + own.sourceVersion() + ": regenerate it with ./gradlew :boar:generateBedrockBlockUnion");
             }
-            int[] fromShared = new int[size];
-            for (int shared = 0; shared < size; shared += table.stateCount(names[shared])) {
-                Map<String, Set<Object>> values = values(own, names[shared]);
-                for (int i = shared; i < shared + table.stateCount(names[shared]); i++) {
-                    fromShared[i] = project(own, names[i], states[i], values);
-                }
-            }
-            Projection projection = new Projection(toShared, fromShared);
-            BedrockBlockTable.VERSIONS.keySet().stream().filter(protocol -> BedrockBlockTable.forProtocol(protocol) == own).forEach(protocol -> byProtocol.put(protocol, projection));
         }
+        int[] fromShared = new int[this.table.paletteSize()];
+        for (int shared = 0; shared < fromShared.length; shared += this.table.stateCount(this.table.name(shared))) {
+            String name = this.table.name(shared);
+            Map<String, Set<Object>> values = values(own, name);
+            for (int i = shared; i < shared + this.table.stateCount(name); i++) {
+                fromShared[i] = project(own, name, this.table.states(i), values);
+            }
+        }
+        return new Projection(toShared, fromShared);
     }
 
     // Two tables that list the same state must agree on what it is.
@@ -158,7 +185,7 @@ public final class BedrockBlockUnion {
         return index < 0 ? fallback : index;
     }
 
-    // Built on first use from the table of every protocol
+    // Loaded on first use from RESOURCE
     public static BedrockBlockUnion get() {
         return Holder.UNION;
     }
@@ -185,11 +212,12 @@ public final class BedrockBlockUnion {
         return ids[index];
     }
 
-    private Projection projection(int protocol) {
-        Projection projection = byProtocol.get(protocol);
-        if (projection == null) {
+    // Built on first use for each table, and loads that table
+    Projection projection(int protocol) {
+        String version = BedrockBlockTable.version(protocol);
+        if (version == null) {
             throw new IllegalArgumentException("No block table for protocol " + protocol);
         }
-        return projection;
+        return this.byVersion.computeIfAbsent(version, v -> this.project(BedrockBlockTable.forProtocol(protocol)));
     }
 }

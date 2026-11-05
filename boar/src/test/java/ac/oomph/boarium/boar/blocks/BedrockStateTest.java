@@ -103,12 +103,13 @@ class BedrockStateTest {
         throw new AssertionError(name + " has no state " + List.of(states));
     }
 
+    // Boar's state of a palette entry, by its shared ID
     private static BoarBlockState state(int index) {
-        return BedrockState.FACTORY.create(index, POS, 0);
+        return BedrockState.FACTORY.create(SharedIds.shared(index), POS, 0);
     }
 
     private static BedrockState delegate(int index) {
-        return new BedrockState(index, POS, 0);
+        return new BedrockState(SharedIds.shared(index), POS, 0);
     }
 
     private static <T extends Comparable<T>> BedrockProperty<T> property(String key) {
@@ -120,7 +121,7 @@ class BedrockStateTest {
     }
 
     private static <T extends Comparable<T>> int with(int index, String key, T value) {
-        return state(index).with(BedrockProperties.INSTANCE.get(key), value).intermediaryId();
+        return SharedIds.own(state(index).with(BedrockProperties.INSTANCE.get(key), value).intermediaryId());
     }
 
     @Test
@@ -222,7 +223,7 @@ class BedrockStateTest {
         assertThrows(IllegalArgumentException.class, () -> with(doubleSlab, "waterlogged", true));
         int stone = table.firstIndex("minecraft:stone");
         assertEquals(stone, with(stone, "waterlogged", false));
-        assertEquals(-1, BedrockProperties.INSTANCE.<Boolean>get("waterlogged").with(stone, true));
+        assertEquals(-1, BedrockProperties.INSTANCE.<Boolean>get("waterlogged").with(SharedIds.shared(stone), true));
 
         assertFalse(delegate(stairs).isWaterlogged());
         assertTrue(delegate(table.firstIndex("minecraft:seagrass")).isWaterlogged());
@@ -302,7 +303,7 @@ class BedrockStateTest {
                     continue;
                 }
                 javaValues++;
-                Object value = property.get(i);
+                Object value = property.get(SharedIds.shared(i));
                 if (value != null) {
                     assertEquals(javaValue, String.valueOf(value), key + " of " + table.name(i) + " " + table.states(i));
                     compared++;
@@ -482,8 +483,8 @@ class BedrockStateTest {
             assertNull(unknown.get(BedrockProperties.INSTANCE.<Boolean>get("waterlogged")));
             assertNull(delegate(id).connectionCollisionOverride(null, POS));
         }
-        assertEquals(table.firstIndex("minecraft:air"), state(BedrockPalette.END_ID).intermediaryId());
-        assertEquals(table.firstIndex("minecraft:air"), state(-1).intermediaryId());
+        assertEquals(table.firstIndex("minecraft:air"), SharedIds.own(state(BedrockPalette.END_ID).intermediaryId()));
+        assertEquals(table.firstIndex("minecraft:air"), SharedIds.own(state(-1).intermediaryId()));
     }
 
     private static BoarPlayer player() {

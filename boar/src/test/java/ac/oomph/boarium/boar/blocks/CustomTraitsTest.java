@@ -8,6 +8,7 @@ import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
 import org.cloudburstmc.nbt.NbtType;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
+import org.cloudburstmc.protocol.bedrock.data.definitions.BlockDefinition;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleBlockDefinition;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
@@ -103,6 +104,20 @@ class CustomTraitsTest {
             states.add(block.state(i));
         }
         return states;
+    }
+
+    // Boar's intermediary ID of a runtime ID, as a 1.26.30 palette index when it is a vanilla state
+    private static int toId(BlockMappingInfo info, int runtimeId) {
+        return SharedIds.own(info.toIntermediary().applyAsInt(runtimeId));
+    }
+
+    // The runtime ID of a 1.26.30 palette index, or of an ID past the shared table
+    private static int fromId(BlockMappingInfo info, int id) {
+        return info.fromIntermediary().applyAsInt(SharedIds.shared(id));
+    }
+
+    private static BlockDefinition definition(BedrockPalette palette, int id) {
+        return palette.definition(SharedIds.shared(id));
     }
 
     @Test
@@ -346,12 +361,12 @@ class CustomTraitsTest {
     @Test
     void sortedIdsMoveStoneByTheTraitStates() {
         BlockMappingInfo cardinal = BedrockPalette.mappingInfo(startGame(false, block(List.of(direction("cardinal_direction")))));
-        assertEquals(SORTED_STONE + 4, cardinal.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 4, fromId(cardinal, SORTED_STONE));
         BlockMappingInfo three = BedrockPalette.mappingInfo(startGame(false, block(List.of(position("block_face"), direction("cardinal_direction"), multiBlock(2)))));
-        assertEquals(SORTED_STONE + 6 * 4 * 2, three.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 6 * 4 * 2, fromId(three, SORTED_STONE));
         // A multi_block trait of only a name has its 2 default parts.
         BlockMappingInfo defaults = BedrockPalette.mappingInfo(startGame(false, block(List.of(NbtMap.builder().putString("name", "minecraft:multi_block").build()))));
-        assertEquals(SORTED_STONE + 2, defaults.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 2, fromId(defaults, SORTED_STONE));
     }
 
     // Each case of a trait's name is another trait to the client, so Boar bounds them.
@@ -387,9 +402,9 @@ class CustomTraitsTest {
 
     private static void assertHashedId(int runtimeId, BlockPropertyData block, NbtMap states) {
         BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(true, block));
-        int id = info.toIntermediary().applyAsInt(runtimeId);
+        int id = toId(info, runtimeId);
         assertTrue(id >= BedrockPalette.FIRST_CUSTOM_ID && id < BedrockPalette.UNKNOWN_ID, states.toString());
-        SimpleBlockDefinition definition = (SimpleBlockDefinition) BedrockPalette.of(info).definition(id);
+        SimpleBlockDefinition definition = (SimpleBlockDefinition) definition(BedrockPalette.of(info), id);
         assertEquals(runtimeId, definition.getRuntimeId());
         assertEquals(NbtMap.builder().putString("name", "cubecraft:pipe").putCompound("states", states).build(), definition.getState());
     }

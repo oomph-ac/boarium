@@ -126,6 +126,24 @@ class BedrockPaletteTest {
     private record Entry(String name, int vanillaIndex, int customState) {
     }
 
+    // Boar's intermediary ID of a runtime ID, as a 1.26.30 palette index when it is a vanilla state
+    private static int toId(BlockMappingInfo info, int runtimeId) {
+        return SharedIds.own(info.toIntermediary().applyAsInt(runtimeId));
+    }
+
+    // The runtime ID of a 1.26.30 palette index, or of an ID past the shared table
+    private static int fromId(BlockMappingInfo info, int id) {
+        return info.fromIntermediary().applyAsInt(SharedIds.shared(id));
+    }
+
+    private static BlockDefinition definition(BlockMappingInfo info, int id) {
+        return BedrockPalette.definition(info, SharedIds.shared(id));
+    }
+
+    private static BlockDefinition definition(BedrockPalette palette, int id) {
+        return palette.definition(SharedIds.shared(id));
+    }
+
     @Test
     void sortedIdsMoveTheVanillaStates() {
         BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(false, pipe(), lamp()));
@@ -144,8 +162,8 @@ class BedrockPaletteTest {
         reference.sort((a, b) -> Long.compareUnsigned(fnv1(a.name()), fnv1(b.name())));
         for (int runtimeId = 0; runtimeId < reference.size(); runtimeId++) {
             Entry entry = reference.get(runtimeId);
-            int id = info.toIntermediary().applyAsInt(runtimeId);
-            assertEquals(runtimeId, info.fromIntermediary().applyAsInt(id));
+            int id = toId(info, runtimeId);
+            assertEquals(runtimeId, fromId(info, id));
             if (entry.vanillaIndex() >= 0) {
                 assertEquals(entry.vanillaIndex(), id);
                 assertTrue(info.isKnownRawId(runtimeId));
@@ -159,14 +177,14 @@ class BedrockPaletteTest {
                 // A custom block's states have consecutive IDs, in the client's order.
                 Entry firstState = new Entry(entry.name(), -1, 0);
                 int firstRuntimeId = reference.indexOf(firstState);
-                assertEquals(info.toIntermediary().applyAsInt(firstRuntimeId) + entry.customState(), id);
+                assertEquals(toId(info, firstRuntimeId) + entry.customState(), id);
             }
         }
 
         // The pipe moves stone and air, and the lamp moves neither.
-        assertEquals(SORTED_STONE + 8, info.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 8, fromId(info, SORTED_STONE));
         assertEquals(SORTED_AIR + 8, info.airId());
-        assertEquals(SORTED_STONE, info.toIntermediary().applyAsInt(SORTED_STONE + 8));
+        assertEquals(SORTED_STONE, toId(info, SORTED_STONE + 8));
         assertFalse(info.isKnownRawId(reference.size()));
         assertEquals(List.of(SORTED_AIR + 8), info.airIds());
     }
@@ -180,9 +198,9 @@ class BedrockPaletteTest {
             NbtMap westLit = NbtMap.builder().putString("facing", "west").putByte("lit", (byte) 1).build();
             assertEquals(westLit, pipe.state(7));
             int runtimeId = hashed ? referenceHash("cubecraft:pipe", westLit) : customRuntimeIds(info).getLast();
-            int id = info.toIntermediary().applyAsInt(runtimeId);
+            int id = toId(info, runtimeId);
             assertTrue(id >= BedrockPalette.FIRST_CUSTOM_ID);
-            SimpleBlockDefinition definition = (SimpleBlockDefinition) BedrockPalette.of(info).definition(id);
+            SimpleBlockDefinition definition = (SimpleBlockDefinition) definition(BedrockPalette.of(info), id);
             assertEquals("cubecraft:pipe", definition.getIdentifier());
             assertEquals(runtimeId, definition.getRuntimeId());
             assertEquals(NbtMap.builder().putString("name", "cubecraft:pipe").putCompound("states", westLit).build(), definition.getState());
@@ -198,7 +216,7 @@ class BedrockPaletteTest {
     private static List<Integer> customRuntimeIds(BlockMappingInfo info, int end) {
         List<Integer> custom = new ArrayList<>();
         for (int runtimeId = 0; runtimeId < end; runtimeId++) {
-            int id = info.toIntermediary().applyAsInt(runtimeId);
+            int id = toId(info, runtimeId);
             if (id >= BedrockPalette.FIRST_CUSTOM_ID && id < BedrockPalette.UNKNOWN_ID) {
                 custom.add(runtimeId);
             }
@@ -214,15 +232,15 @@ class BedrockPaletteTest {
         List<Integer> custom = customRuntimeIds(both);
         assertEquals(11, custom.size());
         int sortedPipe = custom.getFirst();
-        int id = both.toIntermediary().applyAsInt(sortedPipe);
+        int id = toId(both, sortedPipe);
         // The same state has another runtime ID for the other player, and the same custom ID.
-        int hashedPipe = pipeOnly.fromIntermediary().applyAsInt(id);
+        int hashedPipe = fromId(pipeOnly, id);
         assertNotEquals(sortedPipe, hashedPipe);
-        assertEquals(id, pipeOnly.toIntermediary().applyAsInt(hashedPipe));
+        assertEquals(id, toId(pipeOnly, hashedPipe));
         // A custom ID the palette does not have is never resent.
-        int lamp = both.toIntermediary().applyAsInt(custom.getLast());
+        int lamp = toId(both, custom.getLast());
         assertTrue(lamp >= BedrockPalette.FIRST_CUSTOM_ID);
-        assertTrue(BedrockPalette.isUnknown(BedrockPalette.of(pipeOnly).definition(lamp)));
+        assertTrue(BedrockPalette.isUnknown(definition(BedrockPalette.of(pipeOnly), lamp)));
     }
 
     @Test
@@ -265,17 +283,17 @@ class BedrockPaletteTest {
                     }
                 } else {
                     for (int runtimeId = 0; runtimeId < table.paletteSize() + pipe.stateCount(); runtimeId++) {
-                        if (info.toIntermediary().applyAsInt(runtimeId) >= BedrockPalette.FIRST_CUSTOM_ID) {
+                        if (toId(info, runtimeId) >= BedrockPalette.FIRST_CUSTOM_ID) {
                             runtimeIds.add(runtimeId);
                         }
                     }
                 }
                 assertEquals(pipe.stateCount(), runtimeIds.size());
                 for (int runtimeId : runtimeIds) {
-                    int id = info.toIntermediary().applyAsInt(runtimeId);
+                    int id = toId(info, runtimeId);
                     assertTrue(id > BedrockPalette.UNKNOWN_ID);
                     assertFullCube(id);
-                    assertEquals(runtimeId, BedrockPalette.definition(info, id).getRuntimeId());
+                    assertEquals(runtimeId, definition(info, id).getRuntimeId());
                     assertFalse(info.isKnownRawId(runtimeId));
                 }
                 // The warning names the block, once.
@@ -302,10 +320,10 @@ class BedrockPaletteTest {
                 // A sorted ID past the palette
                 BedrockPalette.mappingInfo(startGame(false)), table.paletteSize() + 5);
         blocks.forEach((info, runtimeId) -> {
-            int id = info.toIntermediary().applyAsInt(runtimeId);
+            int id = toId(info, runtimeId);
             assertFullCube(id);
-            assertEquals(runtimeId, info.fromIntermediary().applyAsInt(id));
-            assertEquals(id, info.toIntermediary().applyAsInt(runtimeId));
+            assertEquals(runtimeId, fromId(info, id));
+            assertEquals(id, toId(info, runtimeId));
             assertEquals(FallingFlowMaterial.CUSTOM, info.fallingFlowMaterial().apply(runtimeId));
             assertEquals(HorseJumpMaterial.NONE, info.horseJumpMaterial().apply(runtimeId));
             assertFalse(info.isKnownRawId(runtimeId));
@@ -381,7 +399,7 @@ class BedrockPaletteTest {
             BedrockPalette palette = new BedrockPalette(false, List.of(CustomBlock.of(pipe)), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, BedrockPalette.MAX_CUSTOM_IDS));
             BlockMappingInfo info = palette.mappingInfo();
             for (int runtimeId : customRuntimeIds(info)) {
-                info.toIntermediary().applyAsInt(runtimeId);
+                toId(info, runtimeId);
             }
         } finally {
             System.setErr(stderr);
@@ -427,13 +445,13 @@ class BedrockPaletteTest {
                 int pipe = hashed ? referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 1).build()) : customRuntimeIds(info).getFirst();
                 int unknown = hashed ? unknownHash(1) : table.paletteSize() + 20;
                 for (int read = 0; read < 3; read++) {
-                    info.toIntermediary().applyAsInt(pipe);
-                    info.toIntermediary().applyAsInt(unknown);
+                    toId(info, pipe);
+                    toId(info, unknown);
                 }
                 // A custom block is logged once for its palette, and an unknown ID once for each player.
                 BlockMappingInfo other = palette.mappingInfo();
-                other.toIntermediary().applyAsInt(pipe);
-                other.toIntermediary().applyAsInt(unknown);
+                toId(other, pipe);
+                toId(other, unknown);
                 String log = logged.toString(StandardCharsets.UTF_8);
                 logged.reset();
                 assertEquals(1, log.split(Pattern.quote("Boar does not know the shape of custom block cubecraft:pipe (Boar cannot read the permutation condition \"q.cardinal_facing == 2\"), so it treats the states it cannot read as full 1x1x1 blocks"), -1).length - 1, log);
@@ -443,7 +461,7 @@ class BedrockPaletteTest {
             // A custom block whose boxes Boar reads is not logged.
             BedrockPalette readable = new BedrockPalette(false, List.of(CustomBlock.of(pipe())), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, BedrockPalette.MAX_CUSTOM_IDS));
             BlockMappingInfo readableInfo = readable.mappingInfo();
-            readableInfo.toIntermediary().applyAsInt(customRuntimeIds(readableInfo).getFirst());
+            toId(readableInfo, customRuntimeIds(readableInfo).getFirst());
             String readableLog = logged.toString(StandardCharsets.UTF_8);
             logged.reset();
             assertFalse(readableLog.contains("cubecraft:pipe"), readableLog);
@@ -451,7 +469,7 @@ class BedrockPaletteTest {
             // Past its cap, a player's mapping logs no more unknown IDs.
             BlockMappingInfo info = new BedrockPalette(true, List.of(), false, new BedrockPalette.CustomIds(BedrockPalette.FIRST_CUSTOM_ID, 1)).mappingInfo();
             for (int n = 0; n < BedrockPalette.MAX_WARNED_IDS + 5; n++) {
-                info.toIntermediary().applyAsInt(unknownHash(n));
+                toId(info, unknownHash(n));
             }
         } finally {
             System.setErr(stderr);
@@ -471,7 +489,7 @@ class BedrockPaletteTest {
             BlockMappingInfo info = palette.mappingInfo();
             List<Integer> ids = new ArrayList<>();
             for (int n = 0; n < BedrockPalette.MAX_KEPT_HASHES; n++) {
-                int id = info.toIntermediary().applyAsInt(unknownHash(n));
+                int id = toId(info, unknownHash(n));
                 assertTrue(id > BedrockPalette.UNKNOWN_ID);
                 ids.add(id);
             }
@@ -479,28 +497,28 @@ class BedrockPaletteTest {
             // Past the bound, an unknown hash is the one full cube that Boar never resends, and the IDs kept before stay.
             int past = unknownHash(BedrockPalette.MAX_KEPT_HASHES);
             for (int n = BedrockPalette.MAX_KEPT_HASHES; n < BedrockPalette.MAX_KEPT_HASHES + 100; n++) {
-                int id = info.toIntermediary().applyAsInt(unknownHash(n));
+                int id = toId(info, unknownHash(n));
                 assertEquals(BedrockPalette.UNKNOWN_ID, id);
                 assertFullCube(id);
-                assertTrue(BedrockPalette.isUnknown(BedrockPalette.definition(info, id)));
+                assertTrue(BedrockPalette.isUnknown(definition(info, id)));
             }
             for (int n = 0; n < BedrockPalette.MAX_KEPT_HASHES; n++) {
-                assertEquals(unknownHash(n), BedrockPalette.definition(info, ids.get(n)).getRuntimeId());
+                assertEquals(unknownHash(n), definition(info, ids.get(n)).getRuntimeId());
             }
             // An ID past those kept is not resent either.
-            assertTrue(BedrockPalette.isUnknown(BedrockPalette.definition(info, ids.getLast() + 1)));
+            assertTrue(BedrockPalette.isUnknown(definition(info, ids.getLast() + 1)));
 
             // Another player of the same palette has a table of its own.
             BlockMappingInfo other = palette.mappingInfo();
-            int id = other.toIntermediary().applyAsInt(past);
+            int id = toId(other, past);
             assertTrue(id > BedrockPalette.UNKNOWN_ID);
-            assertEquals(past, other.fromIntermediary().applyAsInt(id));
+            assertEquals(past, fromId(other, id));
 
             // A sorted ID is an index in the client's palette, which Boar reads only up to a million states.
             BlockMappingInfo sorted = BedrockPalette.mappingInfo(startGame(false));
-            assertEquals(BedrockPalette.UNKNOWN_ID, sorted.toIntermediary().applyAsInt(-1));
-            assertEquals(BedrockPalette.UNKNOWN_ID, sorted.toIntermediary().applyAsInt(1 << 20));
-            assertEquals((1 << 20) - 1, sorted.fromIntermediary().applyAsInt(sorted.toIntermediary().applyAsInt((1 << 20) - 1)));
+            assertEquals(BedrockPalette.UNKNOWN_ID, toId(sorted, -1));
+            assertEquals(BedrockPalette.UNKNOWN_ID, toId(sorted, 1 << 20));
+            assertEquals((1 << 20) - 1, fromId(sorted, toId(sorted, (1 << 20) - 1)));
         } finally {
             System.setErr(stderr);
         }
@@ -518,17 +536,17 @@ class BedrockPaletteTest {
         assertNotSame(BedrockPalette.of(vanilla), BedrockPalette.of(info));
         NbtMap northLit = NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 1).build();
         int custom = referenceHash("cubecraft:pipe", northLit);
-        assertTrue(info.toIntermediary().applyAsInt(custom) >= BedrockPalette.FIRST_CUSTOM_ID);
-        assertEquals(custom, info.fromIntermediary().applyAsInt(info.toIntermediary().applyAsInt(custom)));
+        assertTrue(toId(info, custom) >= BedrockPalette.FIRST_CUSTOM_ID);
+        assertEquals(custom, fromId(info, toId(info, custom)));
         assertFalse(info.isKnownRawId(custom));
         assertEquals(FallingFlowMaterial.CUSTOM, info.fallingFlowMaterial().apply(custom));
         assertEquals(HorseJumpMaterial.NONE, info.horseJumpMaterial().apply(custom));
         // Without the pipe, its hash is an unknown full cube.
-        assertTrue(vanilla.toIntermediary().applyAsInt(custom) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(toId(vanilla, custom) > BedrockPalette.UNKNOWN_ID);
 
         for (int i = 0; i < table.paletteSize(); i++) {
-            assertEquals(table.networkHash(i), info.fromIntermediary().applyAsInt(i));
-            assertEquals(i, info.toIntermediary().applyAsInt(table.networkHash(i)));
+            assertEquals(table.networkHash(i), fromId(info, i));
+            assertEquals(i, toId(info, table.networkHash(i)));
         }
         assertTrue(info.isKnownRawId(table.networkHash(stone)));
         // A sorted ID means nothing here.
@@ -551,22 +569,22 @@ class BedrockPaletteTest {
             assertEquals(List.of(info.airId()), info.airIds());
 
             int frame = table.firstIndex("minecraft:frame");
-            assertTrue(info.isItemFrame(palette.definition(frame)));
-            assertTrue(info.isItemFrame(palette.definition(table.firstIndex("minecraft:glow_frame"))));
-            assertFalse(info.isItemFrame(palette.definition(SORTED_STONE)));
+            assertTrue(info.isItemFrame(definition(palette, frame)));
+            assertTrue(info.isItemFrame(definition(palette, table.firstIndex("minecraft:glow_frame"))));
+            assertFalse(info.isItemFrame(definition(palette, SORTED_STONE)));
 
             // Boar's data has every block of the 1.26.30 palette. Without custom blocks, a runtime ID is the palette index or the network hash.
             for (int i = 0; i < table.paletteSize(); i++) {
-                int runtimeId = info.fromIntermediary().applyAsInt(i);
+                int runtimeId = fromId(info, i);
                 assertEquals(hashed ? table.networkHash(i) : i, runtimeId, table.name(i));
                 assertTrue(info.fallingFlowMaterial().apply(runtimeId).isKnown(), table.name(i));
-                assertEquals(i, info.toIntermediary().applyAsInt(runtimeId));
+                assertEquals(i, toId(info, runtimeId));
                 assertTrue(info.isKnownRawId(runtimeId));
             }
             assertEquals(FallingFlowMaterial.CUSTOM, info.fallingFlowMaterial().apply(12345678));
-            assertEquals(HorseJumpMaterial.HONEY, info.horseJumpMaterial().apply(info.fromIntermediary().applyAsInt(table.firstIndex("minecraft:honey_block"))));
-            assertEquals(HorseJumpMaterial.CARPET, info.horseJumpMaterial().apply(info.fromIntermediary().applyAsInt(table.firstIndex("minecraft:white_carpet"))));
-            assertEquals(HorseJumpMaterial.NONE, info.horseJumpMaterial().apply(info.fromIntermediary().applyAsInt(SORTED_STONE)));
+            assertEquals(HorseJumpMaterial.HONEY, info.horseJumpMaterial().apply(fromId(info, table.firstIndex("minecraft:honey_block"))));
+            assertEquals(HorseJumpMaterial.CARPET, info.horseJumpMaterial().apply(fromId(info, table.firstIndex("minecraft:white_carpet"))));
+            assertEquals(HorseJumpMaterial.NONE, info.horseJumpMaterial().apply(fromId(info, SORTED_STONE)));
             assertEquals(HorseJumpMaterial.NONE, info.horseJumpMaterial().apply(12345678));
             assertFalse(info.isKnownRawId(12345678));
         }
@@ -591,9 +609,9 @@ class BedrockPaletteTest {
         assertTrue(BedrockPalette.runtimeIdsUnknown(BedrockPalette.mappingInfo(startGame(false, door))));
         BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, door, lamp()));
         assertFalse(BedrockPalette.runtimeIdsUnknown(hashed));
-        assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build())) > BedrockPalette.UNKNOWN_ID);
-        assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:lamp", state("level", 0))) > BedrockPalette.UNKNOWN_ID);
-        assertTrue(hashed.isKnownRawId(hashed.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(toId(hashed, referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build())) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(toId(hashed, referenceHash("cubecraft:lamp", state("level", 0))) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(hashed.isKnownRawId(fromId(hashed, SORTED_STONE)));
 
         // The client ignores a type it does not know, such as one of a later version, and a type that is not a string.
         List<NbtMap> pipeStates = new ArrayList<>();
@@ -635,7 +653,7 @@ class BedrockPaletteTest {
         for (BlockPropertyData merged : List.of(withProperty, withTrait)) {
             assertTrue(BedrockPalette.runtimeIdsUnknown(BedrockPalette.mappingInfo(startGame(false, merged, pipe()))), merged.getName());
             BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, merged, pipe()));
-            assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build())) > BedrockPalette.UNKNOWN_ID, merged.getName());
+            assertTrue(toId(hashed, referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build())) > BedrockPalette.UNKNOWN_ID, merged.getName());
         }
         // The client skips a copy without vanilla_block_data before it adds anything.
         assertSame(BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false))), BedrockPalette.of(BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(withProperty)))));
@@ -727,10 +745,10 @@ class BedrockPaletteTest {
         assertNotSame(BedrockPalette.of(first), BedrockPalette.of(again));
         // A palette made again gives the block the same custom ID.
         int runtimeId = 0;
-        while (first.toIntermediary().applyAsInt(runtimeId) < BedrockPalette.FIRST_CUSTOM_ID) {
+        while (toId(first, runtimeId) < BedrockPalette.FIRST_CUSTOM_ID) {
             runtimeId++;
         }
-        assertEquals(first.toIntermediary().applyAsInt(runtimeId), again.toIntermediary().applyAsInt(runtimeId));
+        assertEquals(toId(first, runtimeId), toId(again, runtimeId));
     }
 
     // Blocks with this many custom states in all, as blocks of at most 65536 states, the most one block can have
@@ -753,15 +771,15 @@ class BedrockPaletteTest {
         assertTrue(Long.compareUnsigned(BedrockPalette.nameHash(block.getName()), BedrockPalette.nameHash("minecraft:stone")) < 0, block.getName());
         assertFalse(BedrockPalette.runtimeIdsUnknown(info));
         int stone = SORTED_STONE + states.size();
-        assertEquals(stone, info.fromIntermediary().applyAsInt(SORTED_STONE));
-        assertEquals(SORTED_STONE, info.toIntermediary().applyAsInt(stone));
+        assertEquals(stone, fromId(info, SORTED_STONE));
+        assertEquals(SORTED_STONE, toId(info, stone));
         assertTrue(info.isKnownRawId(stone));
         List<Integer> custom = customRuntimeIds(info, table.paletteSize() + states.size());
         assertEquals(states.size(), custom.size());
         for (int s = 0; s < states.size(); s++) {
             int runtimeId = custom.getFirst() + s;
             assertEquals(runtimeId, custom.get(s));
-            SimpleBlockDefinition definition = (SimpleBlockDefinition) BedrockPalette.of(info).definition(info.toIntermediary().applyAsInt(runtimeId));
+            SimpleBlockDefinition definition = (SimpleBlockDefinition) definition(BedrockPalette.of(info), toId(info, runtimeId));
             assertEquals(runtimeId, definition.getRuntimeId());
             assertEquals(NbtMap.builder().putString("name", block.getName()).putCompound("states", states.get(s)).build(), definition.getState());
         }
@@ -789,7 +807,7 @@ class BedrockPaletteTest {
         // Of two blocks with the same name, the client keeps the last.
         assertStatesBeforeStone(block("cubecraft:pipe", property("level", NbtType.INT, List.of(1, 2, 3))), List.of(state("level", 1), state("level", 2), state("level", 3)));
         BlockMappingInfo twice = BedrockPalette.mappingInfo(startGame(false, pipe(), block("cubecraft:pipe", property("level", NbtType.INT, List.of(1, 2, 3)))));
-        assertEquals(SORTED_STONE + 3, twice.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 3, fromId(twice, SORTED_STONE));
     }
 
     // The client skips a block without a vanilla_block_data compound, so with sorted IDs only the blocks it keeps move stone.
@@ -803,17 +821,17 @@ class BedrockPaletteTest {
         for (BlockPropertyData skipped : List.of(withoutVanillaBlockData(vent()), otherType, broken)) {
             BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(false, skipped, pipe()));
             assertFalse(BedrockPalette.runtimeIdsUnknown(info));
-            assertEquals(SORTED_STONE + 8, info.fromIntermediary().applyAsInt(SORTED_STONE));
-            assertEquals(SORTED_STONE, info.toIntermediary().applyAsInt(SORTED_STONE + 8));
+            assertEquals(SORTED_STONE + 8, fromId(info, SORTED_STONE));
+            assertEquals(SORTED_STONE, toId(info, SORTED_STONE + 8));
             List<Integer> custom = customRuntimeIds(info);
             assertEquals(8, custom.size());
             for (int runtimeId : custom) {
-                assertEquals("cubecraft:pipe", ((SimpleBlockDefinition) BedrockPalette.definition(info, info.toIntermediary().applyAsInt(runtimeId))).getIdentifier());
+                assertEquals("cubecraft:pipe", ((SimpleBlockDefinition) definition(info, toId(info, runtimeId))).getIdentifier());
             }
         }
         // The client keeps a block whatever its compound holds, so an empty one will do.
         BlockPropertyData empty = new BlockPropertyData("cubecraft:vent", vent().getProperties().toBuilder().putCompound("vanilla_block_data", NbtMap.EMPTY).build());
-        assertEquals(SORTED_STONE + 11, BedrockPalette.mappingInfo(startGame(false, empty, pipe())).fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 11, fromId(BedrockPalette.mappingInfo(startGame(false, empty, pipe())), SORTED_STONE));
     }
 
     // With hashed IDs, the states of a block the client skips are runtime IDs it does not know.
@@ -823,28 +841,28 @@ class BedrockPaletteTest {
         for (int level = 0; level < 3; level++) {
             int runtimeId = referenceHash("cubecraft:vent", state("level", level));
             assertTrue(table.indexOfHash(runtimeId) < 0);
-            assertTrue(info.toIntermediary().applyAsInt(runtimeId) > BedrockPalette.UNKNOWN_ID, "level " + level);
+            assertTrue(toId(info, runtimeId) > BedrockPalette.UNKNOWN_ID, "level " + level);
             assertFalse(info.isKnownRawId(runtimeId));
         }
-        int pipe = info.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build()));
+        int pipe = toId(info, referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build()));
         assertTrue(pipe >= BedrockPalette.FIRST_CUSTOM_ID && pipe < BedrockPalette.UNKNOWN_ID);
-        assertTrue(info.isKnownRawId(info.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(info.isKnownRawId(fromId(info, SORTED_STONE)));
     }
 
     // The client skips a block without vanilla_block_data before it keeps the last block of a name, so an earlier block of that name stays, and a name whose every block lacks it is gone.
     @Test
     void aBlockWithoutVanillaBlockDataLeavesTheEarlierBlockOfItsName() throws IOException {
         BlockPropertyData levels = block("cubecraft:pipe", property("level", NbtType.INT, List.of(1, 2, 3)));
-        assertEquals(SORTED_STONE + 8, BedrockPalette.mappingInfo(startGame(false, pipe(), withoutVanillaBlockData(levels))).fromIntermediary().applyAsInt(SORTED_STONE));
-        assertEquals(SORTED_STONE + 3, BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(pipe()), levels)).fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE + 8, fromId(BedrockPalette.mappingInfo(startGame(false, pipe(), withoutVanillaBlockData(levels))), SORTED_STONE));
+        assertEquals(SORTED_STONE + 3, fromId(BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(pipe()), levels)), SORTED_STONE));
         BlockMappingInfo neither = BedrockPalette.mappingInfo(startGame(false, withoutVanillaBlockData(pipe()), withoutVanillaBlockData(levels)));
-        assertEquals(SORTED_STONE, neither.fromIntermediary().applyAsInt(SORTED_STONE));
+        assertEquals(SORTED_STONE, fromId(neither, SORTED_STONE));
         assertEquals(List.of(), customRuntimeIds(neither));
 
         BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, pipe(), withoutVanillaBlockData(levels)));
-        int pipe = hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build()));
+        int pipe = toId(hashed, referenceHash("cubecraft:pipe", NbtMap.builder().putString("facing", "north").putByte("lit", (byte) 0).build()));
         assertTrue(pipe >= BedrockPalette.FIRST_CUSTOM_ID && pipe < BedrockPalette.UNKNOWN_ID);
-        assertTrue(hashed.toIntermediary().applyAsInt(referenceHash("cubecraft:pipe", state("level", 1))) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(toId(hashed, referenceHash("cubecraft:pipe", state("level", 1))) > BedrockPalette.UNKNOWN_ID);
     }
 
     @Test
@@ -893,13 +911,13 @@ class BedrockPaletteTest {
         for (BlockPropertyData block : blocks) {
             before += Long.compareUnsigned(BedrockPalette.nameHash(block.getName()), BedrockPalette.nameHash("minecraft:stone")) < 0 ? 0x10000 : 0;
         }
-        assertEquals(SORTED_STONE + before, sorted.fromIntermediary().applyAsInt(SORTED_STONE));
-        assertEquals(SORTED_STONE, sorted.toIntermediary().applyAsInt(SORTED_STONE + before));
+        assertEquals(SORTED_STONE + before, fromId(sorted, SORTED_STONE));
+        assertEquals(SORTED_STONE, toId(sorted, SORTED_STONE + before));
 
         BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, blocks));
-        assertTrue(hashed.isKnownRawId(hashed.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(hashed.isKnownRawId(fromId(hashed, SORTED_STONE)));
         int many = CustomBlock.networkHash("cubecraft:many_0", NbtMap.builder().putInt("n", 0).build());
-        assertTrue(hashed.toIntermediary().applyAsInt(many) > BedrockPalette.UNKNOWN_ID);
+        assertTrue(toId(hashed, many) > BedrockPalette.UNKNOWN_ID);
     }
 
     // Two states of one block with the same network hash share it, and it means the later.
@@ -911,13 +929,13 @@ class BedrockPaletteTest {
         assertEquals(clashHash, referenceHash("cubecraft:clash", state("n", "v219640")));
         BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, clash));
         BedrockPalette palette = BedrockPalette.of(hashed);
-        int later = hashed.toIntermediary().applyAsInt(clashHash);
+        int later = toId(hashed, clashHash);
         assertTrue(later >= BedrockPalette.FIRST_CUSTOM_ID && later < BedrockPalette.UNKNOWN_ID);
-        assertEquals(state("n", "v219640"), ((SimpleBlockDefinition) palette.definition(later)).getState().getCompound("states"));
-        assertEquals(clashHash, palette.definition(later - 1).getRuntimeId());
+        assertEquals(state("n", "v219640"), ((SimpleBlockDefinition) definition(palette, later)).getState().getCompound("states"));
+        assertEquals(clashHash, definition(palette, later - 1).getRuntimeId());
         // Sorted IDs do not use the hash.
         BlockMappingInfo sorted = BedrockPalette.mappingInfo(startGame(false, clash));
-        assertTrue(sorted.isKnownRawId(sorted.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(sorted.isKnownRawId(fromId(sorted, SORTED_STONE)));
         assertEquals(2, customRuntimeIds(sorted).size());
     }
 
@@ -935,13 +953,13 @@ class BedrockPaletteTest {
         String second = aFirst ? "cubecraft:clash_b" : "cubecraft:clash_a";
         BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(true, b, a));
         BedrockPalette palette = BedrockPalette.of(info);
-        BlockDefinition firstState = palette.definition(info.toIntermediary().applyAsInt(hash));
-        BlockDefinition secondState = palette.definition(info.toIntermediary().applyAsInt(hash + 1));
+        BlockDefinition firstState = definition(palette, toId(info, hash));
+        BlockDefinition secondState = definition(palette, toId(info, hash + 1));
         assertEquals(first, ((SimpleBlockDefinition) firstState).getIdentifier());
         assertEquals(second, ((SimpleBlockDefinition) secondState).getIdentifier());
         assertEquals(hash, firstState.getRuntimeId());
         assertEquals(hash + 1, secondState.getRuntimeId());
-        assertTrue(info.isKnownRawId(info.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(info.isKnownRawId(fromId(info, SORTED_STONE)));
     }
 
     // A custom state whose network hash a vanilla state has: the state that comes first in the sorted palette keeps it, and the other takes the next free ID.
@@ -962,21 +980,21 @@ class BedrockPaletteTest {
         BlockMappingInfo info = BedrockPalette.mappingInfo(startGame(true, block("cubecraft:pipe", property("n", NbtType.STRING, List.of("v583610"))), block("cubecraft:lamp", property("n", NbtType.STRING, List.of("v281011")))));
         BedrockPalette palette = BedrockPalette.of(info);
         // The pipe comes before sculk_vein, which moves to the next ID.
-        int pipe = info.toIntermediary().applyAsInt(sculkHash);
+        int pipe = toId(info, sculkHash);
         assertTrue(pipe >= BedrockPalette.FIRST_CUSTOM_ID && pipe < BedrockPalette.UNKNOWN_ID);
-        assertEquals(sculkHash, palette.definition(pipe).getRuntimeId());
-        assertEquals(sculk, info.toIntermediary().applyAsInt(sculkHash + 1));
-        assertEquals(sculkHash + 1, info.fromIntermediary().applyAsInt(sculk));
+        assertEquals(sculkHash, definition(palette, pipe).getRuntimeId());
+        assertEquals(sculk, toId(info, sculkHash + 1));
+        assertEquals(sculkHash + 1, fromId(info, sculk));
         assertTrue(info.isKnownRawId(sculkHash + 1));
         assertFalse(info.isKnownRawId(sculkHash));
         // chiseled_bookshelf comes before the lamp, which moves to the next ID.
-        assertEquals(bookshelf, info.toIntermediary().applyAsInt(bookshelfHash));
-        assertEquals(bookshelfHash, info.fromIntermediary().applyAsInt(bookshelf));
-        int lamp = info.toIntermediary().applyAsInt(bookshelfHash + 1);
+        assertEquals(bookshelf, toId(info, bookshelfHash));
+        assertEquals(bookshelfHash, fromId(info, bookshelf));
+        int lamp = toId(info, bookshelfHash + 1);
         assertTrue(lamp >= BedrockPalette.FIRST_CUSTOM_ID && lamp < BedrockPalette.UNKNOWN_ID);
-        assertEquals(bookshelfHash + 1, palette.definition(lamp).getRuntimeId());
-        assertEquals(state("n", "v281011"), ((SimpleBlockDefinition) palette.definition(lamp)).getState().getCompound("states"));
-        assertTrue(info.isKnownRawId(info.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertEquals(bookshelfHash + 1, definition(palette, lamp).getRuntimeId());
+        assertEquals(state("n", "v281011"), ((SimpleBlockDefinition) definition(palette, lamp)).getState().getCompound("states"));
+        assertTrue(info.isKnownRawId(fromId(info, SORTED_STONE)));
     }
 
     // Every palette with the same custom block shares one Boar block of it, whose default state is the block's first state, as the client places it.
@@ -991,7 +1009,7 @@ class BedrockPaletteTest {
 
         BoarBlockState placed = pipe.defaultBlockState(Vector3i.ZERO, 0);
         assertTrue(placed.intermediaryId() >= BedrockPalette.FIRST_CUSTOM_ID);
-        assertEquals(NbtMap.builder().putString("facing", "north").build(), ((SimpleBlockDefinition) BedrockPalette.definition(sorted, placed.intermediaryId())).getState().getCompound("states"));
+        assertEquals(NbtMap.builder().putString("facing", "north").build(), ((SimpleBlockDefinition) definition(sorted, placed.intermediaryId())).getState().getCompound("states"));
         // Each state of the block is a state of that block, and the states of another block are not.
         assertTrue(placed.is(pipe));
         assertTrue(BedrockState.FACTORY.create(placed.intermediaryId() + 1, Vector3i.ZERO, 0).is(pipe));
@@ -1031,8 +1049,8 @@ class BedrockPaletteTest {
                 assertTrue(BedrockPalette.hasBlock(info, name), name);
             }
             // The gate's states still have their own block.
-            int gateId = customRuntimeIds(info, table.paletteSize() + 32).stream().mapToInt(runtimeId -> info.toIntermediary().applyAsInt(runtimeId))
-                    .filter(id -> BedrockPalette.definition(info, id) instanceof SimpleBlockDefinition definition && definition.getState().getString("name").equals("cubecraft:placed_gate")).findFirst().orElseThrow();
+            int gateId = customRuntimeIds(info, table.paletteSize() + 32).stream().mapToInt(runtimeId -> toId(info, runtimeId))
+                    .filter(id -> definition(info, id) instanceof SimpleBlockDefinition definition && definition.getState().getString("name").equals("cubecraft:placed_gate")).findFirst().orElseThrow();
             CustomBlockType type = (CustomBlockType) BedrockState.FACTORY.create(gateId, Vector3i.ZERO, 0).block();
             assertEquals(List.of("minecraft:cardinal_direction"), type.unsetStates());
         } finally {
@@ -1120,9 +1138,9 @@ class BedrockPaletteTest {
         int withIds = 0;
         int kept = 0;
         for (int runtimeId = 0; runtimeId < table.paletteSize() + 11; runtimeId++) {
-            int id = info.toIntermediary().applyAsInt(runtimeId);
+            int id = toId(info, runtimeId);
             withIds += id >= BedrockPalette.FIRST_CUSTOM_ID && id < BedrockPalette.UNKNOWN_ID ? 1 : 0;
-            kept += id > BedrockPalette.UNKNOWN_ID && BedrockPalette.definition(info, id).getRuntimeId() == runtimeId ? 1 : 0;
+            kept += id > BedrockPalette.UNKNOWN_ID && definition(info, id).getRuntimeId() == runtimeId ? 1 : 0;
         }
         assertEquals(pipe.stateCount(), withIds);
         assertEquals(lamp.stateCount(), kept);
@@ -1133,7 +1151,7 @@ class BedrockPaletteTest {
     void aPropertyWithoutValuesMakesTheIdsUnknown() {
         BlockPropertyData noValues = block("cubecraft:broken", property("open", NbtType.BYTE, List.of()));
         BlockMappingInfo sorted = BedrockPalette.mappingInfo(startGame(false, pipe(), noValues));
-        int stone = sorted.fromIntermediary().applyAsInt(SORTED_STONE);
+        int stone = fromId(sorted, SORTED_STONE);
         assertEquals(SORTED_STONE, stone);
         assertFalse(sorted.isKnownRawId(stone));
         assertFalse(sorted.isKnownRawId(sorted.airId()));
@@ -1141,7 +1159,7 @@ class BedrockPaletteTest {
 
         // With hashed IDs, Boar still knows the vanilla IDs.
         BlockMappingInfo hashed = BedrockPalette.mappingInfo(startGame(true, noValues));
-        assertTrue(hashed.isKnownRawId(hashed.fromIntermediary().applyAsInt(SORTED_STONE)));
+        assertTrue(hashed.isKnownRawId(fromId(hashed, SORTED_STONE)));
         assertFalse(BedrockPalette.runtimeIdsUnknown(hashed));
     }
 }

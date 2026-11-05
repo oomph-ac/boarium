@@ -11,6 +11,7 @@ import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
 import ac.oomph.boarium.boar.blocks.BedrockBlock;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockBlockUnion;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.boar.blocks.BedrockState;
 import ac.oomph.boarium.boar.blocks.GeyserFixtures;
@@ -110,7 +111,7 @@ class BedrockItemsTest {
         // A furnace item places an unlit furnace, Bedrock Dedicated Server's default.
         assertPlaces("minecraft:furnace", "minecraft:furnace");
         BoarBlockState furnace = BlockMappings.get().getItemToBlock().get(item("minecraft:furnace")).defaultBlockState(Vector3i.ZERO, 0);
-        assertEquals("minecraft:furnace", BedrockBlockTable.get().name(furnace.intermediaryId()));
+        assertEquals("minecraft:furnace", BedrockBlockUnion.get().table().name(furnace.intermediaryId()));
         // Bedrock only
         assertPlaces("minecraft:border_block", "minecraft:border_block");
         assertPlaces("minecraft:frame", "minecraft:frame");
@@ -135,7 +136,7 @@ class BedrockItemsTest {
             int own = table.defaultIndex(entry.getKey().toString());
             if (own >= 0) {
                 List<Box> placed = entry.getValue().defaultBlockState(Vector3i.ZERO, 0).getCollisionBoxes();
-                assertEquals(BedrockState.FACTORY.create(own, Vector3i.ZERO, 0).getCollisionBoxes(), placed, entry.getKey().toString());
+                assertEquals(BedrockState.FACTORY.create(BedrockBlockUnion.get().toShared(table.protocol(), own), Vector3i.ZERO, 0).getCollisionBoxes(), placed, entry.getKey().toString());
                 compared++;
             }
         }
@@ -202,7 +203,7 @@ class BedrockItemsTest {
         assertNotNull(marble);
         assertEquals("cubecraft:item_marble", marble.toString());
         assertTrue(marble.defaultBlockState(Vector3i.ZERO, 0).is(marble));
-        assertTrue(marble.defaultBlockState(Vector3i.ZERO, 0).intermediaryId() >= BedrockBlockTable.get().paletteSize());
+        assertTrue(marble.defaultBlockState(Vector3i.ZERO, 0).intermediaryId() >= BedrockBlockUnion.get().table().paletteSize());
         assertSame(marble, placed(session, "cubecraft:chisel"));
         // The client places these blocks, so Boar counts the items down, but it does not place them: only on the blocks use_on lists, a vanilla block, a custom block in the minecraft namespace.
         assertPlacesUnknownBlock(session, "cubecraft:picky_chisel");

@@ -19,7 +19,9 @@ import java.util.Set;
  * The first name is the block's main name, and that name's default state from Bedrock Dedicated Server is the block's default state.
  */
 public final class BedrockBlock implements Block {
-    private static final BedrockBlockTable TABLE = BedrockBlockTable.get();
+    private static final BedrockBlockTable TABLE = BedrockBlockUnion.get().table();
+    // Boar checks only the players of this table's protocol, whose default states can differ from the shared table's, such as a fence's without connection states.
+    private static final BedrockBlockTable CHECKED = BedrockBlockTable.get();
 
     // The other Bedrock names of a block, by its main name, as Geyser groups them from Java blocks; slabs get their double slabs from the palette. The two piston arms stay apart, as on Bedrock.
     private static final Map<String, List<String>> OTHER_NAMES = Map.ofEntries(
@@ -78,7 +80,10 @@ public final class BedrockBlock implements Block {
         ALL = List.copyOf(all);
 
         // Boar gives pointed dripstone its offset box by name, and a sulfur spike has the same states and boxes.
-        BY_NAME.get("minecraft:sulfur_spike").lookalike = BY_NAME.get("minecraft:pointed_dripstone");
+        BedrockBlock spike = BY_NAME.get("minecraft:sulfur_spike");
+        if (spike != null) {
+            spike.lookalike = BY_NAME.get("minecraft:pointed_dripstone");
+        }
     }
 
     private final List<String> names;
@@ -88,7 +93,8 @@ public final class BedrockBlock implements Block {
 
     private BedrockBlock(List<String> names) {
         this.names = List.copyOf(names);
-        this.defaultIndex = TABLE.defaultIndex(names.getFirst());
+        int checked = CHECKED.defaultIndex(names.getFirst());
+        this.defaultIndex = checked < 0 ? TABLE.defaultIndex(names.getFirst()) : BedrockBlockUnion.get().toShared(CHECKED.protocol(), checked);
         for (String name : names) {
             if (TABLE.firstIndex(name) < 0) {
                 throw new IllegalStateException("The Bedrock palette has no " + name);
@@ -104,9 +110,9 @@ public final class BedrockBlock implements Block {
         return names;
     }
 
-    // The block of a palette index
-    public static BedrockBlock of(int index) {
-        return BY_INDEX[index];
+    // The block of a shared ID
+    public static BedrockBlock of(int id) {
+        return BY_INDEX[id];
     }
 
     // The block with this Bedrock name, such as "minecraft:flowing_water", or null

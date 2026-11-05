@@ -4,15 +4,22 @@ import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
 
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
+import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 
 /**
  * The Bedrock block palette with each state's collision boxes and block properties from Bedrock Dedicated Server, for the state alone with no world around it, and each block's default state, read from the table the blockdata module generates from Bedrock data.
@@ -260,6 +267,79 @@ public final class BedrockBlockTable {
         } catch (RuntimeException e) {
             throw new IOException("Corrupt Bedrock block table", e);
         }
+    }
+
+    // Writes the table as gzip in the format load reads, as the blockdata module writes it
+    void write(OutputStream out) throws IOException {
+        Map<String, Integer> strings = new LinkedHashMap<>();
+        List<float[]> shapeList = new ArrayList<>();
+        Map<String, Integer> shapeIds = new HashMap<>();
+        ByteArrayOutputStream bodyBytes = new ByteArrayOutputStream();
+        DataOutputStream body = new DataOutputStream(bodyBytes);
+        int[] entryShapes = new int[this.names.length];
+        for (int i = 0; i < entryShapes.length; i++) {
+            float[] shape = this.collision(i);
+            entryShapes[i] = shapeIds.computeIfAbsent(Arrays.toString(shape), key -> {
+                shapeList.add(shape);
+                return shapeList.size() - 1;
+            });
+        }
+        body.writeInt(shapeList.size());
+        for (float[] shape : shapeList) {
+            body.writeByte(shape.length / 6);
+            for (float value : shape) {
+                body.writeFloat(value);
+            }
+        }
+        body.writeInt(this.names.length);
+        for (int i = 0; i < this.names.length; i++) {
+            body.writeShort(index(strings, this.names[i]));
+            body.writeInt(this.hashes[i]);
+            body.writeByte(this.states[i].size());
+            for (Map.Entry<String, Object> state : this.states[i].entrySet()) {
+                body.writeShort(index(strings, state.getKey()));
+                switch (state.getValue()) {
+                    case Byte value -> {
+                        body.writeByte(TAG_BYTE);
+                        body.writeByte(value);
+                    }
+                    case Integer value -> {
+                        body.writeByte(TAG_INT);
+                        body.writeInt(value);
+                    }
+                    case String value -> {
+                        body.writeByte(TAG_STRING);
+                        body.writeShort(index(strings, value));
+                    }
+                    default -> throw new IOException("Palette entry " + i + " has a state of type " + state.getValue().getClass().getSimpleName());
+                }
+            }
+            body.writeShort(entryShapes[i]);
+            body.writeByte(this.flags[i]);
+            body.writeFloat(this.hardness[i]);
+            body.writeFloat(this.friction[i]);
+        }
+        body.writeInt(this.firstByName.size());
+        for (int i = 0; i < this.names.length; i += this.countByName.get(this.names[i])) {
+            body.writeShort(this.defaultByName.get(this.names[i]));
+        }
+
+        DataOutputStream data = new DataOutputStream(new GZIPOutputStream(out));
+        data.writeInt(MAGIC);
+        data.writeInt(FORMAT);
+        data.writeInt(this.protocol);
+        data.writeUTF(this.sourceVersion);
+        data.writeInt(this.blockVersion);
+        data.writeInt(strings.size());
+        for (String value : strings.keySet()) {
+            data.writeUTF(value);
+        }
+        bodyBytes.writeTo(data);
+        data.close();
+    }
+
+    private static int index(Map<String, Integer> strings, String value) {
+        return strings.computeIfAbsent(value, key -> strings.size());
     }
 
     // The Bedrock protocol version of the palette, or -1 for BedrockBlockUnion's table

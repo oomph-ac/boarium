@@ -27,6 +27,7 @@ import ac.boar.protocol.api.CloudburstPacketEvent;
 import ac.boar.protocol.api.PacketListener;
 import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockBlockUnion;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
@@ -380,7 +381,7 @@ class BoarSessionTest {
         for (int runtimeId = 0; runtimeId < AIR_RUNTIME_ID + 2; runtimeId++) {
             int id = player.mappingInfo.toIntermediary().applyAsInt(runtimeId);
             BoarBlockState state = BoarBlockState.create(id, Vector3i.ZERO, 0);
-            if (id >= BedrockBlockTable.get().paletteSize()) {
+            if (id >= BedrockBlockUnion.get().table().paletteSize()) {
                 assertFalse(state.isAir());
                 assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(state.getCollisionBoxes()));
                 assertEquals(runtimeId, state.definition(player).getRuntimeId());
@@ -414,13 +415,13 @@ class BoarSessionTest {
         BoarBlockState lavaState = onLoop(session, () -> player.compensatedWorld.getBlockState(lavaPos, 0));
         assertTrue(lavaState.is(Blocks.LAVA));
         assertEquals(3, lavaState.get(Properties.LEVEL));
-        assertEquals(lava, lavaState.intermediaryId());
+        assertEquals(BedrockBlockUnion.get().toShared(table.protocol(), lava), lavaState.intermediaryId());
         assertEquals(lava, lavaState.definition(player).getRuntimeId());
 
         BoarBlockState slabState = onLoop(session, () -> player.compensatedWorld.getBlockState(slabPos, 0));
         assertEquals("minecraft:oak_slab", slabState.block().toString());
         assertEquals("double", slabState.get(Properties.SLAB_TYPE));
-        assertEquals("minecraft:oak_double_slab", table.name(slabState.intermediaryId()));
+        assertEquals("minecraft:oak_double_slab", BedrockBlockUnion.get().table().name(slabState.intermediaryId()));
         assertEquals(slab, slabState.definition(player).getRuntimeId());
         assertArrayEquals(corners(List.of(new Box(0, 0, 0, 1, 1, 1))), corners(slabState.getCollisionBoxes()));
         this.assertNothingFailed();
@@ -1826,7 +1827,7 @@ class BoarSessionTest {
         this.client.received.clear();
         onLoop(session, () -> {
             BlockUtil.syncBlock(player, unknown, BoarBlockState.create(BedrockPalette.UNKNOWN_ID, unknown, 0));
-            BlockUtil.syncBlock(player, stone, BoarBlockState.create(BedrockBlockTable.get().firstIndex("minecraft:stone"), stone, 0));
+            BlockUtil.syncBlock(player, stone, BoarBlockState.create(BedrockBlockUnion.get().table().firstIndex("minecraft:stone"), stone, 0));
             return null;
         });
         // Boar writes the client both blocks in order, so every packet before the stone's is kept.
@@ -2007,7 +2008,7 @@ class BoarSessionTest {
     private int customRuntimeId(Session session, BoarPlayer player) throws Exception {
         return onLoop(session, () -> {
             for (int runtimeId = 0; ; runtimeId++) {
-                if (player.mappingInfo.toIntermediary().applyAsInt(runtimeId) >= BedrockBlockTable.get().paletteSize()) {
+                if (player.mappingInfo.toIntermediary().applyAsInt(runtimeId) >= BedrockBlockUnion.get().table().paletteSize()) {
                     return runtimeId;
                 }
             }

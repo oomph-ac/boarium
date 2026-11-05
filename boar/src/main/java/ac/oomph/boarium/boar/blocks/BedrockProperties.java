@@ -27,7 +27,7 @@ public final class BedrockProperties implements PropertyProvider {
     private static final Byte OFF = 0;
     private static final Byte ON = 1;
 
-    public static final BedrockProperties INSTANCE = new BedrockProperties(BedrockBlockTable.get());
+    public static final BedrockProperties INSTANCE = new BedrockProperties(BedrockBlockUnion.get().table());
 
     private final Map<String, BedrockProperty<?>> bound = new HashMap<>();
 

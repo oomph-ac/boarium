@@ -19,12 +19,12 @@ import java.util.function.IntFunction;
 
 /**
  * The collision boxes that Bedrock 1.26.30 builds from the neighbouring blocks, as the client does: fences, panes and bars, chorus plants and stair corners.
- * A state here is a palette index, and neighbours are read from layer 0 of Boar's world.
+ * A state here is a shared ID of {@link BedrockBlockUnion}, and neighbours are read from layer 0 of Boar's world.
  */
 final class BedrockConnections {
     static final String RULES_RESOURCE = "/ac/oomph/boarium/boar/blocks/connection_rules.26_30.txt";
-    private static final BedrockBlockTable TABLE = BedrockBlockTable.get();
-    // An ID outside the vanilla palette, such as a custom block's
+    private static final BedrockBlockTable TABLE = BedrockBlockUnion.get().table();
+    // An ID outside the shared table, such as a custom block's
     private static final int UNKNOWN = -1;
 
     // Sides, as indices into DX and DZ; the side opposite s is (s + 2) & 3.
@@ -196,13 +196,13 @@ final class BedrockConnections {
         };
     }
 
-    // The palette index at a position, or UNKNOWN
+    // The shared ID at a position, or UNKNOWN
     private static int at(BoarPlayer player, int x, int y, int z) {
         int index = player.compensatedWorld.getBlockAt(x, y, z, 0);
         return index >= 0 && index < RULES.length ? index : UNKNOWN;
     }
 
-    // Whether a block of this kind joins the neighbour on that side. A block outside the vanilla palette has no rule, so every kind joins it, as the client does for a block without a connection rule component.
+    // Whether a block of this kind joins the neighbour on that side. A block outside the shared table has no rule, so every kind joins it, as the client does for a block without a connection rule component.
     private static boolean joins(BoarPlayer player, int kind, int x, int y, int z, int side) {
         int index = at(player, x + DX[side], y, z + DZ[side]);
         int rule = index == UNKNOWN ? ALL : RULES[index];

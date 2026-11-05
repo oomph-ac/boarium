@@ -6,6 +6,7 @@ import ac.boar.anticheat.check.api.BoarDefaultChecks;
 import ac.boar.anticheat.config.Config;
 import ac.boar.protocol.BoarDefaultPacketListeners;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.boar.blocks.BedrockBlockUnion;
 import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
@@ -49,8 +50,9 @@ public final class BoariumBoar {
             throw new IllegalStateException("Boar has started already");
         }
         readConfig(dataFolder);
-        // A block table that cannot load fails here with its cause; later uses would only see NoClassDefFoundError.
+        // A block table that cannot load fails here with its cause; later uses would only see NoClassDefFoundError. So does a shared table older than this one, which toShared checks.
         BedrockBlockTable table = BedrockBlockTable.get();
+        BedrockBlockUnion.get().toShared(table.protocol(), 0);
         if (BedrockVersions.codec(table.protocol()) == null) {
             throw new IllegalStateException("The block table is for protocol " + table.protocol() + ", which boarium does not speak");
         }
@@ -70,9 +72,9 @@ public final class BoariumBoar {
             if (protocol == table.protocol()) {
                 return processor;
             }
-            // Every protocol has a block table, but Boar's blocks, block states and items are still those of BedrockBlockTable.get() alone.
+            // Boar's block states have the shared IDs of every protocol's table, but its items, default block states and connection rules are still those of BedrockBlockTable.get() alone.
             if (WARNED_PROTOCOLS.add(protocol)) {
-                LOG.warn("Boar does not check players on protocol {}, since its blocks and items are those of protocol {}", protocol, table.protocol());
+                LOG.warn("Boar does not check players on protocol {}, since its items and block rules are those of protocol {}", protocol, table.protocol());
             }
             return Processor.NONE;
         };

@@ -261,7 +261,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
             Map<BedrockItem, String> blocks = new HashMap<>();
             for (String name : this.names) {
                 String block = placedBlock(name, table);
-                // A name that is not a 1.26.30 item has no Boar block, since Boar's blocks are the 1.26.30 table's
+                // A name that is not a 1.26.30 item has no Boar block, since Boar's items are those of 1.26.30
                 BedrockItem item = ITEMS.containsKey(name) ? ITEMS.get(name) : OTHER_ITEMS.computeIfAbsent(name, n -> new BedrockItem(n, null, block != null));
                 if (item.isBlock() != (block != null)) {
                     throw new IllegalStateException(name + " is a block item in one version and not in another, here " + version);

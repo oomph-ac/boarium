@@ -17,6 +17,7 @@ val tables = listOf(
 tasks.register<JavaExec>("generateBedrockBlocks") {
     classpath = sourceSets["main"].runtimeClasspath
     mainClass = "ac.oomph.boarium.blockdata.BedrockBlockGenerator"
+    finalizedBy(":boar:generateBedrockBlockUnion")
     workingDir = rootDir
     args(tables.flatMap { (folder, version, protocol, source) ->
         listOf("blockdata/data/bedrock/$folder", "boar/src/main/resources/ac/oomph/boarium/boar/blocks/bedrock_blocks.$version.bin.gz", protocol, source)
