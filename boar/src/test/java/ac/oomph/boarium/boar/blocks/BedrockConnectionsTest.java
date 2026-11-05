@@ -406,6 +406,39 @@ class BedrockConnectionsTest {
         assertBoxes(this.boarBoxes(north), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F);
     }
 
+    // A 26.50 fence or pane with no connection set, the state Boar places for a newer client, builds its arms from its neighbours as the 1.26.30 one does, and a fence is a post with no neighbours.
+    @Test
+    void unconnectedFenceOf26_50JoinsItsNeighbours() {
+        int unconnected = shared(V26_50, "oak_fence", "minecraft:connection_north", (byte) 0, "minecraft:connection_east", (byte) 0, "minecraft:connection_south", (byte) 0, "minecraft:connection_west", (byte) 0);
+        assertBoxes(this.boarBoxes(unconnected), POST);
+        this.player.compensatedWorld.updateBlock(POS.north(), 0, unconnected);
+        this.set(POS.east(), find("stone"));
+        assertBoxes(this.boarBoxes(unconnected), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F, 0.375F, 0, 0.375F, 1, 1.5F, 0.625F);
+        int pane = shared(V26_50, "glass_pane", "minecraft:connection_north", (byte) 0, "minecraft:connection_east", (byte) 0, "minecraft:connection_south", (byte) 0, "minecraft:connection_west", (byte) 0);
+        assertBoxes(this.boarBoxes(pane), 0.5F, 0, 0.4375F, 1, 1, 0.5625F);
+    }
+
+    // A 26.50 stair with corner none builds its corner from the stairs around it: a stair facing north ahead of an east-facing stair cuts its step to the north-east quarter.
+    @Test
+    void stairOf26_50WithoutACornerTakesItFromItsNeighbours() {
+        int east = shared(V26_50, "oak_stairs", "weirdo_direction", 0, "upside_down_bit", (byte) 0, "minecraft:corner", "none");
+        assertNull(new BedrockState(east, POS, 0).connectionCollisionOverride(this.player, POS));
+        this.player.compensatedWorld.updateBlock(POS.east(), 0, shared(V26_50, "oak_stairs", "weirdo_direction", 3, "upside_down_bit", (byte) 0, "minecraft:corner", "none"));
+        assertBoxes(this.boarBoxes(east), 0, 0, 0, 1, 0.5F, 1, 0.5F, 0.5F, 0, 1, 1, 0.5F);
+    }
+
+    // A 26.50 stair beside it that faces the same way keeps a corner-none stair straight, as in onlyTheSameStairBesideKeepsItStraight, whatever corner that stair holds.
+    @Test
+    void stairOf26_50BesideOneWithACornerStaysStraight() {
+        int east = shared(V26_50, "oak_stairs", "weirdo_direction", 0, "upside_down_bit", (byte) 0, "minecraft:corner", "none");
+        this.player.compensatedWorld.updateBlock(POS.east(), 0, shared(V26_50, "oak_stairs", "weirdo_direction", 3, "upside_down_bit", (byte) 0, "minecraft:corner", "outer_left"));
+        this.player.compensatedWorld.updateBlock(POS.south(), 0, shared(V26_50, "oak_stairs", "weirdo_direction", 0, "upside_down_bit", (byte) 0, "minecraft:corner", "outer_right"));
+        assertNull(new BedrockState(east, POS, 0).connectionCollisionOverride(this.player, POS));
+        // Another kind of stair beside does not.
+        this.player.compensatedWorld.updateBlock(POS.south(), 0, shared(V26_50, "stone_stairs", "weirdo_direction", 0, "upside_down_bit", (byte) 0, "minecraft:corner", "outer_right"));
+        assertBoxes(this.boarBoxes(east), 0, 0, 0, 1, 0.5F, 1, 0.5F, 0.5F, 0, 1, 1, 0.5F);
+    }
+
     // The 1.26.30 fence has no states, so it still builds its arms from its neighbours.
     @Test
     void fenceOf26_30TakesItsShapeFromItsNeighbours() {
@@ -511,7 +544,7 @@ class BedrockConnectionsTest {
     }
 
     // Which fences, panes, bars, stairs and chorus plants of each version's table take their shape from their states: none up to 26.40, from 26.50 all but the chorus plant, and from 26.60 all.
-    // No other block builds its shape from its neighbours, so walls, trip wire, fire and redstone wire, which also hold their connections, keep their table boxes.
+    // A fence, pane, bar or stair state with no connection or corner set builds from its neighbours. No other block builds its shape from its neighbours, so walls, trip wire, fire and redstone wire, which also hold their connections, keep their table boxes.
     @Test
     void namesThatTakeTheirShapeFromTheirStates() {
         Map<String, Set<String>> byVersion = new TreeMap<>();
@@ -528,7 +561,10 @@ class BedrockConnectionsTest {
                     boolean fromNeighbours = BedrockConnections.fromNeighbours(BedrockBlockUnion.get().toShared(protocol, i));
                     assertTrue(inFamily || !fromNeighbours, name);
                     if (inFamily && protocol >= V26_50.protocol()) {
-                        assertEquals(protocol == V26_50.protocol() && name.equals("minecraft:chorus_plant"), fromNeighbours, name + " " + own.states(i));
+                        boolean noneSet = own.states(i).entrySet().stream().noneMatch(state -> state.getKey().startsWith("minecraft:connection_") && state.getValue().equals((byte) 1)
+                                || state.getKey().equals("minecraft:corner") && !state.getValue().equals("none"));
+                        boolean expected = name.equals("minecraft:chorus_plant") ? protocol == V26_50.protocol() : noneSet;
+                        assertEquals(expected, fromNeighbours, name + " " + own.states(i));
                     }
                     if (inFamily && !fromNeighbours) {
                         fromStates.add(name);

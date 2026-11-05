@@ -198,6 +198,12 @@ class BoarSessionTest {
     @interface EveryCheckedVersion {
     }
 
+    // The tests that BoarSession26_50Test also runs
+    @Retention(RetentionPolicy.RUNTIME)
+    @Target(ElementType.METHOD)
+    @interface On26_50 {
+    }
+
     // Once for both test classes, so that the recorder does not see each packet twice.
     @BeforeAll
     static void startBoar() throws Exception {
@@ -1573,6 +1579,11 @@ class BoarSessionTest {
 
     // The client stops the player's front at the face, at this X, where it collides: its X velocity becomes 0 and it says HORIZONTAL_COLLISION. Returns where it ended and the violations Boar flagged.
     private Walk walkEast(Session session, BoarPlayer player, Vector3i wall, float face, float x, int still, int firstTick) throws Exception {
+        return this.walkEast(session, player, wall.getZ() + 0.5F, face, x, still, firstTick);
+    }
+
+    // As above, along this Z
+    private Walk walkEast(Session session, BoarPlayer player, float z, float face, float x, int still, int firstTick) throws Exception {
         List<Violation> violations = new CopyOnWriteArrayList<>();
         ViolationListener listener = violation -> {
             if (violation.player() == player) {
@@ -1581,7 +1592,6 @@ class BoarSessionTest {
         };
         Boar.getInstance().getViolationRegistry().register(listener);
         try {
-            float z = wall.getZ() + 0.5F;
             Vec3 velocity = Vec3.ZERO.clone();
             long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
             int ticks = still + 80;
@@ -1623,6 +1633,63 @@ class BoarSessionTest {
             Boar.getInstance().getViolationRegistry().unregister(listener);
         }
         return new Walk(x, firstTick + still + 80, violations.stream().map(violation -> violation.check().getClass().getSimpleName() + " " + violation.verbose()).toList());
+    }
+
+    // The player places an oak fence south of the server's fence and walks east into the gap between them, before the server sends the placed fence.
+    // The client joins the two fences at once. The player fits between their posts, so only the bar that joins them stops it.
+    @Test
+    @EveryCheckedVersion
+    @On26_50
+    void walksIntoTheBarOfAFenceItPlaced() throws Exception {
+        SimpleItemDefinition fenceItem = new SimpleItemDefinition("minecraft:oak_fence", 1999, false);
+        List<ItemDefinition> items = new ArrayList<>(ITEMS);
+        items.add(fenceItem);
+        this.server.items = items;
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        int fence = this.table().defaultIndex("minecraft:oak_fence");
+        this.giveAndAcknowledge(session, player, 0, ItemData.builder().definition(fenceItem).count(64).blockDefinition(Definitions.ANY_BLOCK.getDefinition(fence)).build());
+
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        int[] blocks = new int[4096];
+        Arrays.fill(blocks, this.airRuntimeId);
+        for (int x = 0; x < 16; x++) {
+            for (int z = 0; z < 16; z++) {
+                blocks[x << 8 | z << 4] = this.stoneRuntimeId;
+            }
+        }
+        blocks[WALL_X << 8 | FENCE_Z << 4 | 1] = fence;
+        this.sendChunk(chunkX, chunkZ, subChunk(0, blocks));
+        Vector3i serverFence = Vector3i.from((chunkX << 4) + WALL_X, 1, (chunkZ << 4) + FENCE_Z);
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(serverFence, 0).isAir());
+
+        float x = (chunkX << 4) + 2.5F;
+        float z = serverFence.getZ() + 1;
+        Vector3f eyes = Vector3f.from(x, 1 + 1.62001F, z);
+        long before = RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count();
+        for (int tick = 1; tick <= 5; tick++) {
+            this.answerLatency();
+            PlayerAuthInputPacket input = authInput();
+            input.setRotation(Vector3f.from(0, -90, -90));
+            input.setPosition(eyes);
+            input.setDelta(Vector3f.from(0, -0.0784F, 0));
+            input.setTick(tick);
+            this.client.session.get().sendPacket(input);
+            Thread.sleep(50);
+        }
+        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= before + 5);
+        Vector3i placed = serverFence.add(0, 0, 1);
+        this.client.session.get().sendPacket(place(placed.sub(0, 1, 0), eyes, ItemData.builder().definition(fenceItem).count(64).blockDefinition(Definitions.ANY_BLOCK.getDefinition(fence)).build()));
+        awaitOnLoop(session, () -> RECORDER.received.contains(InventoryTransactionPacket.class));
+        assertEquals("minecraft:oak_fence", onLoop(session, () -> player.compensatedWorld.getBlockState(placed, 0).block().toString()));
+
+        float bar = serverFence.getX() + 0.375F;
+        Walk walk = this.walkEast(session, player, z, bar, x, 0, 6);
+        assertEquals(bar - 0.3F, walk.x(), 1e-6F);
+        assertTrue(onLoop(session, () -> player.getMovementTrace().dump("")).contains("path: prediction"));
+        assertEquals(List.of(), walk.violations());
+        this.assertNothingFailed();
     }
 
     // Boar takes the custom block for a full cube, so a click on it places the stone above it.

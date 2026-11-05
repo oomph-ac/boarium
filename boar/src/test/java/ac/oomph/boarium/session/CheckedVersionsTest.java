@@ -161,11 +161,11 @@ class CheckedVersionsTest {
         assertBlock(session, player, origin.add(FENCE), "minecraft:oak_fence", fence);
         assertBlock(session, player, origin.add(PLANKS), "minecraft:poplar_planks", planks);
         assertBlock(session, player, origin.add(POPLAR_FENCE), "minecraft:poplar_fence", poplarFence);
-        // A 26.40 poplar fence has no states, so it joins the planks west of it by its connection rule; a 26.60 one has states, and its default state joins nothing.
+        // The poplar fence joins the planks west of it by its connection rule: a 26.40 one has no states, and a 26.60 one has its default state, with no connection set.
         Vector3i poplarFenceAt = origin.add(POPLAR_FENCE);
         List<Box> boxes = onLoop(session, () -> player.compensatedWorld.getBlockState(poplarFenceAt, 0).findCollision(player, poplarFenceAt, null, false));
         float west = (float) boxes.stream().mapToDouble(box -> box.minX).min().orElseThrow() - poplarFenceAt.getX();
-        assertEquals(this.protocol < Bedrock_v2225.CODEC.getProtocolVersion() ? 0 : 0.375F, west, 1e-6F, boxes.toString());
+        assertEquals(0, west, 1e-6F, boxes.toString());
 
         this.readItemsOnTheClient();
         List<ItemData> inventory = new ArrayList<>(Collections.nCopies(36, ItemData.AIR));

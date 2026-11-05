@@ -18,7 +18,7 @@ import java.util.Set;
 import java.util.function.IntFunction;
 
 /**
- * The collision boxes that Bedrock builds from the neighbouring blocks for states that do not hold their connections, as the 1.26.30 client does: fences, panes and bars, chorus plants and stair corners.
+ * The collision boxes that Bedrock builds from the neighbouring blocks for states that do not hold their connections, or hold none set, as the 1.26.30 client does: fences, panes and bars, chorus plants and stair corners.
  * A state here is a shared ID of {@link BedrockBlockUnion}, and neighbours are read from layer 0 of Boar's world.
  */
 final class BedrockConnections {
@@ -84,7 +84,11 @@ final class BedrockConnections {
             RULES[i] = (byte) (rule >= 0 ? rule : named.getOrDefault(name, ALL));
             byte shape = shape(name);
             // From 26.50 a state can hold its connections or its stair corner, and then its table boxes are already the shape the client builds.
-            SHAPES[i] = holdsShape(TABLE.states(i)) ? OTHER : shape;
+            // A fence, pane, bar or stair with none set builds from its neighbours instead, since Boar places these blocks as 1.26.30's state, which becomes that state in a newer client's world, while the client joins the new block to its neighbours at once.
+            // Boar cannot tell its own placements from a server's state with none set, so that builds from its neighbours too; how a real 26.50 client builds such a server state is not confirmed.
+            // A 26.60 chorus plant keeps its table boxes, since Boar never places one.
+            NbtMap states = TABLE.states(i);
+            SHAPES[i] = holdsShape(states) && (shape == CHORUS || anySet(states)) ? OTHER : shape;
             STAIR_SIDES[i] = (byte) (shape == STAIRS ? stairSide(TABLE.states(i).getInt("weirdo_direction")) + (TABLE.states(i).getByte("upside_down_bit") == 1 ? 4 : 0) : -1);
             CHORUS_JOINS[i] = name.equals("minecraft:chorus_plant") || name.equals("minecraft:chorus_flower");
         }
@@ -111,6 +115,12 @@ final class BedrockConnections {
     // Whether a state holds its connections (minecraft:connection_*) or its stair corner (minecraft:corner)
     private static boolean holdsShape(NbtMap states) {
         return states.containsKey("minecraft:corner") || states.keySet().stream().anyMatch(key -> key.startsWith("minecraft:connection_"));
+    }
+
+    // Whether a state has a connection set (1b) or a corner other than none
+    private static boolean anySet(NbtMap states) {
+        return !states.getString("minecraft:corner", "none").equals("none")
+                || states.entrySet().stream().anyMatch(entry -> entry.getKey().startsWith("minecraft:connection_") && !entry.getValue().equals((byte) 0));
     }
 
     private static Map<String, Integer> readRules() {
@@ -312,7 +322,7 @@ final class BedrockConnections {
 
     // StairBlock::addAABBs: the slab, the step, and maybe an inner quarter.
     // Stairs ahead of the same half that face across cut the step to the quarter on their side (an outer corner); failing that, stairs behind add the quarter behind on their side (an inner corner).
-    // The client skips a corner when one block beside is this very stair state: for an outer corner the block on the far side from that stair's full side, for an inner corner the block on the near side.
+    // The client skips a corner when one block beside is this same stair, facing and half the same way, whatever corner it holds: for an outer corner the block on the far side from that stair's full side, for an inner corner the block on the near side.
     // Null for a straight stair, whose palette boxes are the slab and the step.
     private static List<Box> stairBoxes(BoarPlayer player, int index, int x, int y, int z) {
         int stair = STAIR_SIDES[index];
@@ -320,14 +330,20 @@ final class BedrockConnections {
         int left = (facing + 3) & 3;
 
         int across = acrossSide(stairAt(player, x + DX[facing], y, z + DZ[facing]), stair);
-        if (across >= 0 && at(player, x - DX[across], y, z - DZ[across]) != index) {
+        if (across >= 0 && !sameStair(player, index, x - DX[across], y, z - DZ[across])) {
             return STAIR_BOXES[stair * 5 + (across == left ? OUTER_LEFT : OUTER_RIGHT)];
         }
         across = acrossSide(stairAt(player, x - DX[facing], y, z - DZ[facing]), stair);
-        if (across >= 0 && at(player, x + DX[across], y, z + DZ[across]) != index) {
+        if (across >= 0 && !sameStair(player, index, x + DX[across], y, z + DZ[across])) {
             return STAIR_BOXES[stair * 5 + (across == left ? INNER_LEFT : INNER_RIGHT)];
         }
         return null;
+    }
+
+    // Whether the block at a position is this stair, facing and half the same way, whatever corner it holds
+    private static boolean sameStair(BoarPlayer player, int index, int x, int y, int z) {
+        int other = at(player, x, y, z);
+        return other != UNKNOWN && STAIR_SIDES[other] == STAIR_SIDES[index] && TABLE.name(other).equals(TABLE.name(index));
     }
 
     private static int stairAt(BoarPlayer player, int x, int y, int z) {
