@@ -11,6 +11,7 @@ import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.ItemMappings;
 import ac.boar.mappings.item.Items;
 import ac.oomph.boarium.boar.blocks.BedrockBlock;
+import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.nbt.NbtList;
@@ -37,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -47,8 +49,8 @@ import java.util.stream.Collectors;
  */
 final class BedrockItems implements ItemStackProvider, ItemMappings {
     private static final Logger LOG = LoggerFactory.getLogger(BedrockItems.class);
-    private static final List<String> NAMES = readNames();
-    // The items that place a block of another name, besides the signs that block() renames
+    private static final List<String> NAMES = readNames("26_30");
+    // The items that place a block of another name, besides the signs
     private static final Map<String, String> PLACES = Map.ofEntries(
             Map.entry("minecraft:banner", "minecraft:standing_banner"),
             Map.entry("minecraft:beetroot_seeds", "minecraft:beetroot"),
@@ -86,6 +88,9 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
     private static final Stack EMPTY = new Stack(AIR, 0);
     static final List<String> REFERENCES = referenceNames();
     static final BedrockItems INSTANCE = new BedrockItems();
+    private static final Map<String, Version> LOADED = new ConcurrentHashMap<>();
+    // The items of the names that are not 1.26.30 items
+    private static final Map<String, BedrockItem> OTHER_ITEMS = new ConcurrentHashMap<>();
 
     private final List<Item> bundles = matching(name -> name.equals("minecraft:bundle") || name.endsWith("_bundle"));
     private final List<Item> candles = matching(name -> name.equals("minecraft:candle") || name.endsWith("_candle"));
@@ -150,18 +155,31 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         return this.heads;
     }
 
+    // The items of a protocol's clients, loaded once on first use, or null for a protocol with none
+    static Version forProtocol(int protocol) {
+        String version = BedrockBlockTable.version(protocol);
+        return version == null ? null : LOADED.computeIfAbsent(version, v -> new Version(v, BedrockBlockTable.forProtocol(protocol)));
+    }
+
     // The block an item places, or null
     private static BedrockBlock block(String name) {
+        String block = placedBlock(name, BedrockBlockTable.get());
+        return block == null ? null : BedrockBlock.named(block);
+    }
+
+    // The name of the block an item places, or null when the item places none or the table has no such block
+    private static String placedBlock(String name, BedrockBlockTable table) {
+        String block = name;
         // A double slab item places a full block, but its block is the slab, whose default is the bottom half.
         if (NOT_BLOCKS.contains(name) || name.endsWith("_slab") && name.contains("double")) {
             return null;
         } else if (PLACES.containsKey(name)) {
-            return BedrockBlock.named(PLACES.get(name));
-        } else if (name.endsWith("_sign") && BedrockBlock.named(name) == null) {
+            block = PLACES.get(name);
+        } else if (name.endsWith("_sign") && table.firstIndex(name) < 0) {
             // A sign item places the standing sign; the wall sign is another block.
-            return BedrockBlock.named(name.replace("_sign", "_standing_sign"));
+            block = name.replace("_sign", "_standing_sign");
         }
-        return BedrockBlock.named(name);
+        return table.firstIndex(block) >= 0 ? block : null;
     }
 
     private static Map<Item, Block> itemToBlock() {
@@ -178,10 +196,11 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         return NAMES.stream().filter(name).<Item>map(ITEMS::get).toList();
     }
 
-    private static List<String> readNames() {
-        try (InputStream in = BedrockItems.class.getResourceAsStream("item_names.26_30.txt")) {
+    private static List<String> readNames(String version) {
+        String resource = "item_names." + version + ".txt";
+        try (InputStream in = BedrockItems.class.getResourceAsStream(resource)) {
             if (in == null) {
-                throw new IllegalStateException("item_names.26_30.txt is not on the classpath");
+                throw new IllegalStateException(resource + " is not on the classpath");
             }
             return new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8)).lines().filter(line -> !line.startsWith("#")).toList();
         } catch (IOException e) {
@@ -223,6 +242,42 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         @Override
         public Set<Entry<Item, Block>> entrySet() {
             return this.vanilla.entrySet();
+        }
+    }
+
+    /**
+     * The items of one version's item names, and the name of the block each block item places in that version's block table.
+     * Every version shares one item per name, since Boar's item references are filled once and items compare by identity, so a 1.26.30 name gives its 1.26.30 item.
+     */
+    static final class Version {
+        final List<String> names;
+        final Map<String, BedrockItem> items;
+        // The name of the block each block item places
+        final Map<BedrockItem, String> blocks;
+
+        private Version(String version, BedrockBlockTable table) {
+            this.names = readNames(version);
+            Map<String, BedrockItem> items = new HashMap<>();
+            Map<BedrockItem, String> blocks = new HashMap<>();
+            for (String name : this.names) {
+                String block = placedBlock(name, table);
+                // A name that is not a 1.26.30 item has no Boar block, since Boar's blocks are the 1.26.30 table's
+                BedrockItem item = ITEMS.containsKey(name) ? ITEMS.get(name) : OTHER_ITEMS.computeIfAbsent(name, n -> new BedrockItem(n, null, block != null));
+                if (item.isBlock() != (block != null)) {
+                    throw new IllegalStateException(name + " is a block item in one version and not in another, here " + version);
+                }
+                items.put(name, item);
+                if (block != null) {
+                    blocks.put(item, block);
+                }
+            }
+            this.items = Map.copyOf(items);
+            this.blocks = Map.copyOf(blocks);
+        }
+
+        // The names of Boar's item references that have no item in this version
+        List<String> missingReferences() {
+            return REFERENCES.stream().filter(name -> !this.items.containsKey(name)).toList();
         }
     }
 

@@ -21,16 +21,8 @@ import java.util.zip.GZIPInputStream;
  */
 public final class BedrockBlockTable {
     public static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/bedrock_blocks.26_30.bin.gz";
-    // The table of each protocol, named by game version as Geyser names its palettes. Protocol 2169 (26.45) has no Bedrock data of its own, and Geyser gives it the 26.40 palette.
-    private static final Map<Integer, String> RESOURCES = Map.of(
-            924, resource("26_0"),
-            944, resource("26_10"),
-            975, resource("26_20"),
-            1001, RESOURCE,
-            2168, resource("26_40"),
-            2169, resource("26_40"),
-            2193, resource("26_50"),
-            2225, resource("26_60"));
+    // The game version of each protocol's table, as Geyser names its palettes. Protocol 2169 (26.45) has no Bedrock data of its own, and Geyser gives it the 26.40 palette.
+    private static final Map<Integer, String> VERSIONS = Map.of(924, "26_0", 944, "26_10", 975, "26_20", 1001, "26_30", 2168, "26_40", 2169, "26_40", 2193, "26_50", 2225, "26_60");
     private static final Map<String, BedrockBlockTable> LOADED = new ConcurrentHashMap<>();
     private static final int MAGIC = 0x424E4254;
     private static final int FORMAT = 2;
@@ -203,8 +195,13 @@ public final class BedrockBlockTable {
 
     // The table of a protocol's client, loaded once on first use, or null for a protocol with none
     public static BedrockBlockTable forProtocol(int protocol) {
-        String resource = RESOURCES.get(protocol);
-        return resource == null ? null : LOADED.computeIfAbsent(resource, BedrockBlockTable::load);
+        String version = VERSIONS.get(protocol);
+        return version == null ? null : LOADED.computeIfAbsent(resource(version), BedrockBlockTable::load);
+    }
+
+    // The game version of a protocol's table, such as "26_30", or null for a protocol with none
+    public static String version(int protocol) {
+        return VERSIONS.get(protocol);
     }
 
     public static BedrockBlockTable load() {
