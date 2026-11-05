@@ -1,0 +1,27 @@
+# Which kinds of block (fence, nether_fence, wall, thin) the client lets join each of these Bedrock blocks, which 1.26.30 does not have; in the form of connection_rules.26_30.txt.
+# None of these is traced from a client binary. Each group says where its rule comes from.
+# Blocks added after 1.26.30 that are not listed here let every kind join, except fence gates, trapdoors, stairs, slabs and shelves, whose rule depends on their state, as in connection_rules.26_30.txt.
+
+# 26.40: as the pale oak blocks of 1.26.30 (pale_oak_fence, and none for its button, door, hanging sign, leaves, pressure plate, sapling and signs)
+minecraft:poplar_fence fence
+minecraft:poplar_button none
+minecraft:poplar_door none
+minecraft:poplar_hanging_sign none
+minecraft:poplar_pressure_plate none
+minecraft:poplar_sapling none
+minecraft:poplar_standing_sign none
+minecraft:poplar_wall_sign none
+minecraft:orange_poplar_leaves none
+minecraft:red_poplar_leaves none
+minecraft:yellow_poplar_leaves none
+
+# 26.40: as bed
+minecraft:straw_bed none
+
+# 26.50: from each block's own minecraft:connection_rule component (accepts_connections_from none), in Geyser 2.12.1's data-driven blocks for 26.50 and 26.60
+minecraft:red_shrub none
+minecraft:shelf_mushroom none
+
+# 26.60: icicle as pointed_dripstone, whose dripstone_thickness and hanging states it also has; ice_crystal as amethyst_cluster, a small crystal on one face that also has minecraft:block_face
+minecraft:icicle none
+minecraft:ice_crystal none

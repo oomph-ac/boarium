@@ -15,6 +15,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
@@ -410,6 +413,67 @@ class BedrockConnectionsTest {
         assertBoxes(this.boarBoxes(fence), POST);
         this.set(POS.north(), find("stone"));
         assertBoxes(this.boarBoxes(fence), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F);
+    }
+
+    // A 26.40 poplar fence has no states, so it builds its arms from its neighbours by the rules for blocks added after 1.26.30: it joins poplar planks and fences, but not poplar leaves.
+    @Test
+    void poplarFenceOf26_40JoinsByTheNewerRules() {
+        BedrockBlockTable v26_40 = BedrockBlockTable.forProtocol(2168);
+        int fence = shared(v26_40, "poplar_fence");
+        this.player.compensatedWorld.updateBlock(POS.north(), 0, shared(v26_40, "poplar_planks"));
+        this.player.compensatedWorld.updateBlock(POS.east(), 0, shared(v26_40, "poplar_fence"));
+        this.player.compensatedWorld.updateBlock(POS.south(), 0, shared(v26_40, "orange_poplar_leaves"));
+        assertBoxes(this.boarBoxes(fence), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F, 0.375F, 0, 0.375F, 1, 1.5F, 0.625F);
+    }
+
+    // Every block name that 1.26.30 does not have gets a rule from connection_rules.after_26_30.txt or from its states, or is in letEveryKindJoin.
+    // That file names no 1.26.30 block, so the 1.26.30 rules stay as traced.
+    @Test
+    void namesAfter26_30HaveRules() throws IOException {
+        BedrockBlockTable shared = BedrockBlockUnion.get().table();
+        // Full blocks with no rule, as the 1.26.30 blocks they copy: oak's planks, logs and wood, crafting_table for the disc press, and every double slab
+        Set<String> letEveryKindJoin = new TreeSet<>();
+        for (String name : List.of("poplar_planks", "poplar_log", "poplar_wood", "stripped_poplar_log", "stripped_poplar_wood", "disc_press")) {
+            letEveryKindJoin.add("minecraft:" + name);
+        }
+        for (String name : List.of("oak_planks", "oak_log", "oak_wood", "stripped_oak_log", "stripped_oak_wood", "crafting_table", "oak_double_slab")) {
+            assertEquals(BedrockConnections.ALL, BedrockConnections.rule(SharedIds.shared(find(name))), name);
+        }
+        BedrockProperties.doubleSlabs(shared).values().stream().filter(name -> table.firstIndex(name) < 0).forEach(letEveryKindJoin::add);
+
+        Set<String> withoutRule = new TreeSet<>();
+        Set<String> everyKindJoins = new TreeSet<>();
+        int newer = 0;
+        for (int first = 0; first < shared.paletteSize(); first += shared.stateCount(shared.name(first))) {
+            String name = shared.name(first);
+            if (table.firstIndex(name) >= 0) {
+                continue;
+            }
+            newer++;
+            boolean ruled = true;
+            boolean everyKind = true;
+            for (int i = first; i < first + shared.stateCount(name); i++) {
+                ruled &= BedrockConnections.rule(i) != BedrockConnections.ALL;
+                everyKind &= BedrockConnections.rule(i) == BedrockConnections.ALL;
+            }
+            if (everyKind) {
+                everyKindJoins.add(name);
+            }
+            if (!ruled && !letEveryKindJoin.contains(name)) {
+                withoutRule.add(name);
+            }
+        }
+        assertEquals(Set.of(), withoutRule);
+        assertEquals(124, newer);
+        assertEquals(39, letEveryKindJoin.size());
+        assertEquals(letEveryKindJoin, everyKindJoins);
+
+        String after = BedrockConnections.RULES_RESOURCES.getLast();
+        try (InputStream in = BedrockConnections.class.getResourceAsStream(after)) {
+            List<String> names = new String(in.readAllBytes(), StandardCharsets.UTF_8).lines().filter(line -> !line.isBlank() && !line.startsWith("#")).map(line -> line.split(" ")[0]).toList();
+            assertEquals(16, names.size());
+            names.forEach(name -> assertTrue(table.firstIndex(name) < 0, name));
+        }
     }
 
     // From 26.60 a chorus plant's state holds its six connections; the 26.50 chorus plant has one state and still looks at its neighbours.

@@ -22,7 +22,7 @@ import java.util.function.IntFunction;
  * A state here is a shared ID of {@link BedrockBlockUnion}, and neighbours are read from layer 0 of Boar's world.
  */
 final class BedrockConnections {
-    static final String RULES_RESOURCE = "/ac/oomph/boarium/boar/blocks/connection_rules.26_30.txt";
+    static final List<String> RULES_RESOURCES = List.of("/ac/oomph/boarium/boar/blocks/connection_rules.26_30.txt", "/ac/oomph/boarium/boar/blocks/connection_rules.after_26_30.txt");
     private static final BedrockBlockTable TABLE = BedrockBlockUnion.get().table();
     // An ID outside the shared table, such as a custom block's
     private static final int UNKNOWN = -1;
@@ -115,34 +115,36 @@ final class BedrockConnections {
 
     private static Map<String, Integer> readRules() {
         Map<String, Integer> rules = new HashMap<>();
-        try (InputStream in = BedrockConnections.class.getResourceAsStream(RULES_RESOURCE)) {
-            if (in == null) {
-                throw new IllegalStateException("Missing " + RULES_RESOURCE);
+        for (String resource : RULES_RESOURCES) {
+            try (InputStream in = BedrockConnections.class.getResourceAsStream(resource)) {
+                if (in == null) {
+                    throw new IllegalStateException("Missing " + resource);
+                }
+                BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+                for (String line = reader.readLine(); line != null; line = reader.readLine()) {
+                    if (line.isBlank() || line.startsWith("#")) {
+                        continue;
+                    }
+                    String[] words = line.trim().split(" ");
+                    int kinds = 0;
+                    for (int w = 1; w < words.length; w++) {
+                        kinds |= switch (words[w]) {
+                            case "none" -> 0;
+                            case "fence" -> 1 << FENCE;
+                            case "nether_fence" -> 1 << NETHER_FENCE;
+                            case "wall" -> 1 << WALL;
+                            case "thin" -> 1 << THIN;
+                            default -> throw new IllegalStateException("Unknown kind " + words[w] + " in " + resource);
+                        };
+                    }
+                    if (TABLE.firstIndex(words[0]) < 0) {
+                        throw new IllegalStateException("The Bedrock palette has no " + words[0] + " from " + resource);
+                    }
+                    rules.put(words[0], kinds == 0 ? 0 : kinds | 0xF0);
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
             }
-            BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
-            for (String line = reader.readLine(); line != null; line = reader.readLine()) {
-                if (line.isBlank() || line.startsWith("#")) {
-                    continue;
-                }
-                String[] words = line.trim().split(" ");
-                int kinds = 0;
-                for (int w = 1; w < words.length; w++) {
-                    kinds |= switch (words[w]) {
-                        case "none" -> 0;
-                        case "fence" -> 1 << FENCE;
-                        case "nether_fence" -> 1 << NETHER_FENCE;
-                        case "wall" -> 1 << WALL;
-                        case "thin" -> 1 << THIN;
-                        default -> throw new IllegalStateException("Unknown kind " + words[w] + " in " + RULES_RESOURCE);
-                    };
-                }
-                if (TABLE.firstIndex(words[0]) < 0) {
-                    throw new IllegalStateException("The Bedrock palette has no " + words[0] + " from " + RULES_RESOURCE);
-                }
-                rules.put(words[0], kinds == 0 ? 0 : kinds | 0xF0);
-            }
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
         }
         return rules;
     }

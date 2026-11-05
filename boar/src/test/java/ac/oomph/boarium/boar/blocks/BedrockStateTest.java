@@ -14,13 +14,17 @@ import ac.boar.mappings.block.ChestType;
 import ac.oomph.boarium.boar.TestBoar;
 import ac.oomph.boarium.boar.blocks.BedrockProperties.BedrockProperty;
 import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.nbt.NBTInputStream;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtType;
+import org.cloudburstmc.nbt.NbtUtils;
 import org.cloudburstmc.protocol.bedrock.data.BlockPropertyData;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -461,6 +465,30 @@ class BedrockStateTest {
             }
         }
         assertEquals(expected, replaceable);
+    }
+
+    // Of the names that 1.26.30 does not have, only red_shrub is replaceable: it is the one block that Geyser 2.12.1 sends to 26.50 and 26.60 clients with a minecraft:replaceable component.
+    @Test
+    void replaceableNamesAfter26_30() throws IOException {
+        Set<String> withComponent = new TreeSet<>();
+        try (InputStream in = BedrockStateTest.class.getResourceAsStream("/ac/oomph/boarium/boar/geyser/data_driven_blocks.26_50.nbt");
+             NBTInputStream nbt = NbtUtils.createGZIPReader(in)) {
+            ((NbtMap) nbt.readTag()).forEach((name, properties) -> {
+                if (((NbtMap) properties).getCompound("components").containsKey("minecraft:replaceable")) {
+                    withComponent.add(name);
+                }
+            });
+        }
+        assertEquals(Set.of("minecraft:red_shrub"), withComponent);
+
+        BedrockBlockTable shared = BedrockBlockUnion.get().table();
+        Set<String> replaceable = new TreeSet<>();
+        for (int i = 0; i < shared.paletteSize(); i++) {
+            if (table.firstIndex(shared.name(i)) < 0 && new BedrockState(i, POS, 0).isReplaceable(null)) {
+                replaceable.add(shared.name(i));
+            }
+        }
+        assertEquals(withComponent, replaceable);
     }
 
     @Test

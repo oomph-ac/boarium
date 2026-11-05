@@ -50,11 +50,11 @@ public record BedrockState(int intermediaryId, Vector3i getPosition, int getLaye
             {0.75F, 0.3125F, 0.3125F, 1.25F, 0.6875F, 0.6875F, 0.25F, 0.375F, 0.375F, 0.75F, 0.625F, 0.625F, 0, 0, 0, 0.25F, 1, 1}};
     private static final Set<String> PISTON_ARMS = Set.of("minecraft:piston_arm_collision", "minecraft:sticky_piston_arm_collision");
 
-    // The Bedrock names of Java's minecraft:replaceable blocks, through Geyser's mapping, since Bedrock's block states, tags and types have no such flag
+    // Bedrock blocks that a placement replaces: Java's minecraft:replaceable blocks through Geyser's mapping (Bedrock's block states, tags and types have no such flag), and red_shrub, from its minecraft:replaceable component.
     private static final Set<String> REPLACEABLE_NAMES = Set.of(
             "minecraft:air", "minecraft:bubble_column", "minecraft:bush", "minecraft:crimson_roots", "minecraft:deadbush", "minecraft:fern", "minecraft:fire",
             "minecraft:flowing_lava", "minecraft:flowing_water", "minecraft:glow_lichen", "minecraft:hanging_roots", "minecraft:large_fern", "minecraft:lava",
-            "minecraft:leaf_litter", "minecraft:nether_sprouts", "minecraft:resin_clump", "minecraft:seagrass", "minecraft:short_dry_grass", "minecraft:short_grass",
+            "minecraft:leaf_litter", "minecraft:nether_sprouts", "minecraft:red_shrub", "minecraft:resin_clump", "minecraft:seagrass", "minecraft:short_dry_grass", "minecraft:short_grass",
             "minecraft:soul_fire", "minecraft:structure_void", "minecraft:tall_dry_grass", "minecraft:tall_grass", "minecraft:vine", "minecraft:warped_roots", "minecraft:water");
     private static final List<Box>[] BOXES = boxes();
     private static final BitSet FACE_STURDY = new BitSet();
