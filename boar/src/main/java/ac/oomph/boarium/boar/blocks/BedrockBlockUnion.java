@@ -1,0 +1,195 @@
+package ac.oomph.boarium.boar.blocks;
+
+import org.cloudburstmc.nbt.NbtMap;
+import org.cloudburstmc.nbt.NbtMapBuilder;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * One block table with every block state of every protocol's table, so a block state has one shared ID (its index in {@link #table()}) on every client version, and the mapping between shared IDs and each table's own palette indexes.
+ * Entries with the same name are next to each other. Each name's default state is the one of the newest table that has the name.
+ */
+public final class BedrockBlockUnion {
+    private static final class Holder {
+        static final BedrockBlockUnion UNION = new BedrockBlockUnion();
+    }
+
+    private final BedrockBlockTable table;
+    private final Map<Integer, Projection> byProtocol = new HashMap<>();
+
+    private record Key(String name, NbtMap states) {
+    }
+
+    private record Source(BedrockBlockTable table, int index) {
+    }
+
+    private record Type(Class<?> type, String version) {
+    }
+
+    private record Projection(int[] toShared, int[] fromShared) {
+    }
+
+    BedrockBlockUnion() {
+        List<BedrockBlockTable> newestFirst = BedrockBlockTable.VERSIONS.keySet().stream().sorted(Comparator.reverseOrder()).map(BedrockBlockTable::forProtocol).distinct().toList();
+
+        // The newest table's names first, in its order, then names only older tables have; each name's states the same way.
+        Map<String, List<Key>> keysByName = new LinkedHashMap<>();
+        Map<Key, Source> sources = new HashMap<>();
+        Map<String, Map<String, Type>> typesByName = new HashMap<>();
+        for (BedrockBlockTable source : newestFirst) {
+            for (int i = 0; i < source.paletteSize(); i++) {
+                Key key = new Key(source.name(i), source.states(i));
+                Source first = sources.putIfAbsent(key, new Source(source, i));
+                if (first == null) {
+                    keysByName.computeIfAbsent(key.name(), name -> new ArrayList<>()).add(key);
+                    Map<String, Type> types = typesByName.computeIfAbsent(key.name(), name -> new HashMap<>());
+                    key.states().forEach((state, value) -> {
+                        Type type = types.putIfAbsent(state, new Type(value.getClass(), source.sourceVersion()));
+                        if (type != null && type.type() != value.getClass()) {
+                            throw new IllegalStateException(key.name() + " has the state " + state + " as " + type.type().getSimpleName() + " in the block table of " + type.version() + " and as " + value.getClass().getSimpleName() + " in that of " + source.sourceVersion());
+                        }
+                    });
+                } else {
+                    requireSameData(key, first, source, i);
+                }
+            }
+        }
+
+        int size = sources.size();
+        String[] names = new String[size];
+        NbtMap[] states = new NbtMap[size];
+        int[] hashes = new int[size];
+        float[][] shapes = new float[size][];
+        char[] stateShape = new char[size];
+        byte[] flags = new byte[size];
+        float[] hardness = new float[size];
+        float[] friction = new float[size];
+        int[] defaults = new int[keysByName.size()];
+        Map<Key, Integer> ids = new HashMap<>(size * 2);
+        int id = 0;
+        int block = 0;
+        for (List<Key> keys : keysByName.values()) {
+            for (Key key : keys) {
+                Source source = sources.get(key);
+                names[id] = key.name();
+                states[id] = key.states();
+                hashes[id] = source.table().networkHash(source.index());
+                shapes[id] = source.table().collision(source.index());
+                stateShape[id] = (char) id;
+                flags[id] = (byte) source.table().flags(source.index());
+                hardness[id] = source.table().hardness(source.index());
+                friction[id] = source.table().friction(source.index());
+                ids.put(key, id++);
+            }
+            // The first key of a name came from the newest table with that name.
+            BedrockBlockTable newest = sources.get(keys.getFirst()).table();
+            String name = keys.getFirst().name();
+            defaults[block++] = ids.get(new Key(name, newest.states(newest.defaultIndex(name))));
+        }
+        String sourceVersions = newestFirst.reversed().stream().map(BedrockBlockTable::sourceVersion).collect(Collectors.joining(", "));
+        // The tables have different block versions and protocols, so the union has neither.
+        table = new BedrockBlockTable(-1, sourceVersions, -1, shapes, names, states, hashes, stateShape, flags, hardness, friction, defaults);
+
+        for (BedrockBlockTable own : newestFirst) {
+            int[] toShared = new int[own.paletteSize()];
+            for (int i = 0; i < toShared.length; i++) {
+                toShared[i] = ids.get(new Key(own.name(i), own.states(i)));
+            }
+            int[] fromShared = new int[size];
+            for (int shared = 0; shared < size; shared += table.stateCount(names[shared])) {
+                Map<String, Set<Object>> values = values(own, names[shared]);
+                for (int i = shared; i < shared + table.stateCount(names[shared]); i++) {
+                    fromShared[i] = project(own, names[i], states[i], values);
+                }
+            }
+            Projection projection = new Projection(toShared, fromShared);
+            BedrockBlockTable.VERSIONS.keySet().stream().filter(protocol -> BedrockBlockTable.forProtocol(protocol) == own).forEach(protocol -> byProtocol.put(protocol, projection));
+        }
+    }
+
+    // Two tables that list the same state must agree on what it is.
+    private static void requireSameData(Key key, Source first, BedrockBlockTable other, int index) {
+        BedrockBlockTable table = first.table();
+        int i = first.index();
+        if (table.networkHash(i) != other.networkHash(index)
+                || !Arrays.equals(table.collision(i), other.collision(index))
+                || table.flags(i) != other.flags(index)
+                || Float.compare(table.hardness(i), other.hardness(index)) != 0
+                || Float.compare(table.friction(i), other.friction(index)) != 0) {
+            throw new IllegalStateException(key.name() + " " + key.states() + " has different data in the block tables of " + table.sourceVersion() + " and " + other.sourceVersion());
+        }
+    }
+
+    // Each state key of a name in own, with the values own has for it
+    static Map<String, Set<Object>> values(BedrockBlockTable own, String name) {
+        Map<String, Set<Object>> values = new HashMap<>();
+        int first = own.firstIndex(name);
+        for (int i = first; i < first + own.stateCount(name); i++) {
+            own.states(i).forEach((key, value) -> values.computeIfAbsent(key, k -> new HashSet<>()).add(value));
+        }
+        return values;
+    }
+
+    // The entry of own closest to a state: for each key own has, the state's value if own has that value for the name, else the value of own's default state. Own's default state when no entry has that mix, and -1 when own has no block with the name.
+    // Versions can have different keys for a name: a 26.30 fence has no states, and from 26.50 it has four connection states.
+    static int project(BedrockBlockTable own, String name, NbtMap states, Map<String, Set<Object>> values) {
+        int fallback = own.defaultIndex(name);
+        if (fallback < 0) {
+            return -1;
+        }
+        NbtMap defaultStates = own.states(fallback);
+        NbtMapBuilder projected = defaultStates.toBuilder();
+        for (String key : defaultStates.keySet()) {
+            Object value = states.get(key);
+            if (value != null && values.get(key).contains(value)) {
+                projected.put(key, value);
+            }
+        }
+        int index = own.index(name, projected.build());
+        return index < 0 ? fallback : index;
+    }
+
+    // Built on first use from the table of every protocol
+    public static BedrockBlockUnion get() {
+        return Holder.UNION;
+    }
+
+    public BedrockBlockTable table() {
+        return table;
+    }
+
+    // The shared ID of a palette index of a protocol's table
+    public int toShared(int protocol, int index) {
+        return get(projection(protocol).toShared(), index, "palette index");
+    }
+
+    // The palette index of a protocol's table closest to a shared ID's state, or -1 when that table has no block with its name
+    public int fromShared(int protocol, int shared) {
+        return get(projection(protocol).fromShared(), shared, "shared ID");
+    }
+
+    // Throws rather than giving -1, which fromShared already gives for a block a version lacks.
+    private static int get(int[] ids, int index, String what) {
+        if (index < 0 || index >= ids.length) {
+            throw new IllegalArgumentException("No " + what + " " + index + " among " + ids.length);
+        }
+        return ids[index];
+    }
+
+    private Projection projection(int protocol) {
+        Projection projection = byProtocol.get(protocol);
+        if (projection == null) {
+            throw new IllegalArgumentException("No block table for protocol " + protocol);
+        }
+        return projection;
+    }
+}

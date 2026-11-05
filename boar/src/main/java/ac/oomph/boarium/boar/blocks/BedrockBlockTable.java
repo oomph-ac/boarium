@@ -17,12 +17,12 @@ import java.util.zip.GZIPInputStream;
 /**
  * The Bedrock block palette with each state's collision boxes and block properties from Bedrock Dedicated Server, for the state alone with no world around it, and each block's default state, read from the table the blockdata module generates from Bedrock data.
  * Entries with the same name are next to each other.
- * A palette index is the runtime ID a client uses when the server adds no custom blocks and StartGame does not ask for hashed IDs; with hashed IDs, the client uses the network hash instead.
+ * In a protocol's table, a palette index is the runtime ID its clients use when the server adds no custom blocks and StartGame does not ask for hashed IDs; with hashed IDs, the client uses the network hash instead.
  */
 public final class BedrockBlockTable {
     public static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/bedrock_blocks.26_30.bin.gz";
     // The game version of each protocol's table, as Geyser names its palettes. Protocol 2169 (26.45) has no Bedrock data of its own, and Geyser gives it the 26.40 palette.
-    private static final Map<Integer, String> VERSIONS = Map.of(924, "26_0", 944, "26_10", 975, "26_20", 1001, "26_30", 2168, "26_40", 2169, "26_40", 2193, "26_50", 2225, "26_60");
+    static final Map<Integer, String> VERSIONS = Map.of(924, "26_0", 944, "26_10", 975, "26_20", 1001, "26_30", 2168, "26_40", 2169, "26_40", 2193, "26_50", 2225, "26_60");
     private static final Map<String, BedrockBlockTable> LOADED = new ConcurrentHashMap<>();
     private static final int MAGIC = 0x424E4254;
     private static final int FORMAT = 2;
@@ -55,7 +55,7 @@ public final class BedrockBlockTable {
     private final Map<String, Integer> countByName;
     private final Map<String, Integer> defaultByName;
 
-    private BedrockBlockTable(DataInputStream in) throws IOException {
+    private static BedrockBlockTable read(DataInputStream in) throws IOException {
         int magic = in.readInt();
         if (magic != MAGIC) {
             throw new IOException("Not a Bedrock block table");
@@ -64,16 +64,16 @@ public final class BedrockBlockTable {
         if (format != FORMAT) {
             throw new IOException("Bedrock block table format " + format + ", expected " + FORMAT + ": regenerate it with ./gradlew :blockdata:generateBedrockBlocks");
         }
-        protocol = in.readInt();
-        sourceVersion = in.readUTF();
-        blockVersion = in.readInt();
+        int protocol = in.readInt();
+        String sourceVersion = in.readUTF();
+        int blockVersion = in.readInt();
 
         String[] strings = new String[count(in, 0xFFFF, "strings")];
         for (int i = 0; i < strings.length; i++) {
             strings[i] = in.readUTF();
         }
 
-        shapes = new float[count(in, 0xFFFF, "shapes")][];
+        float[][] shapes = new float[count(in, 0xFFFF, "shapes")][];
         for (int s = 0; s < shapes.length; s++) {
             shapes[s] = new float[in.readUnsignedByte() * 6];
             for (int i = 0; i < shapes[s].length; i++) {
@@ -82,16 +82,14 @@ public final class BedrockBlockTable {
         }
 
         int size = count(in, 0xFFFF, "palette entries");
-        names = new String[size];
-        states = new NbtMap[size];
-        hashes = new int[size];
-        stateShape = new char[size];
-        flags = new byte[size];
-        hardness = new float[size];
-        friction = new float[size];
-        byNameAndStates = new HashMap<>(size * 2);
-        firstByName = new HashMap<>();
-        countByName = new HashMap<>();
+        String[] names = new String[size];
+        NbtMap[] states = new NbtMap[size];
+        int[] hashes = new int[size];
+        char[] stateShape = new char[size];
+        byte[] flags = new byte[size];
+        float[] hardness = new float[size];
+        float[] friction = new float[size];
+        int blocks = 0;
         for (int i = 0; i < size; i++) {
             names[i] = string(in, strings);
             hashes[i] = in.readInt();
@@ -120,26 +118,68 @@ public final class BedrockBlockTable {
             }
             hardness[i] = in.readFloat();
             friction[i] = in.readFloat();
+            if (i == 0 || !names[i].equals(names[i - 1])) {
+                blocks++;
+            }
+        }
+
+        // One default per name, in palette order
+        if (count(in, 0xFFFF, "default states") != blocks) {
+            throw new IOException("Bedrock block table lists default states for a different number of blocks than its palette has");
+        }
+        int[] defaults = new int[blocks];
+        for (int b = 0; b < blocks; b++) {
+            defaults[b] = in.readUnsignedShort();
+        }
+
+        // Reading to the end makes GZIPInputStream check its CRC, so a corrupt table fails here instead of loading with wrong answers.
+        if (in.read() != -1) {
+            throw new IOException("Bedrock block table has data after its end");
+        }
+        return new BedrockBlockTable(protocol, sourceVersion, blockVersion, shapes, names, states, hashes, stateShape, flags, hardness, friction, defaults);
+    }
+
+    // Takes the arrays without copying them. defaults has the palette index of each name's default state, in palette order.
+    BedrockBlockTable(int protocol, String sourceVersion, int blockVersion, float[][] shapes, String[] names, NbtMap[] states, int[] hashes, char[] stateShape, byte[] flags, float[] hardness, float[] friction, int[] defaults) {
+        this.protocol = protocol;
+        this.sourceVersion = sourceVersion;
+        this.blockVersion = blockVersion;
+        this.shapes = shapes;
+        this.names = names;
+        this.states = states;
+        this.hashes = hashes;
+        this.stateShape = stateShape;
+        this.flags = flags;
+        this.hardness = hardness;
+        this.friction = friction;
+
+        int size = names.length;
+        if (size > 0xFFFF) {
+            throw new IllegalArgumentException("Bedrock block table has " + size + " palette entries, more than its char indexes hold");
+        }
+        byNameAndStates = new HashMap<>(size * 2);
+        firstByName = new HashMap<>();
+        countByName = new HashMap<>();
+        for (int i = 0; i < size; i++) {
             if (byNameAndStates.put(new Key(names[i], states[i]), i) != null) {
-                throw new IOException("Palette entry " + i + " " + names[i] + " " + states[i] + " is listed twice");
+                throw new IllegalArgumentException("Palette entry " + i + " " + names[i] + " " + states[i] + " is listed twice");
             }
             if (i == 0 || !names[i].equals(names[i - 1])) {
                 if (firstByName.putIfAbsent(names[i], i) != null) {
-                    throw new IOException("Palette entry " + i + " " + names[i] + " is apart from the earlier entries with its name");
+                    throw new IllegalArgumentException("Palette entry " + i + " " + names[i] + " is apart from the earlier entries with its name");
                 }
             }
             countByName.merge(names[i], 1, Integer::sum);
         }
 
-        // One default per name, in palette order, each one of its name's entries
-        if (count(in, 0xFFFF, "default states") != firstByName.size()) {
-            throw new IOException("Bedrock block table lists default states for a different number of blocks than its palette has");
+        if (defaults.length != firstByName.size()) {
+            throw new IllegalArgumentException("Bedrock block table lists default states for a different number of blocks than its palette has");
         }
         defaultByName = new HashMap<>();
-        for (int i = 0; i < size; i += countByName.get(names[i])) {
-            int index = in.readUnsignedShort();
+        for (int i = 0, b = 0; i < size; i += countByName.get(names[i]), b++) {
+            int index = defaults[b];
             if (index < i || index >= i + countByName.get(names[i])) {
-                throw new IOException("The default state of " + names[i] + " is palette entry " + index + ", which is not one of its entries");
+                throw new IllegalArgumentException("The default state of " + names[i] + " is palette entry " + index + ", which is not one of its entries");
             }
             defaultByName.put(names[i], index);
         }
@@ -155,13 +195,8 @@ public final class BedrockBlockTable {
             sortedHashes[i] = (int) (byHash[i] >> 32);
             sortedHashIndices[i] = (char) byHash[i];
             if (i > 0 && sortedHashes[i] == sortedHashes[i - 1]) {
-                throw new IOException("Two palette entries have the network hash " + Integer.toUnsignedString(sortedHashes[i]));
+                throw new IllegalArgumentException("Two palette entries have the network hash " + Integer.toUnsignedString(sortedHashes[i]));
             }
-        }
-
-        // Reading to the end makes GZIPInputStream check its CRC, so a corrupt table fails here instead of loading with wrong answers.
-        if (in.read() != -1) {
-            throw new IOException("Bedrock block table has data after its end");
         }
     }
 
@@ -221,23 +256,23 @@ public final class BedrockBlockTable {
 
     public static BedrockBlockTable load(InputStream in) throws IOException {
         try {
-            return new BedrockBlockTable(new DataInputStream(new BufferedInputStream(new GZIPInputStream(in))));
+            return read(new DataInputStream(new BufferedInputStream(new GZIPInputStream(in))));
         } catch (RuntimeException e) {
             throw new IOException("Corrupt Bedrock block table", e);
         }
     }
 
-    // The Bedrock protocol version of the palette
+    // The Bedrock protocol version of the palette, or -1 for BedrockBlockUnion's table
     public int protocol() {
         return protocol;
     }
 
-    // The BedrockData version the table came from, such as "1.26.33.1"
+    // The BedrockData version the table came from, such as "1.26.33.1", or a comma list of them for BedrockBlockUnion's table
     public String sourceVersion() {
         return sourceVersion;
     }
 
-    // The version every palette entry carries in its NBT
+    // The version every palette entry carries in its NBT, or -1 for BedrockBlockUnion's table
     public int blockVersion() {
         return blockVersion;
     }
