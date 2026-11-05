@@ -18,7 +18,7 @@ import java.util.Set;
 import java.util.function.IntFunction;
 
 /**
- * The collision boxes that Bedrock 1.26.30 builds from the neighbouring blocks, as the client does: fences, panes and bars, chorus plants and stair corners.
+ * The collision boxes that Bedrock builds from the neighbouring blocks for states that do not hold their connections, as the 1.26.30 client does: fences, panes and bars, chorus plants and stair corners.
  * A state here is a shared ID of {@link BedrockBlockUnion}, and neighbours are read from layer 0 of Boar's world.
  */
 final class BedrockConnections {
@@ -82,8 +82,10 @@ final class BedrockConnections {
             String name = TABLE.name(i);
             int rule = stateRule(name, TABLE.states(i), singleSlabs);
             RULES[i] = (byte) (rule >= 0 ? rule : named.getOrDefault(name, ALL));
-            SHAPES[i] = shape(name);
-            STAIR_SIDES[i] = (byte) (SHAPES[i] == STAIRS ? stairSide(TABLE.states(i).getInt("weirdo_direction")) + (TABLE.states(i).getByte("upside_down_bit") == 1 ? 4 : 0) : -1);
+            byte shape = shape(name);
+            // From 26.50 a state can hold its connections or its stair corner, and then its table boxes are already the shape the client builds.
+            SHAPES[i] = holdsShape(TABLE.states(i)) ? OTHER : shape;
+            STAIR_SIDES[i] = (byte) (shape == STAIRS ? stairSide(TABLE.states(i).getInt("weirdo_direction")) + (TABLE.states(i).getByte("upside_down_bit") == 1 ? 4 : 0) : -1);
             CHORUS_JOINS[i] = name.equals("minecraft:chorus_plant") || name.equals("minecraft:chorus_flower");
         }
     }
@@ -104,6 +106,11 @@ final class BedrockConnections {
             return STAIRS;
         }
         return OTHER;
+    }
+
+    // Whether a state holds its connections (minecraft:connection_*) or its stair corner (minecraft:corner)
+    private static boolean holdsShape(NbtMap states) {
+        return states.containsKey("minecraft:corner") || states.keySet().stream().anyMatch(key -> key.startsWith("minecraft:connection_"));
     }
 
     private static Map<String, Integer> readRules() {
@@ -207,6 +214,10 @@ final class BedrockConnections {
         int index = at(player, x + DX[side], y, z + DZ[side]);
         int rule = index == UNKNOWN ? ALL : RULES[index];
         return (rule & 1 << kind) != 0 && (rule & side((side + 2) & 3)) != 0;
+    }
+
+    static boolean fromNeighbours(int index) {
+        return SHAPES[index] != OTHER;
     }
 
     static int rule(int index) {

@@ -23,10 +23,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.TreeSet;
 import java.util.UUID;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -40,6 +42,8 @@ class BedrockConnectionsTest {
     private static final float[] PANE_POST = {0.4375F, 0, 0.4375F, 0.5625F, 1, 0.5625F};
     private static final String JAVA_STAIR_CELLS = "4039f1f32ecdc45a36ef3a04d81f1db32f0e2ecd10f5eac84850f74e056f7a72";
 
+    private static final BedrockBlockTable V26_50 = BedrockBlockTable.forProtocol(2193);
+    private static final BedrockBlockTable V26_60 = BedrockBlockTable.forProtocol(2225);
     private static BedrockBlockTable table;
     private BoarPlayer player;
 
@@ -388,6 +392,120 @@ class BedrockConnectionsTest {
             }
         }
         return false;
+    }
+
+    // From 26.50 a fence's state holds its connections, so its own boxes are its shape, whatever is next to it.
+    @Test
+    void fenceOf26_50TakesItsShapeFromItsState() {
+        int north = shared(V26_50, "oak_fence", "minecraft:connection_north", (byte) 1, "minecraft:connection_east", (byte) 0, "minecraft:connection_south", (byte) 0, "minecraft:connection_west", (byte) 0);
+        assertBoxes(this.boarBoxes(north), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F);
+        this.set(POS.east(), find("stone"));
+        assertBoxes(this.boarBoxes(north), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F);
+    }
+
+    // The 1.26.30 fence has no states, so it still builds its arms from its neighbours.
+    @Test
+    void fenceOf26_30TakesItsShapeFromItsNeighbours() {
+        int fence = SharedIds.shared(find("oak_fence"));
+        assertBoxes(this.boarBoxes(fence), POST);
+        this.set(POS.north(), find("stone"));
+        assertBoxes(this.boarBoxes(fence), 0.375F, 0, 0, 0.625F, 1.5F, 0.625F);
+    }
+
+    // From 26.60 a chorus plant's state holds its six connections; the 26.50 chorus plant has one state and still looks at its neighbours.
+    @Test
+    void chorusPlantOf26_60TakesItsShapeFromItsState() {
+        int up = shared(V26_60, "chorus_plant", "minecraft:connection_up", (byte) 1, "minecraft:connection_down", (byte) 0, "minecraft:connection_north", (byte) 0,
+                "minecraft:connection_east", (byte) 0, "minecraft:connection_south", (byte) 0, "minecraft:connection_west", (byte) 0);
+        assertBoxes(this.boarBoxes(up), 0.125F, 0.125F, 0.125F, 0.875F, 1, 0.875F);
+        this.set(POS.down(), find("end_stone"));
+        assertBoxes(this.boarBoxes(up), 0.125F, 0.125F, 0.125F, 0.875F, 1, 0.875F);
+
+        int single = shared(V26_50, "chorus_plant");
+        assertEquals(1, V26_50.stateCount("minecraft:chorus_plant"));
+        assertBoxes(this.boarBoxes(single), 0.125F, 0, 0.125F, 0.875F, 0.875F, 0.875F);
+    }
+
+    // From 26.50 a stair's state holds its corner. An east-facing bottom stair's inner left corner adds the north-west quarter, whatever stairs are around it.
+    @Test
+    void stairOf26_50TakesItsCornerFromItsState() {
+        int inner = shared(V26_50, "oak_stairs", "weirdo_direction", 0, "upside_down_bit", (byte) 0, "minecraft:corner", "inner_left");
+        float[] own = V26_50.collision(V26_50.index("minecraft:oak_stairs", SharedIds.SHARED.states(inner)));
+        assertEquals(cells(new float[]{0, 0, 0, 1, 0.5F, 1, 0.5F, 0.5F, 0, 1, 1, 1, 0, 0.5F, 0, 0.5F, 1, 0.5F}), cells(own));
+        assertArrayEquals(own, flatten(this.boarBoxes(inner)));
+        // A stair facing north ahead would make an outer corner from the neighbours.
+        this.set(POS.east(), stairs("oak_stairs", 3, 0));
+        assertArrayEquals(own, flatten(this.boarBoxes(inner)));
+    }
+
+    // A 26.50 stair is still a stair to the stairs next to it: one facing north ahead of a 1.26.30 east-facing stair cuts its step to the north-east quarter.
+    @Test
+    void stairOf26_50MakesTheCornerOfAStairBeside() {
+        int ahead = shared(V26_50, "oak_stairs", "weirdo_direction", 3, "upside_down_bit", (byte) 0, "minecraft:corner", "none");
+        this.player.compensatedWorld.updateBlock(POS.east(), 0, ahead);
+        assertBoxes(this.override(stairs("oak_stairs", 0, 0)), 0, 0, 0, 1, 0.5F, 1, 0.5F, 0.5F, 0, 1, 1, 0.5F);
+    }
+
+    // Which fences, panes, bars, stairs and chorus plants of each version's table take their shape from their states: none up to 26.40, from 26.50 all but the chorus plant, and from 26.60 all.
+    // No other block builds its shape from its neighbours, so walls, trip wire, fire and redstone wire, which also hold their connections, keep their table boxes.
+    @Test
+    void namesThatTakeTheirShapeFromTheirStates() {
+        Map<String, Set<String>> byVersion = new TreeMap<>();
+        Map<String, Integer> families = new TreeMap<>();
+        for (int protocol : BedrockBlockTable.VERSIONS.keySet()) {
+            BedrockBlockTable own = BedrockBlockTable.forProtocol(protocol);
+            Set<String> fromStates = new TreeSet<>();
+            int family = 0;
+            for (int first = 0; first < own.paletteSize(); first += own.stateCount(own.name(first))) {
+                String name = own.name(first);
+                boolean inFamily = name.endsWith("_fence") || name.endsWith("_pane") || name.endsWith("_bars") || name.endsWith("_stairs") || name.equals("minecraft:chorus_plant");
+                family += inFamily ? 1 : 0;
+                for (int i = first; i < first + own.stateCount(name); i++) {
+                    boolean fromNeighbours = BedrockConnections.fromNeighbours(BedrockBlockUnion.get().toShared(protocol, i));
+                    assertTrue(inFamily || !fromNeighbours, name);
+                    if (inFamily && protocol >= V26_50.protocol()) {
+                        assertEquals(protocol == V26_50.protocol() && name.equals("minecraft:chorus_plant"), fromNeighbours, name + " " + own.states(i));
+                    }
+                    if (inFamily && !fromNeighbours) {
+                        fromStates.add(name);
+                    }
+                }
+            }
+            byVersion.put(BedrockBlockTable.version(protocol), fromStates);
+            families.put(BedrockBlockTable.version(protocol), family);
+        }
+        for (String version : List.of("26_0", "26_10", "26_20", "26_30", "26_40")) {
+            assertEquals(Set.of(), byVersion.get(version), version);
+        }
+        assertEquals(155, families.get("26_50"));
+        assertEquals(154, byVersion.get("26_50").size());
+        assertFalse(byVersion.get("26_50").contains("minecraft:chorus_plant"));
+        assertEquals(155, byVersion.get("26_60").size());
+    }
+
+    // The shared ID of the first state of a version's table with this name and these state values
+    private static int shared(BedrockBlockTable own, String name, Object... states) {
+        int first = own.firstIndex("minecraft:" + name);
+        assertTrue(first >= 0, name);
+        for (int i = first; i < first + own.stateCount("minecraft:" + name); i++) {
+            boolean match = true;
+            for (int s = 0; s < states.length; s += 2) {
+                match &= states[s + 1].equals(own.states(i).get((String) states[s]));
+            }
+            if (match) {
+                return BedrockBlockUnion.get().toShared(own.protocol(), i);
+            }
+        }
+        throw new AssertionError(name + " has no state " + List.of(states));
+    }
+
+    // The boxes Boar collides with for this shared ID at POS, moved back to the block's own corner
+    private List<Box> boarBoxes(int id) {
+        List<Box> boxes = new ArrayList<>();
+        for (Box box : BedrockState.FACTORY.create(id, POS, 0).findCollision(this.player, POS, Box.EMPTY, false)) {
+            boxes.add(box.offset(-POS.getX(), -POS.getY(), -POS.getZ()));
+        }
+        return boxes;
     }
 
     private static int find(String name) {
