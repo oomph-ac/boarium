@@ -4,18 +4,11 @@ import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
-import io.netty.channel.ChannelHandlerContext;
-import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
-import io.netty.util.AttributeKey;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
-import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
-import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchDecoder;
-import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockServerInitializer;
-import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
 
 import java.net.InetSocketAddress;
@@ -27,7 +20,6 @@ import java.util.function.Consumer;
  */
 public final class ClientListener {
     private static final String VALIDATE_ENCRYPTION = "cloudburst.validateEncryption";
-    private static final AttributeKey<BedrockServerSession> SESSION = AttributeKey.valueOf(ClientListener.class.getName() + ".session");
 
     private final Channel channel;
 
@@ -62,39 +54,7 @@ public final class ClientListener {
         ChannelFuture bind = new ServerBootstrap()
                 .group(group)
                 .channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
-                .childHandler(new BedrockServerInitializer() {
-                    @Override
-                    protected void postInitChannel(Channel channel) {
-                        channel.pipeline().replace(BedrockBatchDecoder.NAME, BedrockBatchDecoder.NAME, new ClientBatchDecoder());
-                        // Any error while handling the client's packets ends the connection, with a disconnect screen once the client has a session.
-                        channel.pipeline().addLast(new ChannelInboundHandlerAdapter() {
-                            @Override
-                            public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
-                                BedrockServerSession session = ctx.channel().attr(SESSION).get();
-                                if (session != null && session.isConnected() && session.getPacketHandler() instanceof LoginHandler login) {
-                                    login.failOnError();
-                                } else if (session != null && session.isConnected()) {
-                                    ClientDisconnect.disconnect(session, "disconnectionScreen.internalError.cantConnect");
-                                } else {
-                                    ctx.close();
-                                }
-                            }
-                        });
-                    }
-
-                    @Override
-                    protected void initSession(BedrockServerSession session) {
-                        // boarium has no split-screen support, so packets for a second player on the same connection are dropped.
-                        // Cloudburst would send a sub-client's Disconnect to the primary player, so nothing is sent.
-                        if (session.isSubClient()) {
-                            session.setPacketHandler(new BedrockPacketHandler() {
-                            });
-                            return;
-                        }
-                        session.getPeer().getChannel().attr(SESSION).set(session);
-                        session.setPacketHandler(new LoginHandler(session, requireXbox, loginTimeout, onLogin));
-                    }
-                })
+                .childHandler(new ClientInitializer(requireXbox, loginTimeout, onLogin))
                 .bind(address)
                 .sync();
 
