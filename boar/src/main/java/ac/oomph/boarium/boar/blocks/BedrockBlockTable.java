@@ -11,6 +11,7 @@ import java.io.UncheckedIOException;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.GZIPInputStream;
 
 /**
@@ -20,6 +21,17 @@ import java.util.zip.GZIPInputStream;
  */
 public final class BedrockBlockTable {
     public static final String RESOURCE = "/ac/oomph/boarium/boar/blocks/bedrock_blocks.26_30.bin.gz";
+    // The table of each protocol, named by game version as Geyser names its palettes. Protocol 2169 (26.45) has no Bedrock data of its own, and Geyser gives it the 26.40 palette.
+    private static final Map<Integer, String> RESOURCES = Map.of(
+            924, resource("26_0"),
+            944, resource("26_10"),
+            975, resource("26_20"),
+            1001, RESOURCE,
+            2168, resource("26_40"),
+            2169, resource("26_40"),
+            2193, resource("26_50"),
+            2225, resource("26_60"));
+    private static final Map<String, BedrockBlockTable> LOADED = new ConcurrentHashMap<>();
     private static final int MAGIC = 0x424E4254;
     private static final int FORMAT = 2;
 
@@ -180,23 +192,33 @@ public final class BedrockBlockTable {
     private record Key(String name, NbtMap states) {
     }
 
-    private static final class Shared {
-        static final BedrockBlockTable TABLE = load();
+    private static String resource(String version) {
+        return "/ac/oomph/boarium/boar/blocks/bedrock_blocks." + version + ".bin.gz";
     }
 
     // The table from RESOURCE, loaded once on first use
     public static BedrockBlockTable get() {
-        return Shared.TABLE;
+        return LOADED.computeIfAbsent(RESOURCE, BedrockBlockTable::load);
+    }
+
+    // The table of a protocol's client, loaded once on first use, or null for a protocol with none
+    public static BedrockBlockTable forProtocol(int protocol) {
+        String resource = RESOURCES.get(protocol);
+        return resource == null ? null : LOADED.computeIfAbsent(resource, BedrockBlockTable::load);
     }
 
     public static BedrockBlockTable load() {
-        try (InputStream in = BedrockBlockTable.class.getResourceAsStream(RESOURCE)) {
+        return load(RESOURCE);
+    }
+
+    static BedrockBlockTable load(String resource) {
+        try (InputStream in = BedrockBlockTable.class.getResourceAsStream(resource)) {
             if (in == null) {
-                throw new IllegalStateException("Missing resource " + RESOURCE);
+                throw new IllegalStateException("Missing resource " + resource);
             }
             return load(in);
         } catch (IOException e) {
-            throw new UncheckedIOException("Cannot read Bedrock block table " + RESOURCE, e);
+            throw new UncheckedIOException("Cannot read Bedrock block table " + resource, e);
         }
     }
 
@@ -271,7 +293,7 @@ public final class BedrockBlockTable {
     }
 
     // The collision boxes as minX, minY, minZ, maxX, maxY, maxZ per box, in Bedrock Dedicated Server's order. The array is shared: do not change it.
-    // They are wrong where the game picks the shape from more than the state: doors (one box for every state), stair corners, the connections of fences, panes, bars and chorus plants, double chests, piston arms, scaffolding and powder snow (no boxes; the last two depend on the entity in them), and bamboo, pointed dripstone and sulfur spikes (offset by position).
+    // They are wrong where the game picks the shape from more than the state: doors (one box for every state), double chests, piston arms, scaffolding and powder snow (no boxes; the last two depend on the entity in them), and bamboo, pointed dripstone and sulfur spikes (offset by position); before 26.50 also stair corners and the connections of fences, panes and bars, and before 26.60 those of chorus plants.
     public float[] collision(int index) {
         return shapes[stateShape[index]];
     }

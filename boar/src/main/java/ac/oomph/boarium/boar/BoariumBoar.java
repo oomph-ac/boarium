@@ -70,9 +70,9 @@ public final class BoariumBoar {
             if (protocol == table.protocol()) {
                 return processor;
             }
-            // Block runtime IDs change between protocols, and the block table is for one.
+            // Every protocol has a block table, but Boar's blocks, block states and items are still those of BedrockBlockTable.get() alone.
             if (WARNED_PROTOCOLS.add(protocol)) {
-                LOG.warn("Boar does not check players on protocol {}, since it has no block table for it", protocol);
+                LOG.warn("Boar does not check players on protocol {}, since its blocks and items are those of protocol {}", protocol, table.protocol());
             }
             return Processor.NONE;
         };

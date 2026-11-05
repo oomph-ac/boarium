@@ -26,7 +26,7 @@ import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
 
 /**
- * Writes boar's Bedrock block table from the Bedrock data in blockdata/data/bedrock (see its README): the block palette, the dump of every block state from Bedrock Dedicated Server, and each block's default state.
+ * Writes boar's Bedrock block tables, one from each folder of Bedrock data in blockdata/data/bedrock (see each folder's README): the block palette, the dump of every block state from Bedrock Dedicated Server, and each block's default state.
  * They are joined by network hash, the FNV-1a 32 hash of a palette entry's name and states, which the dump lists as blockStateHash and the block types as defaultBlockStateHash.
  *
  * The table is gzip over big-endian DataOutputStream data, in this order:
@@ -40,34 +40,39 @@ import java.util.zip.GZIPOutputStream;
 public final class BedrockBlockGenerator {
     private static final int MAGIC = 0x424E4254;
     private static final int FORMAT = 2;
-    private static final int PROTOCOL = 1001;
-    // The BedrockData folder the files come from
-    private static final String SOURCE_VERSION = "1.26.33.1";
 
     private static final int CAN_CONTAIN_LIQUID_SOURCE = 1;
     private static final int SOLID = 2;
 
     // The printed numbers readFloat did not read as printed, with the float it read instead
-    private static final Map<String, Float> RESTORED = new TreeMap<>();
+    private final Map<String, Float> restored = new TreeMap<>();
 
     private final Map<String, Integer> strings = new LinkedHashMap<>();
+    private final int protocol;
+    // The BedrockData folder the files come from, such as "1.26.33.1"
+    private final String sourceVersion;
 
-    private BedrockBlockGenerator() {
+    private BedrockBlockGenerator(int protocol, String sourceVersion) {
+        this.protocol = protocol;
+        this.sourceVersion = sourceVersion;
     }
 
     public static void main(String[] args) throws Exception {
-        if (args.length != 2) {
-            System.err.println("Usage: <Bedrock data folder> <output file>");
+        if (args.length == 0 || args.length % 4 != 0) {
+            System.err.println("Usage: (<Bedrock data folder> <output file> <protocol> <BedrockData folder name>)...");
             System.exit(2);
         }
-        Path data = Path.of(args[0]).toAbsolutePath();
-        Path out = Path.of(args[1]).toAbsolutePath();
+        for (int i = 0; i < args.length; i += 4) {
+            write(Path.of(args[i]).toAbsolutePath(), Path.of(args[i + 1]).toAbsolutePath(), Integer.parseInt(args[i + 2]), args[i + 3]);
+        }
+    }
 
+    private static void write(Path data, Path out, int protocol, String sourceVersion) throws IOException {
         byte[] table;
         try {
-            table = new BedrockBlockGenerator().build(data.resolve("block_palette.nbt"), data.resolve("block_states.json.gz"), data.resolve("block_types.json.gz"));
+            table = new BedrockBlockGenerator(protocol, sourceVersion).build(data.resolve("block_palette.nbt"), data.resolve("block_states.json.gz"), data.resolve("block_types.json.gz"));
         } catch (IllegalStateException e) {
-            System.err.println("Bedrock block table not written: " + e.getMessage());
+            System.err.println("Bedrock block table " + out.getFileName() + " not written: " + e.getMessage());
             System.exit(1);
             return;
         }
@@ -208,8 +213,8 @@ public final class BedrockBlockGenerator {
         DataOutputStream header = new DataOutputStream(table);
         header.writeInt(MAGIC);
         header.writeInt(FORMAT);
-        header.writeInt(PROTOCOL);
-        header.writeUTF(SOURCE_VERSION);
+        header.writeInt(protocol);
+        header.writeUTF(sourceVersion);
         header.writeInt(blockVersion);
         header.writeInt(strings.size());
         for (String value : strings.keySet()) {
@@ -218,8 +223,8 @@ public final class BedrockBlockGenerator {
         body.writeTo(header);
         header.flush();
 
-        RESTORED.forEach((text, value) -> System.out.println("Read " + text + " as " + value));
-        System.out.println(palette.size() + " palette entries, " + shapes.size() + " shapes, block version " + blockVersion + " for protocol " + PROTOCOL + ", from BedrockData " + SOURCE_VERSION);
+        restored.forEach((text, value) -> System.out.println("Read " + text + " as " + value));
+        System.out.println(palette.size() + " palette entries, " + shapes.size() + " shapes, block version " + blockVersion + " for protocol " + protocol + ", from BedrockData " + sourceVersion);
         return table.toByteArray();
     }
 
@@ -257,7 +262,7 @@ public final class BedrockBlockGenerator {
         return defaults;
     }
 
-    private static List<DumpState> readDump(Path path) throws IOException {
+    private List<DumpState> readDump(Path path) throws IOException {
         List<DumpState> states = new ArrayList<>();
         try (JsonReader json = new JsonReader(new InputStreamReader(new GZIPInputStream(Files.newInputStream(path)), StandardCharsets.UTF_8))) {
             json.beginArray();
@@ -296,7 +301,7 @@ public final class BedrockBlockGenerator {
 
     // The dump cuts floats to 6 decimals, so 0.8175 prints as 0.817499.
     // When adding one millionth (away from zero) gives a shorter number whose float cuts back to the printed text, that float is used; otherwise the printed number stays, as for 1/240 steps such as 0.754166.
-    private static float readFloat(JsonReader json) throws IOException {
+    private float readFloat(JsonReader json) throws IOException {
         require(json.peek() == JsonToken.NUMBER, "Expected a number at " + json);
         String text = json.nextString();
         float value = Float.parseFloat(text);
@@ -304,16 +309,16 @@ public final class BedrockBlockGenerator {
         BigDecimal printed = new BigDecimal(text);
         if (printed.scale() == 6) {
             BigDecimal shorter = printed.add(BigDecimal.valueOf(printed.signum(), 6)).stripTrailingZeros();
-            float restored = Float.parseFloat(shorter.toPlainString());
-            if (shorter.scale() < 6 && new BigDecimal(restored).setScale(6, RoundingMode.DOWN).compareTo(printed) == 0) {
-                RESTORED.put(text, restored);
-                return restored;
+            float shorterValue = Float.parseFloat(shorter.toPlainString());
+            if (shorter.scale() < 6 && new BigDecimal(shorterValue).setScale(6, RoundingMode.DOWN).compareTo(printed) == 0) {
+                this.restored.put(text, shorterValue);
+                return shorterValue;
             }
         }
         return value;
     }
 
-    private static float[] readBoxes(JsonReader json) throws IOException {
+    private float[] readBoxes(JsonReader json) throws IOException {
         List<Float> values = new ArrayList<>();
         json.beginArray();
         while (json.hasNext()) {

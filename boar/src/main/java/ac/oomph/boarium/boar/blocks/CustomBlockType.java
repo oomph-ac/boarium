@@ -8,7 +8,7 @@ import org.cloudburstmc.math.vector.Vector3i;
 import java.util.List;
 
 /**
- * Boar's block of a custom block with custom IDs, which every palette with that block shares, as it shares the custom IDs.
+ * Boar's block of a custom block with custom IDs, which every palette of one block table with that block shares, as it shares the custom IDs.
  */
 final class CustomBlockType implements Block {
     // Bounds the states compared for one block, which a real block's traits never come near.

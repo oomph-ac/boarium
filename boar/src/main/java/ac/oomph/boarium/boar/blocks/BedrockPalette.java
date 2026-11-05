@@ -31,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -40,9 +41,10 @@ import java.util.function.LongSupplier;
 import java.util.stream.IntStream;
 
 /**
- * The Bedrock block palette of one client: the vanilla palette and the custom blocks its server adds in StartGame, with the runtime IDs the client uses.
+ * The Bedrock block palette of one client: the vanilla palette of its block table and the custom blocks its server adds in StartGame, with the runtime IDs the client uses.
  * A runtime ID is the index in the palette sorted by the hash of the block name, or the network hash when StartGame sets blockNetworkIdsHashed.
- * Boar's intermediary ID of a vanilla state is its palette index. A custom state's is a custom ID past the palette, which every player shares.
+ * Boar's intermediary ID of a vanilla state is its palette index. A custom state's is a custom ID past the palette, which every player of the same block table shares.
+ * The static IDs and lookups here are those of {@link BedrockBlockTable#get()}.
  * A custom state has the collision boxes of its block's minecraft:collision_box components, which {@link #customBoxes(int)} gives by custom ID.
  * Boar treats a custom state it cannot read the boxes of, or a runtime ID the palette does not define, as a full 1x1x1 block.
  */
@@ -55,16 +57,6 @@ public final class BedrockPalette {
     static final Limits LIMITS = new Limits(MAX_STATES, 1L << 27, 4L * MAX_STATES);
     // Many players on one server get the same block properties. The cache counts as a holder of each palette in it.
     private static final int CACHED_PALETTES = 8;
-    private static final Map<Key, BedrockPalette> CACHE = new LinkedHashMap<>(16, 0.75F, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<Key, BedrockPalette> eldest) {
-            if (this.size() <= CACHED_PALETTES) {
-                return false;
-            }
-            eldest.getValue().drop();
-            return true;
-        }
-    };
 
     // A server can send new custom blocks with each StartGame, so the custom IDs of blocks that no palette has any more are freed, and their number is capped.
     static final int FIRST_CUSTOM_ID = TABLE.paletteSize();
@@ -83,11 +75,11 @@ public final class BedrockPalette {
     static final int MAX_WARNED_IDS = 16;
     private static final int MAX_LOGGED_NAME = 64;
 
-    private static final int AIR = TABLE.firstIndex("minecraft:air");
     // What a runtime ID is, when it is not a state with an intermediary ID: a state of the custom block at cappedBlocks[CUSTOM - entry], which has no custom IDs, or an ID the palette does not define
     private static final int CUSTOM = -2;
     private static final int UNDEFINED = -1;
 
+    private final Vanilla vanilla;
     private final boolean hashedIds;
     private final boolean idsUnknown;
     // With sorted IDs, the palette in runs of runtime IDs, as Runs has them; null with hashed IDs
@@ -120,16 +112,22 @@ public final class BedrockPalette {
     private int holders;
     private boolean released;
 
-    private BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread) {
-        this(hashedIds, blocks, customBlocksUnread, CUSTOM_IDS, LIMITS);
+    private BedrockPalette(Vanilla vanilla, boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread) {
+        this(vanilla, hashedIds, blocks, customBlocksUnread, vanilla.customIds, LIMITS);
     }
 
     BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread, CustomIds customIds) {
-        this(hashedIds, blocks, customBlocksUnread, customIds, LIMITS);
+        this(Vanilla.of(TABLE), hashedIds, blocks, customBlocksUnread, customIds, LIMITS);
     }
 
     // Tests give a palette custom IDs and limits of its own, so that it can run out of them. Throws IllegalArgumentException past the limits on hashing.
     BedrockPalette(boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread, CustomIds customIds, Limits limits) {
+        this(Vanilla.of(TABLE), hashedIds, blocks, customBlocksUnread, customIds, limits);
+    }
+
+    private BedrockPalette(Vanilla vanilla, boolean hashedIds, List<CustomBlock> blocks, boolean customBlocksUnread, CustomIds customIds, Limits limits) {
+        BedrockBlockTable table = vanilla.table;
+        this.vanilla = vanilla;
         this.hashedIds = hashedIds;
         this.idsUnknown = customBlocksUnread && !hashedIds;
         // A block with no custom IDs gets CUSTOM minus its index in cappedBlocks. One palette takes no more than its share of the custom IDs, so that it leaves some for other servers.
@@ -152,8 +150,8 @@ public final class BedrockPalette {
         Runs runs;
         Int2ObjectOpenHashMap<Owner> owners;
         try {
-            runs = Runs.of(blocks, firstIds, firstRuntimeIds);
-            owners = hashedIds ? hashedIds(runs, this.movedCustomIds, limits) : null;
+            runs = Runs.of(vanilla, blocks, firstIds, firstRuntimeIds);
+            owners = hashedIds ? hashedIds(table, runs, this.movedCustomIds, limits) : null;
         } catch (RuntimeException e) {
             customIds.release(this.heldBlocks);
             throw e;
@@ -161,15 +159,15 @@ public final class BedrockPalette {
         if (hashedIds) {
             this.sortedRuns = null;
             this.nonVanillaHashes = owners.int2ObjectEntrySet().stream()
-                    .filter(owner -> !isVanilla(owner.getValue().entry()) || TABLE.networkHash(owner.getValue().entry()) != owner.getIntKey())
+                    .filter(owner -> !this.isVanilla(owner.getValue().entry()) || table.networkHash(owner.getValue().entry()) != owner.getIntKey())
                     .mapToInt(Int2ObjectMap.Entry::getIntKey).sorted().toArray();
             this.nonVanillaHashIds = Arrays.stream(this.nonVanillaHashes).map(id -> owners.get(id).entry()).toArray();
-            SimpleBlockDefinition[] definitions = Vanilla.HASHED_DEFINITIONS;
+            SimpleBlockDefinition[] definitions = vanilla.hashedDefinitions;
             for (int i = 0; i < this.nonVanillaHashes.length; i++) {
                 int entry = this.nonVanillaHashIds[i];
-                if (isVanilla(entry)) {
-                    definitions = definitions == Vanilla.HASHED_DEFINITIONS ? definitions.clone() : definitions;
-                    definitions[entry] = new SimpleBlockDefinition(TABLE.name(entry), this.nonVanillaHashes[i], Vanilla.STATES[entry]);
+                if (this.isVanilla(entry)) {
+                    definitions = definitions == vanilla.hashedDefinitions ? definitions.clone() : definitions;
+                    definitions[entry] = new SimpleBlockDefinition(table.name(entry), this.nonVanillaHashes[i], vanilla.states[entry]);
                 }
             }
             this.definitions = definitions;
@@ -177,12 +175,12 @@ public final class BedrockPalette {
             this.sortedRuns = runs;
             this.nonVanillaHashes = new int[0];
             this.nonVanillaHashIds = new int[0];
-            this.definitions = new SimpleBlockDefinition[TABLE.paletteSize()];
+            this.definitions = new SimpleBlockDefinition[table.paletteSize()];
             for (int run = 0; run < runs.starts().length; run++) {
                 int first = runs.entries()[run];
-                if (isVanilla(first)) {
+                if (this.isVanilla(first)) {
                     for (int i = first; i < first + runs.length(run); i++) {
-                        this.definitions[i] = new SimpleBlockDefinition(TABLE.name(i), runs.starts()[run] + i - first, Vanilla.STATES[i]);
+                        this.definitions[i] = new SimpleBlockDefinition(table.name(i), runs.starts()[run] + i - first, vanilla.states[i]);
                     }
                 }
             }
@@ -205,14 +203,20 @@ public final class BedrockPalette {
      * Blocks in its block properties that the palette already has, such as data-driven vanilla blocks, are not custom.
      */
     public static BlockMappingInfo mappingInfo(StartGamePacket startGame) {
+        return mappingInfo(TABLE, startGame);
+    }
+
+    // The same, for a client of this table's protocol
+    public static BlockMappingInfo mappingInfo(BedrockBlockTable table, StartGamePacket startGame) {
+        Vanilla vanilla = Vanilla.of(table);
         Key key = new Key(startGame.isBlockNetworkIdsHashed(), List.copyOf(startGame.getBlockProperties()));
         // The mapping holds its palette before the lock is let go, so that the cache cannot drop the palette's blocks first.
-        synchronized (CACHE) {
-            BedrockPalette palette = CACHE.get(key);
+        synchronized (vanilla.cache) {
+            BedrockPalette palette = vanilla.cache.get(key);
             if (palette == null) {
-                palette = build(key);
+                palette = build(vanilla, key);
                 palette.hold();
-                CACHE.put(key, palette);
+                vanilla.cache.put(key, palette);
             }
             return palette.mappingInfo();
         }
@@ -248,34 +252,37 @@ public final class BedrockPalette {
     // A new block mapping of this palette, which holds it until it is released. Boar only guesses the shape of a block that is not a vanilla state, so rawIdDefined is false for it.
     BlockMappingInfo mappingInfo() {
         PlayerIds ids = new PlayerIds(this);
+        BedrockBlockTable table = this.vanilla.table;
+        int air = table.firstIndex("minecraft:air");
         BlockMappingInfo info = new BlockMappingInfo(
-                this.definition(AIR),
-                this.definition(TABLE.defaultIndex("minecraft:water")),
-                this.definition(TABLE.defaultIndex("minecraft:lava")),
-                this.definition(TABLE.defaultIndex("minecraft:powder_snow")),
-                IntList.of(this.definition(AIR).getRuntimeId()),
+                this.definition(air),
+                this.definition(table.defaultIndex("minecraft:water")),
+                this.definition(table.defaultIndex("minecraft:lava")),
+                this.definition(table.defaultIndex("minecraft:powder_snow")),
+                IntList.of(this.definition(air).getRuntimeId()),
                 definition -> this.isItemFrame(definition.getRuntimeId()),
                 ids::intermediaryId,
                 ids,
                 // Boar falls back to the block state for FallingFlowMaterial.CUSTOM, which is a full cube.
                 runtimeId -> {
-                    if (!Vanilla.FALLING_FLOW_SUPPORTED) {
+                    if (!this.vanilla.fallingFlowSupported) {
                         return FallingFlowMaterial.UNSUPPORTED_PROTOCOL;
                     }
                     int entry = this.entry(runtimeId);
-                    return isVanilla(entry) ? Vanilla.FLOWS[entry] : FallingFlowMaterial.CUSTOM;
+                    return this.isVanilla(entry) ? this.vanilla.flows[entry] : FallingFlowMaterial.CUSTOM;
                 },
                 runtimeId -> {
                     int entry = this.entry(runtimeId);
-                    return isVanilla(entry) ? Vanilla.JUMPS[entry] : HorseJumpMaterial.NONE;
+                    return this.isVanilla(entry) ? this.vanilla.jumps[entry] : HorseJumpMaterial.NONE;
                 },
-                runtimeId -> isVanilla(this.entry(runtimeId)));
+                runtimeId -> this.isVanilla(this.entry(runtimeId)));
         this.hold();
         return info;
     }
 
     // When Boar cannot read the custom blocks, their runtime IDs are unknown. With sorted IDs they also move the vanilla IDs, so every ID is unknown.
-    private static BedrockPalette build(Key key) {
+    private static BedrockPalette build(Vanilla shared, Key key) {
+        BedrockBlockTable table = shared.table;
         // As BlockDefinitionGroup::digestServerBlockProperties: it skips a block without a vanilla_block_data compound before it reads the block's properties, so the block has no states, and an earlier block of its name stays. Of the other blocks, it keeps the last of a name.
         Map<String, BlockPropertyData> byName = new LinkedHashMap<>();
         Map<String, BlockPropertyData> vanilla = new LinkedHashMap<>();
@@ -283,7 +290,7 @@ public final class BedrockPalette {
         for (BlockPropertyData data : key.blocks()) {
             boolean read = data.getProperties().get("vanilla_block_data") instanceof NbtMap;
             // A block of a vanilla name: the client adds its traits and properties to that vanilla block, since the name is in the minecraft namespace.
-            if (TABLE.firstIndex(data.getName()) >= 0) {
+            if (table.firstIndex(data.getName()) >= 0) {
                 if (read) {
                     vanilla.put(data.getName(), data);
                 }
@@ -302,7 +309,7 @@ public final class BedrockPalette {
             Set<String> merged = new LinkedHashSet<>();
             Set<String> withComponents = new LinkedHashSet<>();
             for (BlockPropertyData data : vanilla.values()) {
-                if (CustomBlock.keepsVanillaStates(data, TABLE.states(TABLE.firstIndex(data.getName())))) {
+                if (CustomBlock.keepsVanillaStates(data, table.states(table.firstIndex(data.getName())))) {
                     merged.add(data.getName());
                 }
                 if (data.getProperties().get("components") instanceof NbtMap components && !components.isEmpty()
@@ -320,10 +327,10 @@ public final class BedrockPalette {
                 }
                 blocks.add(block);
             }
-            return blocks.isEmpty() ? of(key.hashed()) : new BedrockPalette(key.hashed(), blocks, false);
+            return blocks.isEmpty() ? shared.of(key.hashed()) : new BedrockPalette(shared, key.hashed(), blocks, false);
         } catch (IllegalArgumentException e) {
             LOG.error("StartGame has custom blocks Boar cannot read ({}), so Boar treats {} as unknown", e.getMessage(), key.hashed() ? "their block IDs" : "every block ID");
-            return key.hashed() ? Vanilla.UNREAD_HASHED : Vanilla.UNKNOWN;
+            return key.hashed() ? shared.unreadHashed : shared.unknown;
         }
     }
 
@@ -340,7 +347,7 @@ public final class BedrockPalette {
 
     // The palette without custom blocks
     static BedrockPalette of(boolean hashedIds) {
-        return hashedIds ? Vanilla.HASHED : Vanilla.SORTED;
+        return Vanilla.of(TABLE).of(hashedIds);
     }
 
     // Whether a mapping is for a client whose every block runtime ID is unknown
@@ -369,10 +376,10 @@ public final class BedrockPalette {
 
     // The definition of an intermediary ID, or UNKNOWN_DEFINITION when this palette has no runtime ID for it. A mapping holds the runtime IDs of the IDs from FIRST_KEPT_ID.
     BlockDefinition definition(int id) {
-        if (isVanilla(id)) {
+        if (this.isVanilla(id)) {
             return this.definitions[id];
         }
-        int block = id < UNKNOWN_ID ? this.customBlock(id) : -1;
+        int block = id < this.vanilla.unknownId ? this.customBlock(id) : -1;
         return block < 0 ? UNKNOWN_DEFINITION : this.customDefinitions.computeIfAbsent(id, custom -> this.customDefinition(block, custom - this.customStarts[block]));
     }
 
@@ -410,7 +417,8 @@ public final class BedrockPalette {
     public static Block placedBlock(BlockMappingInfo info, String name) {
         BedrockPalette palette = of(info);
         Integer index = palette.customIndices.get(name);
-        if (index == null) {
+        // CustomBlockType.defaultBlockState makes a state with the IDs of BedrockBlockTable.get().
+        if (index == null || palette.vanilla.table != TABLE) {
             return null;
         }
         CustomBlockType type = palette.customTypes[index];
@@ -424,7 +432,7 @@ public final class BedrockPalette {
     // Whether a mapping's palette has a block of this name
     public static boolean hasBlock(BlockMappingInfo info, String name) {
         BedrockPalette palette = of(info);
-        return TABLE.firstIndex(name) >= 0 || palette.customIndices.containsKey(name) || Arrays.stream(palette.cappedBlocks).anyMatch(block -> block.name().equals(name));
+        return palette.vanilla.table.firstIndex(name) >= 0 || palette.customIndices.containsKey(name) || Arrays.stream(palette.cappedBlocks).anyMatch(block -> block.name().equals(name));
     }
 
     private void warnPlacement(int index, String reason) {
@@ -492,19 +500,19 @@ public final class BedrockPalette {
         }
         if (this.hashedIds) {
             int moved = Arrays.binarySearch(this.nonVanillaHashes, runtimeId);
-            int index = TABLE.indexOfHash(runtimeId);
+            int index = this.vanilla.table.indexOfHash(runtimeId);
             return moved >= 0 ? this.nonVanillaHashIds[moved] : index >= 0 ? index : UNDEFINED;
         }
         return this.sortedRuns.entry(runtimeId);
     }
 
-    private static boolean isVanilla(int id) {
-        return id >= 0 && id < TABLE.paletteSize();
+    private boolean isVanilla(int id) {
+        return id >= 0 && id < this.vanilla.table.paletteSize();
     }
 
     private boolean isItemFrame(int runtimeId) {
         int entry = this.entry(runtimeId);
-        return isVanilla(entry) && (TABLE.name(entry).equals("minecraft:frame") || TABLE.name(entry).equals("minecraft:glow_frame"));
+        return this.isVanilla(entry) && (this.vanilla.table.name(entry).equals("minecraft:frame") || this.vanilla.table.name(entry).equals("minecraft:glow_frame"));
     }
 
     /**
@@ -514,7 +522,7 @@ public final class BedrockPalette {
      *
      * @param movedCustomIds gets the runtime ID of each custom ID whose state does not have its network hash
      */
-    private static Int2ObjectOpenHashMap<Owner> hashedIds(Runs runs, Int2ObjectOpenHashMap<Integer> movedCustomIds, Limits limits) {
+    private static Int2ObjectOpenHashMap<Owner> hashedIds(BedrockBlockTable table, Runs runs, Int2ObjectOpenHashMap<Integer> movedCustomIds, Limits limits) {
         Int2ObjectOpenHashMap<Owner> owners = new Int2ObjectOpenHashMap<>();
         CustomCollision.Budget bytes = new CustomCollision.Budget(limits.hashedBytes());
         CustomCollision.Budget steps = new CustomCollision.Budget(limits.clashSteps());
@@ -523,10 +531,10 @@ public final class BedrockPalette {
             CustomBlock block = runs.blocks()[run];
             for (int s = 0; s < runs.length(run); s++) {
                 int entry = block == null ? first + s : first <= CUSTOM ? first : first + s;
-                String name = block == null ? TABLE.name(entry) : block.name();
+                String name = block == null ? table.name(entry) : block.name();
                 int hash;
                 if (block == null) {
-                    hash = TABLE.networkHash(entry);
+                    hash = table.networkHash(entry);
                 } else {
                     byte[] state = CustomBlock.networkState(name, block.state(s));
                     if (!bytes.take(state.length)) {
@@ -591,7 +599,7 @@ public final class BedrockPalette {
      * @param size the number of runtime IDs
      */
     private record Runs(int[] starts, int[] entries, CustomBlock[] blocks, int size) {
-        static Runs of(List<CustomBlock> blocks, Map<CustomBlock, Integer> firstIds, Map<CustomBlock, Integer> firstRuntimeIds) {
+        static Runs of(Vanilla shared, List<CustomBlock> blocks, Map<CustomBlock, Integer> firstIds, Map<CustomBlock, Integer> firstRuntimeIds) {
             List<CustomBlock> byName = new ArrayList<>(blocks);
             byName.sort(Comparator.comparing(block -> nameHash(block.name()), Long::compareUnsigned));
             IntList starts = new IntArrayList();
@@ -602,7 +610,7 @@ public final class BedrockPalette {
             for (int b = 0; b <= byName.size(); b++) {
                 CustomBlock block = b < byName.size() ? byName.get(b) : null;
                 int end = vanilla;
-                while (end < TABLE.paletteSize() && (block == null || Long.compareUnsigned(Vanilla.NAME_HASHES[end], nameHash(block.name())) <= 0)) {
+                while (end < shared.table.paletteSize() && (block == null || Long.compareUnsigned(shared.nameHashes[end], nameHash(block.name())) <= 0)) {
                     end++;
                 }
                 if (end > vanilla) {
@@ -643,7 +651,7 @@ public final class BedrockPalette {
     }
 
     /**
-     * The custom IDs every palette shares: a custom block gets one for each state, in the client's order, while any palette has it.
+     * The custom IDs that every palette of one block table shares: a custom block gets one for each state, in the client's order, while any palette has it.
      * A block that no palette has keeps its IDs for a quarantine time, so that a state Boar made before its last player left still reads that block. Then they go to the first later block that fits.
      * Past the cap, or when no free range fits it, a block gets none, so a player's mapping keeps its states by runtime ID instead.
      * Freed IDs wait out the quarantine, so more new states than the cap within one quarantine time leave later blocks without IDs until it passes.
@@ -896,7 +904,7 @@ public final class BedrockPalette {
 
         int intermediaryId(int runtimeId) {
             int entry = this.palette.entry(runtimeId);
-            if (isVanilla(entry)) {
+            if (this.palette.isVanilla(entry)) {
                 return entry;
             }
             if (entry >= 0) {
@@ -911,28 +919,29 @@ public final class BedrockPalette {
 
         // The intermediary ID that keeps a runtime ID, or UNKNOWN_ID when it cannot keep it
         private int keep(int runtimeId, boolean warn) {
+            Vanilla vanilla = this.palette.vanilla;
             if (!this.palette.hashedIds) {
                 if (warn) {
                     this.warnId(runtimeId);
                 }
-                return runtimeId >= 0 && runtimeId < MAX_STATES ? FIRST_KEPT_ID + runtimeId : UNKNOWN_ID;
+                return runtimeId >= 0 && runtimeId < MAX_STATES ? vanilla.firstKeptId + runtimeId : vanilla.unknownId;
             }
             Integer kept = this.keptHashIndices.get(runtimeId);
             if (kept != null) {
-                return FIRST_KEPT_ID + kept;
+                return vanilla.firstKeptId + kept;
             }
             if (warn) {
                 this.warnId(runtimeId);
             }
             if (this.keptHashes.size() == MAX_KEPT_HASHES) {
-                return UNKNOWN_ID;
+                return vanilla.unknownId;
             }
             this.keptHashIndices.put(runtimeId, Integer.valueOf(this.keptHashes.size()));
             this.keptHashes.add(runtimeId);
             if (this.keptHashes.size() == MAX_KEPT_HASHES) {
                 LOG.warn("Boar has kept {} unknown block runtime IDs for one player, so it will not resend the blocks of any more", MAX_KEPT_HASHES);
             }
-            return FIRST_KEPT_ID + this.keptHashes.size() - 1;
+            return vanilla.firstKeptId + this.keptHashes.size() - 1;
         }
 
         private void warnId(int runtimeId) {
@@ -949,10 +958,11 @@ public final class BedrockPalette {
         }
 
         BlockDefinition definition(int id) {
-            if (id < FIRST_KEPT_ID) {
+            int firstKeptId = this.palette.vanilla.firstKeptId;
+            if (id < firstKeptId) {
                 return this.palette.definition(id);
             }
-            int index = id - FIRST_KEPT_ID;
+            int index = id - firstKeptId;
             if (!this.palette.hashedIds) {
                 return () -> index;
             }
@@ -969,32 +979,70 @@ public final class BedrockPalette {
         }
     }
 
-    // What every palette shares, by vanilla palette index
+    // What every palette of one block table shares, by vanilla palette index. Each table has custom IDs and a cache of its own, since the custom IDs start past its palette.
     private static final class Vanilla {
-        static final NbtMap[] STATES = new NbtMap[TABLE.paletteSize()];
-        static final long[] NAME_HASHES = new long[TABLE.paletteSize()];
-        static final FallingFlowMaterial[] FLOWS = new FallingFlowMaterial[TABLE.paletteSize()];
-        static final HorseJumpMaterial[] JUMPS = new HorseJumpMaterial[TABLE.paletteSize()];
-        // Every hashed palette shares these, unless a custom state takes a vanilla state's network hash.
-        static final SimpleBlockDefinition[] HASHED_DEFINITIONS = new SimpleBlockDefinition[TABLE.paletteSize()];
-        static final boolean FALLING_FLOW_SUPPORTED;
+        private static final Map<Integer, Vanilla> BY_PROTOCOL = new ConcurrentHashMap<>();
 
-        static {
-            FallingFlowMaterials.Lookup fallingFlow = FallingFlowMaterials.forProtocol(TABLE.protocol());
-            FALLING_FLOW_SUPPORTED = fallingFlow.isSupported();
-            for (int i = 0; i < TABLE.paletteSize(); i++) {
-                String name = TABLE.name(i);
-                STATES[i] = NbtMap.builder().putString("name", name).putCompound("states", TABLE.states(i)).build();
-                NAME_HASHES[i] = nameHash(name);
-                FLOWS[i] = fallingFlow.resolve(name, TABLE.states(i));
-                JUMPS[i] = HorseJumpMaterials.resolve(name);
-                HASHED_DEFINITIONS[i] = new SimpleBlockDefinition(name, TABLE.networkHash(i), STATES[i]);
+        final BedrockBlockTable table;
+        final int unknownId;
+        final int firstKeptId;
+        final CustomIds customIds;
+        final Map<Key, BedrockPalette> cache = new LinkedHashMap<>(16, 0.75F, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Key, BedrockPalette> eldest) {
+                if (this.size() <= CACHED_PALETTES) {
+                    return false;
+                }
+                eldest.getValue().drop();
+                return true;
             }
+        };
+        final NbtMap[] states;
+        final long[] nameHashes;
+        final FallingFlowMaterial[] flows;
+        final HorseJumpMaterial[] jumps;
+        // Every hashed palette shares these, unless a custom state takes a vanilla state's network hash.
+        final SimpleBlockDefinition[] hashedDefinitions;
+        final boolean fallingFlowSupported;
+        final BedrockPalette sorted;
+        final BedrockPalette hashed;
+        final BedrockPalette unknown;
+        final BedrockPalette unreadHashed;
+
+        private Vanilla(BedrockBlockTable table) {
+            this.table = table;
+            this.unknownId = table.paletteSize() + MAX_CUSTOM_IDS;
+            this.firstKeptId = this.unknownId + 1;
+            this.customIds = table == TABLE ? CUSTOM_IDS : new CustomIds(table.paletteSize(), MAX_CUSTOM_IDS);
+            int size = table.paletteSize();
+            this.states = new NbtMap[size];
+            this.nameHashes = new long[size];
+            this.flows = new FallingFlowMaterial[size];
+            this.jumps = new HorseJumpMaterial[size];
+            this.hashedDefinitions = new SimpleBlockDefinition[size];
+            FallingFlowMaterials.Lookup fallingFlow = FallingFlowMaterials.forProtocol(table.protocol());
+            this.fallingFlowSupported = fallingFlow.isSupported();
+            for (int i = 0; i < size; i++) {
+                String name = table.name(i);
+                this.states[i] = NbtMap.builder().putString("name", name).putCompound("states", table.states(i)).build();
+                this.nameHashes[i] = nameHash(name);
+                this.flows[i] = fallingFlow.resolve(name, table.states(i));
+                this.jumps[i] = HorseJumpMaterials.resolve(name);
+                this.hashedDefinitions[i] = new SimpleBlockDefinition(name, table.networkHash(i), this.states[i]);
+            }
+            this.sorted = new BedrockPalette(this, false, List.of(), false);
+            this.hashed = new BedrockPalette(this, true, List.of(), false);
+            this.unknown = new BedrockPalette(this, false, List.of(), true);
+            this.unreadHashed = new BedrockPalette(this, true, List.of(), true);
         }
 
-        static final BedrockPalette SORTED = new BedrockPalette(false, List.of(), false);
-        static final BedrockPalette HASHED = new BedrockPalette(true, List.of(), false);
-        static final BedrockPalette UNKNOWN = new BedrockPalette(false, List.of(), true);
-        static final BedrockPalette UNREAD_HASHED = new BedrockPalette(true, List.of(), true);
+        // By protocol, so that a table loaded again gets the custom IDs of the table of its protocol, not a second set
+        static Vanilla of(BedrockBlockTable table) {
+            return BY_PROTOCOL.computeIfAbsent(table.protocol(), protocol -> new Vanilla(Objects.requireNonNull(BedrockBlockTable.forProtocol(protocol), "No block table for protocol " + protocol)));
+        }
+
+        BedrockPalette of(boolean hashedIds) {
+            return hashedIds ? this.hashed : this.sorted;
+        }
     }
 }

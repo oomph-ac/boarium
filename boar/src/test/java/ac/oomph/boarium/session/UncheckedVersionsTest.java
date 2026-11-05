@@ -58,7 +58,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-// Players on a protocol that Boar has no block table for play through the proxy with Boar running, but unchecked.
+// Players on a protocol that Boar does not check play through the proxy with Boar running, but unchecked.
 class UncheckedVersionsTest {
     private EventLoopGroup group;
     private ClientListener listener;
