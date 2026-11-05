@@ -7,11 +7,23 @@ dependencies {
     api(libs.protocol.common) {
         version { strictly(libs.versions.protocol.get()) }
     }
+    // Held to one build of Cloudburst's network modules, which replaces the RakNet 1.1.0.CR4-SNAPSHOT that the protocol library asks for.
     api(libs.raknet) {
-        version { strictly(libs.versions.raknet.get()) }
+        version { strictly(libs.versions.network.get()) }
     }
-    api(libs.raknet.common) {
-        version { strictly(libs.versions.raknet.get()) }
+    api(libs.nethernet) {
+        version { strictly(libs.versions.network.get()) }
+    }
+    api(libs.network.common) {
+        version { strictly(libs.versions.network.get()) }
+    }
+    // The natives ask for libdatachannel-java as a moving snapshot, so it is held to the build the NetherNet transport asks for.
+    implementation(libs.libdatachannel) {
+        version { strictly(libs.versions.libdatachannel.get()) }
+    }
+    // The native libraries for every platform, which libdatachannel-java does not bring.
+    runtimeOnly(libs.libdatachannel.natives) {
+        version { strictly(libs.versions.libdatachannel.get()) }
     }
     implementation(libs.aircompressor)
     implementation(libs.snakeyaml)

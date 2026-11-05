@@ -1,6 +1,7 @@
 package ac.oomph.boarium.client;
 
 import ac.oomph.boarium.protocol.BedrockVersions;
+import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import io.netty.channel.nio.NioEventLoopGroup;
@@ -24,7 +25,9 @@ import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -42,6 +45,8 @@ class ClientListenerTest {
     private EventLoopGroup group;
     private ClientListener listener;
     private final CompletableFuture<ClientLogin> login = new CompletableFuture<>();
+    // Closed in tearDown rather than in assertTurnedAway, so a test can still see packets that arrive after the Disconnect.
+    private final List<Channel> turnedAway = new ArrayList<>();
 
     private void listen(boolean requireXbox) throws Exception {
         this.listen(requireXbox, Duration.ofMinutes(1));
@@ -59,6 +64,7 @@ class ClientListenerTest {
 
     @AfterEach
     void tearDown() {
+        this.turnedAway.forEach(channel -> channel.close().syncUninterruptibly());
         if (this.listener != null) {
             this.listener.close().syncUninterruptibly();
         }
@@ -195,7 +201,7 @@ class ClientListenerTest {
     }
 
     private void assertTurnedAway(TestClient client) throws Exception {
-        client.connect(this.group, this.listener.address());
+        this.turnedAway.add(client.connect(this.group, this.listener.address()));
         // RakNet gives up connecting after 10 seconds, so a client that never connected fails with its own error, and was not turned away by the proxy.
         String error = assertThrows(ExecutionException.class, () -> client.loginDone.get(15, TimeUnit.SECONDS)).getCause().getMessage();
         assertTrue(error.startsWith("disconnected"), error);

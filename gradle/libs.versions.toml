@@ -1,13 +1,15 @@
 [versions]
 # Keep in step with the protocol version Boar dev2 compiles against (Boar's gradle/libs.versions.toml).
 protocol = "3.0.0.Beta15-20261027.163553-3"
-# The RakNet transport the protocol library pulls in, pinned to a published snapshot.
-raknet = "1.1.0.CR4-20261103.123906-3"
+# Cloudburst's RakNet and NetherNet transports, pinned to a published snapshot.
+network = "2.0.0.CR6-20261103.124955-24"
+# The WebRTC library NetherNet runs on, at the build the NetherNet transport asks for.
+libdatachannel = "0.24.6.0-20261029.091642-10"
 # Same Snappy library the protocol library pulls in.
 aircompressor = "2.0.3"
 # The Boar anticheat's dev2 branch, pinned to a published snapshot (commit 030ac0d), with its api module at the same snapshot.
 boar = "dev2-20261104.180511-52"
-# Boar compiles against these without bringing them, so they are Boar's versions.
+# Boar compiles against these without bringing them, so they are Boar's versions; the NetherNet transport raises gson to 2.13.2 at runtime.
 guava = "33.6.0-jre"
 gson = "2.3.1"
 # Boar reads its config with this, so it is Boar's version; the protocol library's Jackson BOM raises it to 2.18.0 at runtime.
@@ -16,15 +18,18 @@ junit = "5.13.4"
 snakeyaml = "2.3"
 # Same NBT library the protocol library pulls in.
 nbt = "3.1.0.Final"
-# The slf4j API the protocol library pulls in is 1.7.
-slf4j = "1.7.36"
+# libdatachannel logs through the slf4j 2 API.
+slf4j = "2.0.20"
 
 [libraries]
 protocol = { module = "org.cloudburstmc.protocol:bedrock-connection", version.ref = "protocol" }
 protocol-codec = { module = "org.cloudburstmc.protocol:bedrock-codec", version.ref = "protocol" }
 protocol-common = { module = "org.cloudburstmc.protocol:common", version.ref = "protocol" }
-raknet = { module = "org.cloudburstmc.netty:netty-transport-raknet", version.ref = "raknet" }
-raknet-common = { module = "org.cloudburstmc.netty:netty-transport-common", version.ref = "raknet" }
+raknet = { module = "org.cloudburstmc.netty:netty-transport-raknet", version.ref = "network" }
+nethernet = { module = "org.cloudburstmc.netty:netty-transport-nethernet", version.ref = "network" }
+network-common = { module = "org.cloudburstmc.netty:netty-transport-common", version.ref = "network" }
+libdatachannel = { module = "dev.opencollab:libdatachannel-java", version.ref = "libdatachannel" }
+libdatachannel-natives = { module = "dev.opencollab:libdatachannel-java-arch-detect", version.ref = "libdatachannel" }
 boar = { module = "ac.boar:common", version.ref = "boar" }
 boar-api = { module = "ac.boar:api", version.ref = "boar" }
 guava = { module = "com.google.guava:guava", version.ref = "guava" }

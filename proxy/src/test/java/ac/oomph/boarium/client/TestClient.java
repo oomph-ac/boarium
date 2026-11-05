@@ -3,6 +3,7 @@ package ac.oomph.boarium.client;
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
+import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
@@ -122,8 +123,8 @@ public final class TestClient {
         session.getPeer().sendPacket(BedrockPacketWrapper.create(1, 0, 0, null, broken));
     }
 
-    public void connect(EventLoopGroup group, InetSocketAddress address) {
-        new Bootstrap()
+    public Channel connect(EventLoopGroup group, InetSocketAddress address) {
+        return new Bootstrap()
                 .group(group)
                 .channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
                 // Bedrock clients use RakNet protocol 11.
@@ -141,12 +142,14 @@ public final class TestClient {
                         TestClient.this.session.complete(session);
                     }
                 })
-                .connect(address)
+                // Binds to a free port on the target's address first, since letting connect pick the port can fail on macOS with "Address already in use".
+                .connect(address, new InetSocketAddress(address.getAddress(), 0))
                 .addListener(connected -> {
                     if (!connected.isSuccess()) {
                         this.loginDone.completeExceptionally(new IllegalStateException("could not connect: " + connected.cause(), connected.cause()));
                     }
-                });
+                })
+                .channel();
     }
 
     private String sign(Map<String, Object> claims, KeyPair signer) throws Exception {

@@ -21,8 +21,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.EventLoop;
 import io.netty.util.ReferenceCountUtil;
 import io.netty.util.concurrent.ScheduledFuture;
-import org.cloudburstmc.netty.channel.raknet.RakChannel;
-import org.cloudburstmc.netty.handler.codec.raknet.common.RakSessionCodec;
+import org.cloudburstmc.netty.channel.TransportChannel;
 import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
@@ -588,9 +587,9 @@ public final class Session {
         }
     }
 
-    // As spectrum-internal's handleLatency does. RakNet's measure is in milliseconds, and 0 before the first pong.
+    // As spectrum-internal's handleLatency does. The transport's measure is in milliseconds, and 0 while it is unknown.
     private void sendLatency() {
-        this.clientRoundTrip = ((RakChannel) this.clientChannel()).rakPipeline().get(RakSessionCodec.class).getPing();
+        this.clientRoundTrip = ((TransportChannel) this.clientChannel()).getPing();
         ServerConn current = this.server;
         if (current != null) {
             current.write(new Latency(this.clientRoundTrip, System.currentTimeMillis()));
