@@ -149,6 +149,41 @@ class BedrockBlockTablesTest {
         assertEquals(v26_30.paletteSize() + 586, v26_40.paletteSize());
     }
 
+    // Boar checks 26.20 players with the rules of 1.26.30's blocks, so each 26.20 state must be a 1.26.30 state with the same data, falling-flow material and default state.
+    // The one exception is potent sulfur, which has one state in 26.20 and five in 1.26.30, all full cubes with the same data.
+    @Test
+    void table26_20IsPartOf1_26_30() {
+        BedrockBlockTable v26_20 = BedrockBlockTable.forProtocol(975);
+        BedrockBlockTable v26_30 = BedrockBlockTable.get();
+        FallingFlowMaterials.Lookup flow26_20 = FallingFlowMaterials.forProtocol(975);
+        FallingFlowMaterials.Lookup flow26_30 = FallingFlowMaterials.forProtocol(1001);
+        int potentSulfur = v26_30.firstIndex("minecraft:potent_sulfur");
+        for (int i = 0; i < v26_20.paletteSize(); i++) {
+            String name = v26_20.name(i);
+            int index = name.equals("minecraft:potent_sulfur") ? potentSulfur : v26_30.index(name, v26_20.states(i));
+            assertTrue(index >= 0, name + " " + v26_20.states(i));
+            assertArrayEquals(v26_20.collision(i), v26_30.collision(index), name);
+            assertEquals(v26_20.flags(i), v26_30.flags(index), name);
+            assertEquals(v26_20.hardness(i), v26_30.hardness(index), name);
+            assertEquals(v26_20.friction(i), v26_30.friction(index), name);
+            assertEquals(flow26_20.resolve(name, v26_20.states(i)), flow26_30.resolve(v26_30.name(index), v26_30.states(index)), name);
+            if (!name.equals("minecraft:potent_sulfur")) {
+                assertEquals(v26_20.states(v26_20.defaultIndex(name)), v26_30.states(v26_30.defaultIndex(name)), name);
+            }
+        }
+        assertEquals(1, v26_20.stateCount("minecraft:potent_sulfur"));
+        assertEquals(5, v26_30.stateCount("minecraft:potent_sulfur"));
+        for (int i = potentSulfur; i < potentSulfur + 5; i++) {
+            assertArrayEquals(v26_30.collision(potentSulfur), v26_30.collision(i));
+            assertEquals(v26_30.flags(potentSulfur), v26_30.flags(i));
+            assertEquals(v26_30.friction(potentSulfur), v26_30.friction(i));
+        }
+        assertArrayEquals(new float[]{0, 0, 0, 1, 1, 1}, v26_20.collision(v26_20.firstIndex("minecraft:potent_sulfur")));
+        // The states of the sulfur spike, which 26.20 does not have, and the four more of potent sulfur
+        assertEquals(-1, v26_20.firstIndex("minecraft:sulfur_spike"));
+        assertEquals(v26_20.paletteSize() + v26_30.stateCount("minecraft:sulfur_spike") + 4, v26_30.paletteSize());
+    }
+
     // 26.45 uses the 26.40 table, whose protocol is 2168, so its blocks get the falling-flow materials Boar has for 2168; Boar's are the same for 2169.
     @Test
     void fallingFlowOf26_45Is26_40s() {

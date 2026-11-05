@@ -200,7 +200,7 @@ class BedrockBlockUnionTest {
         assertTrue(used < 32L << 20, used / 1024 + " KiB");
     }
 
-    // In a JVM of its own, so the other tests' tables do not count: at start Boar loads the shared table and the tables of the protocols it checks, 1.26.30's and 26.40's (which 26.45 shares), not the other five.
+    // In a JVM of its own, so the other tests' tables do not count: at start Boar loads the shared table and the tables of the protocols it checks, 26.20's, 1.26.30's and 26.40's (which 26.45 shares), not the other four.
     @Test
     void heapAtStart() throws Exception {
         Path dir = Files.createDirectories(Path.of("build"));
@@ -214,9 +214,10 @@ class BedrockBlockUnionTest {
         long start = Long.parseLong(heap.get("start")[1]);
         long all = Long.parseLong(heap.get("all")[1]);
         System.out.println("The shared and 1.26.30 block tables take " + tables / 1024 + " KiB of heap; Boar takes " + start / 1024 + " KiB at start with " + heap.get("start")[2] + " protocol tables loaded, and " + all / 1024 + " KiB with all " + heap.get("all")[2]);
-        assertEquals("2", heap.get("start")[2]);
+        assertEquals("3", heap.get("start")[2]);
         assertTrue(tables < 32L << 20, tables / 1024 + " KiB");
-        assertTrue(start < 80L << 20, start / 1024 + " KiB");
+        // About 71 MiB, so one more protocol table at start (about 8 MiB) fails this
+        assertTrue(start < 76L << 20, start / 1024 + " KiB");
     }
 
     private static long usedHeap() throws InterruptedException {

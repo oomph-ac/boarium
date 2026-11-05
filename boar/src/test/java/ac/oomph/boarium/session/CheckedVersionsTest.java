@@ -29,6 +29,7 @@ import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.codec.v2168.Bedrock_v2168_hotfix4;
 import org.cloudburstmc.protocol.bedrock.codec.v2169.Bedrock_v2169;
 import org.cloudburstmc.protocol.bedrock.codec.v2225.Bedrock_v2225;
+import org.cloudburstmc.protocol.bedrock.codec.v975.Bedrock_v975;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
@@ -53,6 +54,7 @@ import org.cloudburstmc.protocol.common.util.VarInts;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Named;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -249,6 +251,47 @@ class CheckedVersionsTest {
         assertFalse(log.contains(" ERROR ") || log.contains("Exception"), log);
     }
 
+    // With hashed IDs, a server can send a 26.20 client the network hash of a 1.26.30 sulfur spike, which 26.20 does not have.
+    // Boar reads it as an unknown full cube, not as the pointed dripstone it takes a sulfur spike for, and keeps the hash to send back.
+    @Test
+    void readsABlockThatOnlyNewerVersionsHaveAsAnUnknownFullCube() throws Exception {
+        BedrockCodec codec = Bedrock_v975.CODEC;
+        this.protocol = codec.getProtocolVersion();
+        BedrockBlockTable table = BedrockBlockTable.forProtocol(this.protocol);
+        BedrockBlockTable v26_30 = BedrockBlockTable.get();
+        int spike = v26_30.networkHash(v26_30.defaultIndex("minecraft:sulfur_spike"));
+        assertTrue(table.indexOfHash(spike) < 0);
+        int air = table.networkHash(table.defaultIndex("minecraft:air"));
+        int stone = table.networkHash(table.defaultIndex("minecraft:stone"));
+        this.server = new FakeSpectrumServer(this.group, codec);
+        this.server.items = ITEMS;
+        Function<ClientLogin, Processor> boar = TestBoar.start();
+        Session session = this.spawn(codec, login -> new BoarSessionTest.AddsCustomBlocks(boar.apply(login), true, List.of()));
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        assertNotNull(player);
+        assertTrue(this.startGame.isBlockNetworkIdsHashed());
+
+        int chunkX = this.startGame.getPlayerPosition().getFloorX() >> 4;
+        int chunkZ = this.startGame.getPlayerPosition().getFloorZ() >> 4;
+        Vector3i origin = Vector3i.from(chunkX << 4, 0, chunkZ << 4);
+        LevelChunkPacket chunk = new LevelChunkPacket();
+        chunk.setChunkX(chunkX);
+        chunk.setChunkZ(chunkZ);
+        chunk.setDimension(0);
+        chunk.setSubChunksLength(1);
+        chunk.setData(subChunk(air, stone, Map.of(FENCE, spike)));
+        this.server.send(chunk);
+        this.server.send(new Flush());
+        awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(origin, 0).isAir());
+        assertBlock(session, player, origin, "minecraft:stone", stone);
+        assertBlock(session, player, origin.add(FENCE), "unknown block", spike);
+        Vector3i at = origin.add(FENCE);
+        List<Box> boxes = onLoop(session, () -> player.compensatedWorld.getBlockState(at, 0).findCollision(player, at, null, false));
+        assertEquals(List.of(new Box(at.getX(), at.getY(), at.getZ(), at.getX() + 1, at.getY() + 1, at.getZ() + 1)).toString(), boxes.toString());
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertFalse(log.contains(" ERROR ") || log.contains("Exception"), log);
+    }
+
     private static void assertBlock(Session session, BoarPlayer player, Vector3i position, String name, int runtimeId) throws Exception {
         BoarBlockState state = onLoop(session, () -> player.compensatedWorld.getBlockState(position, 0));
         assertEquals(name, state.block().toString(), position.toString());
@@ -339,8 +382,11 @@ class CheckedVersionsTest {
     }
 
     private Session spawn(BedrockCodec codec) throws Exception {
+        return this.spawn(codec, TestBoar.start());
+    }
+
+    private Session spawn(BedrockCodec codec, Function<ClientLogin, Processor> processors) throws Exception {
         CompletableFuture<CompletableFuture<Session>> joined = new CompletableFuture<>();
-        Function<ClientLogin, Processor> processors = TestBoar.start();
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(codec.getProtocolVersion()).version(codec.getMinecraftVersion()).gameType("Survival");
         TcpTransport transport = new TcpTransport(this.group, Duration.ofSeconds(5));
         SessionSettings settings = new SessionSettings(null, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), processors);

@@ -75,6 +75,8 @@ import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemS
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseContainer;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseSlot;
 import org.cloudburstmc.protocol.bedrock.data.inventory.itemstack.response.ItemStackResponseStatus;
+import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryActionData;
+import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventorySource;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.InventoryTransactionType;
 import org.cloudburstmc.protocol.bedrock.data.inventory.transaction.ItemUseTransaction;
 import org.cloudburstmc.protocol.bedrock.packet.AddEntityPacket;
@@ -190,7 +192,7 @@ class BoarSessionTest {
         return BedrockBlockTable.forProtocol(this.codec().getProtocolVersion());
     }
 
-    // The tests that BoarSession26_40Test and BoarSession26_45Test also run
+    // The tests that BoarSession26_20Test, BoarSession26_40Test and BoarSession26_45Test also run
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.METHOD)
     @interface EveryCheckedVersion {
@@ -557,6 +559,36 @@ class BoarSessionTest {
         assertTrue(onLoop(session, () -> player.onGround));
         assertEquals(List.of(), violations);
         this.assertNothingFailed();
+    }
+
+    // A drop's two actions come container first from 1.26.30 and world first before, as Geyser reads them. Boar drops the packet with the other order and lets this one through, which empties the slot.
+    @Test
+    @EveryCheckedVersion
+    void dropsTheItemInTheActionOrderOfItsVersion() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = this.withMitigations(session);
+        this.giveAndAcknowledge(session, player, 0, stones(64, 1));
+        InventoryActionData world = new InventoryActionData(InventorySource.fromWorldInteraction(InventorySource.Flag.DROP_ITEM), 0, ItemData.AIR, stones(64, 1));
+        InventoryActionData container = new InventoryActionData(InventorySource.fromContainerWindowId(ContainerId.INVENTORY), 0, stones(64, 1), ItemData.AIR);
+        List<InventoryActionData> order = this.codec().getProtocolVersion() >= Bedrock_v1001.CODEC.getProtocolVersion() ? List.of(container, world) : List.of(world, container);
+        this.client.session.get().sendPacket(drop(order.reversed()));
+        this.client.session.get().sendPacket(drop(order));
+
+        while (!(this.server.await() instanceof InventoryTransactionPacket passed)) {
+            // The client's other packets.
+        }
+        assertEquals(order.stream().map(action -> action.getSource().getType()).toList(), passed.getActions().stream().map(action -> action.getSource().getType()).toList());
+        awaitOnLoop(session, () -> player.compensatedInventory.inventoryContainer.get(0).isEmpty());
+        assertTrue(onLoop(session, () -> player.compensatedInventory.inventoryContainer.get(0).isEmpty()));
+        this.assertNothingFailed();
+    }
+
+    // A drop of hotbar slot 0 with these actions
+    private static InventoryTransactionPacket drop(List<InventoryActionData> actions) {
+        InventoryTransactionPacket drop = new InventoryTransactionPacket();
+        drop.setTransactionType(InventoryTransactionType.NORMAL);
+        drop.getActions().addAll(actions);
+        return drop;
     }
 
     // Boar resends layer 1 when it undoes a block, and a Bedrock stair holds its water there, which the resend must keep.
@@ -2503,7 +2535,7 @@ class BoarSessionTest {
     }
 
     // Boar's processor, with these custom blocks added to the StartGame the client is sent, its hashed IDs set, and the player's X set to spawnX unless it is null
-    private record AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks, Float spawnX) implements Processor {
+    record AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks, Float spawnX) implements Processor {
         AddsCustomBlocks(Processor boar, boolean hashedIds, List<BlockPropertyData> blocks) {
             this(boar, hashedIds, blocks, null);
         }

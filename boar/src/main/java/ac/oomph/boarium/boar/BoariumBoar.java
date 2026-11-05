@@ -35,8 +35,9 @@ public final class BoariumBoar {
     private static final Logger LOG = LoggerFactory.getLogger(BoariumBoar.class);
     // Not private, so that the tests can clear it.
     static final Set<Integer> WARNED_PROTOCOLS = ConcurrentHashMap.newKeySet();
-    // The protocols whose players Boar checks: 1.26.30, and 26.40 and 26.45, whose block table is 1.26.30's with new blocks added and none changed.
-    static final List<Integer> CHECKED_PROTOCOLS = List.of(1001, 2168, 2169);
+    // The protocols whose players Boar checks: 1.26.30, 26.40 and 26.45, whose block table is 1.26.30's with new blocks added and none changed, and 26.20, whose table is 1.26.30's without the sulfur spike and with a stateless potent sulfur.
+    // Not 26.0 and 26.10: 26.20 added the entity flag USES_UNIFORM_AIR_DRAG, so their air drag may differ, and Boar has only the 1.26.30 client's.
+    static final List<Integer> CHECKED_PROTOCOLS = List.of(975, 1001, 2168, 2169);
     // The other protocols whose players Boar checks. Only the tests add to it, to run Boar on versions it does not check yet.
     static final Set<Integer> TEST_PROTOCOLS = ConcurrentHashMap.newKeySet();
     private static boolean started;
