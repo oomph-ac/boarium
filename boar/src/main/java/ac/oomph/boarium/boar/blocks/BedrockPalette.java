@@ -38,6 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.IntUnaryOperator;
 import java.util.function.LongSupplier;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
@@ -73,6 +74,7 @@ public final class BedrockPalette {
     static final int MAX_WARNED_NAMES = 256;
     static final int MAX_WARNED_IDS = 16;
     private static final int MAX_LOGGED_NAME = 64;
+    private static final int MAX_EXAMPLE_NAMES = 5;
 
     // What a runtime ID is, when it is not a state with an intermediary ID: a state of the custom block at cappedBlocks[CUSTOM - entry], which has no custom IDs, or an ID the palette does not define
     private static final int CUSTOM = -2;
@@ -321,7 +323,11 @@ public final class BedrockPalette {
                 }
             }
             warn(merged, "StartGame gives vanilla block {} traits whose states it already has, so the client keeps its states, and so does Boar{}");
-            warn(withComponents, "StartGame gives vanilla block {} components or permutations, which the client adds to that block and which can change its collision shape, but Boar keeps the vanilla shape{}");
+            // One line for all of them, since Geyser gives 98 vanilla blocks components on 26.50 and later
+            if (!withComponents.isEmpty()) {
+                String examples = withComponents.stream().limit(MAX_EXAMPLE_NAMES).collect(Collectors.joining(", ")) + (withComponents.size() > MAX_EXAMPLE_NAMES ? ", ..." : "");
+                LOG.warn("StartGame gives components or permutations to vanilla blocks, {} of them ({}), which the client adds to those blocks and which can change their collision shapes, but Boar keeps the vanilla shapes", withComponents.size(), examples);
+            }
             for (BlockPropertyData data : byName.values()) {
                 CustomBlock block = CustomBlock.of(data, collisionBudget, componentsBudget);
                 states += block.stateCount();

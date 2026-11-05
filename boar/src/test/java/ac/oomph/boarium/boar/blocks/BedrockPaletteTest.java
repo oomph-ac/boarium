@@ -8,6 +8,7 @@ import ac.boar.mappings.block.FallingFlowMaterial;
 import ac.boar.mappings.block.HorseJumpMaterial;
 import ac.oomph.boarium.boar.TestBoar;
 import org.cloudburstmc.math.vector.Vector3i;
+import org.cloudburstmc.nbt.NBTInputStream;
 import org.cloudburstmc.nbt.NBTOutputStream;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtMapBuilder;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -710,10 +712,57 @@ class BedrockPaletteTest {
             System.setErr(stderr);
         }
         String log = logged.toString(StandardCharsets.UTF_8);
-        assertEquals(1, log.split("vanilla block minecraft:dirt components or permutations", -1).length - 1, log);
-        assertEquals(1, log.split("vanilla block minecraft:sand components or permutations", -1).length - 1, log);
+        assertEquals(1, log.split("components or permutations", -1).length - 1, log);
         // An empty components compound, as block() writes, is none.
+        assertTrue(log.contains("to vanilla blocks, 2 of them (minecraft:dirt, minecraft:sand), which"), log);
         assertFalse(log.contains("minecraft:gravel"), log);
+    }
+
+    @Test
+    void warnsOfOneVanillaBlockWithComponentsOrNone() {
+        NbtMap collision = NbtMap.builder().putCompound("minecraft:collision_box", NbtMap.builder().putBoolean("enabled", false).build()).build();
+        BlockPropertyData withComponents = new BlockPropertyData("minecraft:dirt", block("minecraft:dirt").getProperties().toBuilder().putCompound("components", collision).build());
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream one = new ByteArrayOutputStream();
+        ByteArrayOutputStream none = new ByteArrayOutputStream();
+        try {
+            System.setErr(new PrintStream(one, true, StandardCharsets.UTF_8));
+            BedrockPalette.mappingInfo(startGame(true, withComponents));
+            System.setErr(new PrintStream(none, true, StandardCharsets.UTF_8));
+            BedrockPalette.mappingInfo(startGame(true, block("minecraft:dirt")));
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = one.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("components or permutations", -1).length - 1, log);
+        assertTrue(log.contains("to vanilla blocks, 1 of them (minecraft:dirt), which"), log);
+        assertFalse(none.toString(StandardCharsets.UTF_8).contains("components or permutations"), none.toString(StandardCharsets.UTF_8));
+    }
+
+    // Geyser 2.12.1 sends these to every 26.50 client: data_driven_blocks.26_50.nbt, copied unchanged from its core jar.
+    @Test
+    void geyserDataDrivenBlocksOf26_50LogOneLine() throws IOException {
+        StartGamePacket startGame = startGame(true);
+        try (InputStream in = BedrockPaletteTest.class.getResourceAsStream("/ac/oomph/boarium/boar/geyser/data_driven_blocks.26_50.nbt");
+             NBTInputStream nbt = NbtUtils.createGZIPReader(in)) {
+            ((NbtMap) nbt.readTag()).forEach((name, properties) -> startGame.getBlockProperties().add(new BlockPropertyData(name, (NbtMap) properties)));
+        }
+        assertEquals(98, startGame.getBlockProperties().size());
+        BedrockBlockTable v26_50 = BedrockBlockTable.forProtocol(2193);
+        PrintStream stderr = System.err;
+        ByteArrayOutputStream logged = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(logged, true, StandardCharsets.UTF_8));
+        try {
+            BlockMappingInfo first = BedrockPalette.mappingInfo(v26_50, startGame);
+            // A second player with the same StartGame gets the cached palette, so it logs nothing more.
+            assertSame(BedrockPalette.of(first), BedrockPalette.of(BedrockPalette.mappingInfo(v26_50, startGame)));
+            assertFalse(BedrockPalette.runtimeIdsUnknown(first));
+        } finally {
+            System.setErr(stderr);
+        }
+        String log = logged.toString(StandardCharsets.UTF_8);
+        assertEquals(1, log.split("components or permutations", -1).length - 1, log);
+        assertTrue(Pattern.compile("to vanilla blocks, 98 of them \\((minecraft:\\w+, ){5}\\.\\.\\.\\), which").matcher(log).find(), log);
     }
 
     private static NbtMap direction(String... states) {
