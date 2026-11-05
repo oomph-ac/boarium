@@ -13,6 +13,7 @@ import ac.oomph.boarium.session.Processor;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -21,6 +22,7 @@ import java.io.InputStream;
 import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -32,6 +34,8 @@ public final class BoariumBoar {
     private static final Logger LOG = LoggerFactory.getLogger(BoariumBoar.class);
     // Not private, so that the tests can clear it.
     static final Set<Integer> WARNED_PROTOCOLS = ConcurrentHashMap.newKeySet();
+    // The protocols besides the block table's whose players Boar checks. Only the tests add to it, to run Boar on versions it does not check yet.
+    static final Set<Integer> TEST_PROTOCOLS = ConcurrentHashMap.newKeySet();
     private static boolean started;
 
     private BoariumBoar() {
@@ -56,25 +60,29 @@ public final class BoariumBoar {
         if (BedrockVersions.codec(table.protocol()) == null) {
             throw new IllegalStateException("The block table is for protocol " + table.protocol() + ", which boarium does not speak");
         }
+        // Items whose block differs between versions fail here, not at each login. Only the checked protocol's, since the other versions' items would load their block tables too.
+        BedrockItems.forProtocol(table.protocol());
         started = true;
         BoariumPlayerManager players = new BoariumPlayerManager(mitigations);
         Boar.getInstance().init(new BoariumPlatform(dataFolder, players));
         BoarDefaultChecks.registerAll(Boar.getInstance().getCheckRegistry());
         BoarDefaultAcknowledgments.registerAll(Boar.getInstance().getAcknowledgmentRegistry());
         BoarDefaultPacketListeners.registerAll();
-        BoarProcessor processor = new BoarProcessor(players, BedrockVersions.codec(table.protocol()));
+        // Each protocol's processor decodes the packet IDs of its own codec.
+        Map<Integer, BoarProcessor> processors = new ConcurrentHashMap<>(Map.of(table.protocol(), new BoarProcessor(players, BedrockVersions.codec(table.protocol()))));
         // Boar's default disable-mitigations: false disagrees with boarium's default, so only a true is worth a warning.
         if (Boar.getConfig().disableMitigations() && mitigations) {
             LOG.warn("Boar's config says disable-mitigations: true, but boarium's boar_mitigations: true decides");
         }
         return login -> {
-            int protocol = login.session().getCodec().getProtocolVersion();
-            if (protocol == table.protocol()) {
-                return processor;
+            BedrockCodec codec = login.session().getCodec();
+            int protocol = codec.getProtocolVersion();
+            if (protocol == table.protocol() || TEST_PROTOCOLS.contains(protocol)) {
+                return processors.computeIfAbsent(protocol, p -> new BoarProcessor(players, codec));
             }
-            // Boar's block states have the shared IDs of every protocol's table, but its items, default block states and connection rules are still those of BedrockBlockTable.get() alone.
+            // Each session has its own version's blocks and items, but Boar's default block states and connection rules are still those of BedrockBlockTable.get() alone.
             if (WARNED_PROTOCOLS.add(protocol)) {
-                LOG.warn("Boar does not check players on protocol {}, since its items and block rules are those of protocol {}", protocol, table.protocol());
+                LOG.warn("Boar does not check players on protocol {}, since its block rules are those of protocol {}", protocol, table.protocol());
             }
             return Processor.NONE;
         };

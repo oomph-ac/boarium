@@ -8,6 +8,7 @@ import ac.boar.mappings.item.Items;
 import ac.oomph.boarium.boar.blocks.BedrockBlock;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.protocol.BedrockVersions;
+import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ItemData;
 import org.junit.jupiter.api.BeforeAll;
@@ -98,6 +99,15 @@ class BedrockItemVersionsTest {
         assertEquals(version.protocol() >= 1001, table.firstIndex("minecraft:sulfur_spike") >= 0);
     }
 
+    // Boar's item-to-block map gives each block item the shared block of the name it places in its version, also for the items that 1.26.30 does not have.
+    @ParameterizedTest
+    @MethodSource("versions")
+    void blockItemsPlaceTheirSharedBlock(Version version) {
+        BedrockItems.Version items = BedrockItems.forProtocol(version.protocol());
+        Map<Item, Block> itemToBlock = BlockMappings.get().getItemToBlock();
+        items.blocks.forEach((item, block) -> assertSame(BedrockBlock.named(block), itemToBlock.get(item), item.toString()));
+    }
+
     // Boar's references are filled once, so every version that has a name gives the same item.
     @Test
     void versionsShareTheItemOfAName() {
@@ -113,8 +123,9 @@ class BedrockItemVersionsTest {
     @Test
     void version1_26_30IsBoarsItems() {
         BedrockItems.Version items = BedrockItems.forProtocol(1001);
+        BoariumPlayerManager.BoariumNetworkSession session = new BoariumPlayerManager.BoariumNetworkSession(null, 0, new BedrockItems.SessionItems(items, Definitions.items(List.of()), null));
         for (String name : items.names) {
-            assertSame(BoarItemStack.of(null, ItemData.builder().definition(new SimpleItemDefinition(name, 0, false)).count(1).build()).item(), items.items.get(name), name);
+            assertSame(BoarItemStack.of(session, ItemData.builder().definition(new SimpleItemDefinition(name, 0, false)).count(1).build()).item(), items.items.get(name), name);
         }
         Map<Item, Block> itemToBlock = BlockMappings.get().getItemToBlock();
         assertEquals(itemToBlock.size(), items.blocks.size());

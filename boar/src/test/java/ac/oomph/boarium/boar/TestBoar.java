@@ -35,6 +35,15 @@ public final class TestBoar {
         BoariumBoar.WARNED_PROTOCOLS.clear();
     }
 
+    // Has Boar check the players who log in on this protocol from now on, or stop, as outside the tests it checks only those of 1.26.30.
+    public static void check(int protocol, boolean on) {
+        if (on) {
+            BoariumBoar.TEST_PROTOCOLS.add(protocol);
+        } else {
+            BoariumBoar.TEST_PROTOCOLS.remove(protocol);
+        }
+    }
+
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {
         if (processors == null) {
             processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false);

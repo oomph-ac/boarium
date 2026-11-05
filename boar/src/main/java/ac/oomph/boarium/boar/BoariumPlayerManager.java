@@ -15,6 +15,7 @@ import ac.boar.api.anticheat.model.NetworkSession;
 import ac.boar.mappings.entity.Entity;
 import ac.boar.protocol.BoarBatchAcknowledger;
 import ac.boar.protocol.BoarConnection;
+import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.session.Session;
@@ -65,7 +66,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         if (!missing.isEmpty() && LOGGED_MISSING_ITEMS.add(missing)) {
             LOG.warn("The server of {} lacks Boar's items {}", session.client().identity().displayName(), missing);
         }
-        BlockMappingInfo mappingInfo = BedrockPalette.mappingInfo(startGame);
+        BlockMappingInfo mappingInfo = BedrockPalette.mappingInfo(BedrockBlockTable.forProtocol(session.codec().getProtocolVersion()), startGame);
         // Boar would read every block, even air, as a full cube.
         if (BedrockPalette.runtimeIdsUnknown(mappingInfo)) {
             LOG.warn("Boar does not check {}, since it does not know the client's block runtime IDs", session.client().identity().displayName());
@@ -98,7 +99,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected NetworkSession createNetworkSession(Session session) {
-        return new BoariumNetworkSession(session, deviceOs(session.client().clientData()), new BedrockItems.SessionItems(session.itemDefinitions(), this.getMappingInfo(session)));
+        return new BoariumNetworkSession(session, deviceOs(session.client().clientData()), new BedrockItems.SessionItems(BedrockItems.forProtocol(session.codec().getProtocolVersion()), session.itemDefinitions(), this.getMappingInfo(session)));
     }
 
     @Override

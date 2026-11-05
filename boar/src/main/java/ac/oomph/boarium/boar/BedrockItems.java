@@ -80,7 +80,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         BedrockBlock block = block(name);
         return new BedrockItem(name, block, block != null);
     }));
-    // The block of every item. Only the 1.26.30 block items are its entries, since the blocks of a server's own items differ by session.
+    // The block of every item. Only the 1.26.30 block items are its entries: the blocks of a server's own items differ by session, and the other versions' items load later.
     static final Map<Item, Block> ITEM_TO_BLOCK = new ItemToBlock(itemToBlock());
     static final BedrockItem AIR = ITEMS.get("minecraft:air");
     // The item of every name past a session's limit of its server's own items
@@ -89,7 +89,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
     static final List<String> REFERENCES = referenceNames();
     static final BedrockItems INSTANCE = new BedrockItems();
     private static final Map<String, Version> LOADED = new ConcurrentHashMap<>();
-    // The items of the names that are not 1.26.30 items
+    // The items of the other versions' names that are not 1.26.30 items
     private static final Map<String, BedrockItem> OTHER_ITEMS = new ConcurrentHashMap<>();
 
     private final List<Item> bundles = matching(name -> name.equals("minecraft:bundle") || name.endsWith("_bundle"));
@@ -127,10 +127,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         if (definition == null || data.getCount() <= 0) {
             return EMPTY;
         }
-        BedrockItem item = ITEMS.get(definition.getIdentifier());
-        if (item == null) {
-            item = ((BoariumPlayerManager.BoariumNetworkSession) session).items().own(definition.getIdentifier());
-        }
+        BedrockItem item = ((BoariumPlayerManager.BoariumNetworkSession) session).items().item(definition.getIdentifier());
         return item == AIR ? EMPTY : item.stack;
     }
 
@@ -247,7 +244,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
 
     /**
      * The items of one version's item names, and the name of the block each block item places in that version's block table.
-     * Every version shares one item per name, since Boar's item references are filled once and items compare by identity, so a 1.26.30 name gives its 1.26.30 item.
+     * Every version shares one item per name, and so one block per block item, since Boar fills its item references once and compares items by identity.
      */
     static final class Version {
         final List<String> names;
@@ -261,10 +258,10 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
             Map<BedrockItem, String> blocks = new HashMap<>();
             for (String name : this.names) {
                 String block = placedBlock(name, table);
-                // A name that is not a 1.26.30 item has no Boar block, since Boar's items are those of 1.26.30
-                BedrockItem item = ITEMS.containsKey(name) ? ITEMS.get(name) : OTHER_ITEMS.computeIfAbsent(name, n -> new BedrockItem(n, null, block != null));
-                if (item.isBlock() != (block != null)) {
-                    throw new IllegalStateException(name + " is a block item in one version and not in another, here " + version);
+                BedrockBlock shared = block == null ? null : BedrockBlock.named(block);
+                BedrockItem item = ITEMS.containsKey(name) ? ITEMS.get(name) : OTHER_ITEMS.computeIfAbsent(name, n -> new BedrockItem(n, shared, shared != null));
+                if (item.block != shared) {
+                    throw new IllegalStateException(name + " places a different block in " + version + " than in an earlier version");
                 }
                 items.put(name, item);
                 if (block != null) {
@@ -282,7 +279,7 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
     }
 
     /**
-     * The items of one session: the first server's item definitions, and the items of its names that are not 1.26.30 items.
+     * The items of one session: its client version's items, the first server's item definitions, and the items of the server's names that its version does not have.
      * Only used on the client's event loop, where Boar runs.
      */
     static final class SessionItems {
@@ -290,16 +287,23 @@ final class BedrockItems implements ItemStackProvider, ItemMappings {
         static final int OWN_LIMIT = 1024;
 
         final DefinitionRegistry<ItemDefinition> definitions;
+        private final Version version;
         // The client's block mapping, whose palette has the session's custom blocks
         private final BlockMappingInfo blocks;
         private final Map<String, BedrockItem> own = new HashMap<>();
 
-        SessionItems(DefinitionRegistry<ItemDefinition> definitions, BlockMappingInfo blocks) {
+        SessionItems(Version version, DefinitionRegistry<ItemDefinition> definitions, BlockMappingInfo blocks) {
+            this.version = version;
             this.definitions = definitions;
             this.blocks = blocks;
         }
 
-        BedrockItem own(String name) {
+        BedrockItem item(String name) {
+            BedrockItem item = this.version.items.get(name);
+            return item != null ? item : this.own(name);
+        }
+
+        private BedrockItem own(String name) {
             BedrockItem item = this.own.get(name);
             if (item == null) {
                 if (this.own.size() >= OWN_LIMIT) {

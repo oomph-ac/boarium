@@ -39,6 +39,7 @@ import java.util.stream.Stream;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -82,14 +83,14 @@ class BedrockItemsTest {
 
     @Test
     void readsTheItemOfAStackByName() {
-        BoarItemStack bow = BoarItemStack.of(null, stack(BOW, 1));
+        BoarItemStack bow = BoarItemStack.of(session(List.of()), stack(BOW, 1));
         assertTrue(bow.is(Items.BOW));
         assertSame(Items.BOW.find().orElseThrow(), bow.item());
         assertFalse(bow.isEmpty());
         // The stack of a known item is shared.
-        assertSame(bow, BoarItemStack.of(null, stack(BOW, 64)));
+        assertSame(bow, BoarItemStack.of(session(List.of()), stack(BOW, 64)));
 
-        BoarItemStack stone = BoarItemStack.of(null, stack(STONE, 1));
+        BoarItemStack stone = BoarItemStack.of(session(List.of()), stack(STONE, 1));
         assertEquals("minecraft:stone", stone.item().toString());
         assertFalse(stone.is(Items.BOW));
     }
@@ -185,6 +186,22 @@ class BedrockItemsTest {
         assertSame(wand.item(), BoarItemStack.of(session, stack(new SimpleItemDefinition("cubecraft:wand", 2000, true), 1)).item());
     }
 
+    // A 26.60 client's poplar sign is the item every version shares, and places the shared poplar standing sign; a 1.26.30 client has no poplar sign, so there it is the server's own item.
+    @Test
+    void readsTheItemsOfTheSessionsVersion() {
+        ItemDefinition poplarSign = new SimpleItemDefinition("minecraft:poplar_sign", 2000, false);
+        BoariumPlayerManager.BoariumNetworkSession v26_60 = session(2225, List.of(poplarSign), new StartGamePacket());
+        Item sign = BoarItemStack.of(v26_60, stack(poplarSign, 1)).item();
+        assertSame(BedrockItems.forProtocol(2225).items.get("minecraft:poplar_sign"), sign);
+        assertSame(BedrockItems.forProtocol(2168).items.get("minecraft:poplar_sign"), sign);
+        assertTrue(sign.isBlock());
+        assertSame(BedrockBlock.named("minecraft:poplar_standing_sign"), BlockMappings.get().getItemToBlock().get(sign));
+
+        Item own = BoarItemStack.of(session(List.of(poplarSign)), stack(poplarSign, 1)).item();
+        assertNotSame(sign, own);
+        assertNull(BlockMappings.get().getItemToBlock().get(own));
+    }
+
     // The client's block item of a custom block has the block's name and version NONE, as Geyser and dragonfly send it, and a data-driven item places the block its minecraft:block_placer names.
     @Test
     void placesTheCustomBlocksOfAServersOwnItems() {
@@ -261,11 +278,11 @@ class BedrockItemsTest {
 
     @Test
     void readsAirAndNoItemsAsEmpty() {
-        assertTrue(BoarItemStack.of(null, ItemData.AIR).isEmpty());
+        assertTrue(BoarItemStack.of(session(List.of()), ItemData.AIR).isEmpty());
         // A server's own air, as in its item list
-        assertTrue(BoarItemStack.of(null, stack(new SimpleItemDefinition("minecraft:air", -158, false), 1)).isEmpty());
-        assertTrue(BoarItemStack.of(null, stack(BOW, 0)).isEmpty());
-        assertFalse(BoarItemStack.of(null, ItemData.AIR).is(Items.BOW));
+        assertTrue(BoarItemStack.of(session(List.of()), stack(new SimpleItemDefinition("minecraft:air", -158, false), 1)).isEmpty());
+        assertTrue(BoarItemStack.of(session(List.of()), stack(BOW, 0)).isEmpty());
+        assertFalse(BoarItemStack.of(session(List.of()), ItemData.AIR).is(Items.BOW));
     }
 
     @Test
@@ -300,7 +317,13 @@ class BedrockItemsTest {
 
     // A session whose client was sent this StartGame
     private static BoariumPlayerManager.BoariumNetworkSession session(List<ItemDefinition> items, StartGamePacket startGame) {
-        return new BoariumPlayerManager.BoariumNetworkSession(null, 0, new BedrockItems.SessionItems(Definitions.items(items), BedrockPalette.mappingInfo(startGame)));
+        return session(1001, items, startGame);
+    }
+
+    // A session of a client on this protocol
+    private static BoariumPlayerManager.BoariumNetworkSession session(int protocol, List<ItemDefinition> items, StartGamePacket startGame) {
+        BedrockItems.SessionItems sessionItems = new BedrockItems.SessionItems(BedrockItems.forProtocol(protocol), Definitions.items(items), BedrockPalette.mappingInfo(BedrockBlockTable.forProtocol(protocol), startGame));
+        return new BoariumPlayerManager.BoariumNetworkSession(null, 0, sessionItems);
     }
 
     private static StartGamePacket startGame(BlockPropertyData... blocks) {
@@ -350,7 +373,7 @@ class BedrockItemsTest {
     }
 
     private static Item item(String name) {
-        return BoarItemStack.of(null, stack(new SimpleItemDefinition(name, 0, false), 1)).item();
+        return BoarItemStack.of(session(List.of()), stack(new SimpleItemDefinition(name, 0, false), 1)).item();
     }
 
     private static void assertPlaces(String name, String block) {
