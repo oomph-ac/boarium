@@ -35,7 +35,7 @@ public final class TestBoar {
         BoariumBoar.WARNED_PROTOCOLS.clear();
     }
 
-    // Has Boar check the players who log in on this protocol from now on, or stop, as outside the tests it checks only those of 1.26.30.
+    // Has Boar check the players who log in on this protocol from now on, or stop, for a protocol it does not check outside the tests.
     public static void check(int protocol, boolean on) {
         if (on) {
             BoariumBoar.TEST_PROTOCOLS.add(protocol);

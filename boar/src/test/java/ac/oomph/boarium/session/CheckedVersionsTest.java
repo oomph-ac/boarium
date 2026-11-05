@@ -4,6 +4,7 @@ import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.data.block.BoarBlockState;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.util.MathUtil;
+import ac.boar.anticheat.util.math.Box;
 import ac.boar.anticheat.util.math.Vec3;
 import ac.boar.anticheat.violation.Violation;
 import ac.boar.anticheat.violation.ViolationListener;
@@ -26,6 +27,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.codec.v2168.Bedrock_v2168_hotfix4;
+import org.cloudburstmc.protocol.bedrock.codec.v2169.Bedrock_v2169;
 import org.cloudburstmc.protocol.bedrock.codec.v2225.Bedrock_v2225;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
@@ -77,11 +79,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-// Players on a protocol other than 1.26.30, with Boar checking them as the tests allow: Boar reads their blocks and items by their own version's IDs.
+// Players on a protocol other than 1.26.30 whom Boar checks: Boar reads their blocks and items by their own version's IDs.
 class CheckedVersionsTest {
     // A sub-chunk's local X and Z of the blocks the chunk has at Y 1, over a stone floor at Y 0
     private static final Vector3i FENCE = Vector3i.from(12, 1, 12);
     private static final Vector3i PLANKS = Vector3i.from(12, 1, 2);
+    private static final Vector3i POPLAR_FENCE = PLANKS.add(1, 0, 0);
     private static final SimpleItemDefinition POPLAR_PLANKS = new SimpleItemDefinition("minecraft:poplar_planks", 2000, false);
     private static final List<ItemDefinition> ITEMS = List.of(new SimpleItemDefinition("minecraft:stone", 1, false), POPLAR_PLANKS);
 
@@ -94,9 +97,9 @@ class CheckedVersionsTest {
     private int protocol;
     private StartGamePacket startGame;
 
-    // 26.40, whose poplar planks 1.26.30 does not have, and 26.60, whose fences have connection states.
+    // 26.40 and 26.45, whose poplar planks 1.26.30 does not have, and 26.60, which Boar checks only in the tests, whose fences have connection states.
     static List<Named<BedrockCodec>> codecs() {
-        return List.of(Named.of("26.40", Bedrock_v2168_hotfix4.CODEC), Named.of("26.60", Bedrock_v2225.CODEC));
+        return List.of(Named.of("26.40", Bedrock_v2168_hotfix4.CODEC), Named.of("26.45", Bedrock_v2169.CODEC), Named.of("26.60", Bedrock_v2225.CODEC));
     }
 
     @BeforeEach
@@ -123,11 +126,14 @@ class CheckedVersionsTest {
     @MethodSource("codecs")
     void readsWalksAndPlacesWithItsOwnBlocksAndItems(BedrockCodec codec) throws Exception {
         this.protocol = codec.getProtocolVersion();
-        TestBoar.check(this.protocol, true);
+        if (this.protocol == Bedrock_v2225.CODEC.getProtocolVersion()) {
+            TestBoar.check(this.protocol, true);
+        }
         BedrockBlockTable table = BedrockBlockTable.forProtocol(this.protocol);
         int stone = table.defaultIndex("minecraft:stone");
         int fence = table.defaultIndex("minecraft:oak_fence");
         int planks = table.defaultIndex("minecraft:poplar_planks");
+        int poplarFence = table.defaultIndex("minecraft:poplar_fence");
         this.server = new FakeSpectrumServer(this.group, codec);
         this.server.items = ITEMS;
         Session session = this.spawn(codec);
@@ -145,13 +151,19 @@ class CheckedVersionsTest {
         chunk.setChunkZ(chunkZ);
         chunk.setDimension(0);
         chunk.setSubChunksLength(1);
-        chunk.setData(subChunk(table.defaultIndex("minecraft:air"), stone, Map.of(FENCE, fence, PLANKS, planks)));
+        chunk.setData(subChunk(table.defaultIndex("minecraft:air"), stone, Map.of(FENCE, fence, PLANKS, planks, POPLAR_FENCE, poplarFence)));
         this.server.send(chunk);
         this.server.send(new Flush());
         awaitOnLoop(session, () -> !player.compensatedWorld.getBlockState(origin, 0).isAir());
         assertBlock(session, player, origin, "minecraft:stone", stone);
         assertBlock(session, player, origin.add(FENCE), "minecraft:oak_fence", fence);
         assertBlock(session, player, origin.add(PLANKS), "minecraft:poplar_planks", planks);
+        assertBlock(session, player, origin.add(POPLAR_FENCE), "minecraft:poplar_fence", poplarFence);
+        // A 26.40 poplar fence has no states, so it joins the planks west of it by its connection rule; a 26.60 one has states, and its default state joins nothing.
+        Vector3i poplarFenceAt = origin.add(POPLAR_FENCE);
+        List<Box> boxes = onLoop(session, () -> player.compensatedWorld.getBlockState(poplarFenceAt, 0).findCollision(player, poplarFenceAt, null, false));
+        float west = (float) boxes.stream().mapToDouble(box -> box.minX).min().orElseThrow() - poplarFenceAt.getX();
+        assertEquals(this.protocol < Bedrock_v2225.CODEC.getProtocolVersion() ? 0 : 0.375F, west, 1e-6F, boxes.toString());
 
         this.readItemsOnTheClient();
         List<ItemData> inventory = new ArrayList<>(Collections.nCopies(36, ItemData.AIR));

@@ -1,6 +1,7 @@
 package ac.oomph.boarium.boar.blocks;
 
 import ac.boar.anticheat.player.data.BlockMappingInfo;
+import ac.boar.mappings.block.FallingFlowMaterials;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import org.cloudburstmc.nbt.NbtMap;
 import org.cloudburstmc.nbt.NbtType;
@@ -14,6 +15,7 @@ import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.List;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNotSame;
@@ -126,6 +128,38 @@ class BedrockBlockTablesTest {
         assertSame(BedrockPalette.of(info), BedrockPalette.of(again));
         BedrockPalette.release(again);
         BedrockPalette.release(info);
+    }
+
+    // Boar checks 26.40 and 26.45 players with the rules of 1.26.30's blocks, so 26.40 must keep every 1.26.30 state, its data and each block's default state.
+    @Test
+    void table26_40Is1_26_30WithNewBlocks() {
+        BedrockBlockTable v26_30 = BedrockBlockTable.get();
+        BedrockBlockTable v26_40 = BedrockBlockTable.forProtocol(2168);
+        for (int i = 0; i < v26_30.paletteSize(); i++) {
+            String name = v26_30.name(i);
+            int index = v26_40.index(name, v26_30.states(i));
+            assertTrue(index >= 0, name + " " + v26_30.states(i));
+            assertArrayEquals(v26_30.collision(i), v26_40.collision(index), name);
+            assertEquals(v26_30.flags(i), v26_40.flags(index), name);
+            assertEquals(v26_30.hardness(i), v26_40.hardness(index), name);
+            assertEquals(v26_30.friction(i), v26_40.friction(index), name);
+            assertEquals(v26_30.states(v26_30.defaultIndex(name)), v26_40.states(v26_40.defaultIndex(name)), name);
+        }
+        // The states of 26.40's new blocks
+        assertEquals(v26_30.paletteSize() + 586, v26_40.paletteSize());
+    }
+
+    // 26.45 uses the 26.40 table, whose protocol is 2168, so its blocks get the falling-flow materials Boar has for 2168; Boar's are the same for 2169.
+    @Test
+    void fallingFlowOf26_45Is26_40s() {
+        BedrockBlockTable table = BedrockBlockTable.forProtocol(2169);
+        assertEquals(2168, table.protocol());
+        FallingFlowMaterials.Lookup v26_40 = FallingFlowMaterials.forProtocol(2168);
+        FallingFlowMaterials.Lookup v26_45 = FallingFlowMaterials.forProtocol(2169);
+        assertTrue(v26_45.isSupported());
+        for (int i = 0; i < table.paletteSize(); i++) {
+            assertEquals(v26_40.resolve(table.name(i), table.states(i)), v26_45.resolve(table.name(i), table.states(i)), table.name(i));
+        }
     }
 
     // Each table is about 7 to 11 MiB; boarium loads one when it first needs it.

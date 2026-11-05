@@ -20,7 +20,7 @@ import java.util.Set;
  */
 public final class BedrockBlock implements Block {
     private static final BedrockBlockTable TABLE = BedrockBlockUnion.get().table();
-    // Boar checks only the players of this table's protocol, whose default states can differ from the shared table's, such as a fence's without connection states.
+    // A block of 1.26.30 gets that version's default state, which can differ from the shared table's, such as a fence's without connection states.
     private static final BedrockBlockTable CHECKED = BedrockBlockTable.get();
 
     // The other Bedrock names of a block, by its main name, as Geyser groups them from Java blocks; slabs get their double slabs from the palette. The two piston arms stay apart, as on Bedrock.
