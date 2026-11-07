@@ -1,6 +1,7 @@
 package ac.oomph.boarium.boar.blocks;
 
 import ac.boar.anticheat.player.data.BlockMappingInfo;
+import ac.boar.mappings.block.FallingFlowMaterial;
 import ac.boar.mappings.block.FallingFlowMaterials;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import org.cloudburstmc.nbt.NbtMap;
@@ -195,6 +196,34 @@ class BedrockBlockTablesTest {
         for (int i = 0; i < table.paletteSize(); i++) {
             assertEquals(v26_40.resolve(table.name(i), table.states(i)), v26_45.resolve(table.name(i), table.states(i)), table.name(i));
         }
+    }
+
+    // 26.60 blocks take 26.50's falling-flow materials: a state 26.50 also has gets its material, a state 26.60 changed gets the one material of its block's 26.50 states, and only new blocks are left unsearched.
+    @Test
+    void fallingFlowOf26_60Is26_50s() {
+        BedrockBlockTable v26_50 = BedrockBlockTable.forProtocol(2193);
+        BedrockBlockTable v26_60 = BedrockBlockTable.forProtocol(2225);
+        // Without custom blocks or hashed IDs, a runtime ID is the palette index.
+        BlockMappingInfo info = BedrockPalette.mappingInfo(v26_60, new StartGamePacket());
+        FallingFlowMaterials.Lookup boar26_50 = FallingFlowMaterials.forProtocol(2193);
+        List<String> unsearched = new ArrayList<>();
+        for (int i = 0; i < v26_60.paletteSize(); i++) {
+            String name = v26_60.name(i);
+            FallingFlowMaterial flow = info.fallingFlowMaterial().apply(i);
+            if (v26_50.index(name, v26_60.states(i)) >= 0) {
+                assertEquals(boar26_50.resolve(name, v26_60.states(i)), flow, name);
+            } else if (v26_50.firstIndex(name) >= 0) {
+                assertEquals(boar26_50.resolve(name, v26_50.states(v26_50.firstIndex(name))), flow, name);
+            } else if (!unsearched.contains(name)) {
+                unsearched.add(name);
+            }
+            assertTrue(flow.isKnown() || unsearched.contains(name), name + " " + v26_60.states(i));
+        }
+        assertEquals(List.of("minecraft:disc_press", "minecraft:ice_crystal", "minecraft:icicle"), unsearched.stream().sorted().toList());
+        // The blocks 26.60 gave new states, with the material all their 26.50 states share
+        assertEquals(FallingFlowMaterial.NO_DOWNWARD_FLOW, info.fallingFlowMaterial().apply(v26_60.firstIndex("minecraft:redstone_wire")));
+        assertEquals(FallingFlowMaterial.NO_DOWNWARD_FLOW, info.fallingFlowMaterial().apply(v26_60.firstIndex("minecraft:fire")));
+        assertEquals(FallingFlowMaterial.APPLIES_DOWNWARD_FLOW, info.fallingFlowMaterial().apply(v26_60.firstIndex("minecraft:chorus_plant")));
     }
 
     // Each table is about 7 to 11 MiB; boarium loads one when it first needs it.

@@ -1023,13 +1023,20 @@ public final class BedrockPalette {
             this.flows = new FallingFlowMaterial[size];
             this.jumps = new HorseJumpMaterial[size];
             this.hashedDefinitions = new SimpleBlockDefinition[size];
-            FallingFlowMaterials.Lookup fallingFlow = FallingFlowMaterials.forProtocol(table.protocol());
+            // Boar has no falling-flow data for 26.60 (protocol 2225), so its blocks take 26.50's (2193).
+            // A state that 26.60 changed takes its block's 26.50 material.
+            BedrockBlockTable flowTable = table.protocol() == 2225 ? BedrockBlockTable.forProtocol(2193) : table;
+            FallingFlowMaterials.Lookup fallingFlow = FallingFlowMaterials.forProtocol(flowTable.protocol());
+            Map<String, FallingFlowMaterial> blockFlows = new HashMap<>();
             this.fallingFlowSupported = fallingFlow.isSupported();
             for (int i = 0; i < size; i++) {
                 String name = table.name(i);
                 this.states[i] = NbtMap.builder().putString("name", name).putCompound("states", table.states(i)).build();
                 this.nameHashes[i] = nameHash(name);
                 this.flows[i] = fallingFlow.resolve(name, table.states(i));
+                if (this.flows[i] == FallingFlowMaterial.NOT_SEARCHED && flowTable != table) {
+                    this.flows[i] = blockFlows.computeIfAbsent(name, block -> blockFlow(fallingFlow, flowTable, block));
+                }
                 this.jumps[i] = HorseJumpMaterials.resolve(name);
                 this.hashedDefinitions[i] = new SimpleBlockDefinition(name, table.networkHash(i), this.states[i]);
             }
@@ -1037,6 +1044,21 @@ public final class BedrockPalette {
             this.hashed = new BedrockPalette(this, true, List.of(), false);
             this.unknown = new BedrockPalette(this, false, List.of(), true);
             this.unreadHashed = new BedrockPalette(this, true, List.of(), true);
+        }
+
+        // The material every state of the block has in the table, or NOT_SEARCHED when the table has no such block or its states do not share one known material
+        private static FallingFlowMaterial blockFlow(FallingFlowMaterials.Lookup lookup, BedrockBlockTable table, String name) {
+            int first = table.firstIndex(name);
+            if (first < 0) {
+                return FallingFlowMaterial.NOT_SEARCHED;
+            }
+            FallingFlowMaterial flow = lookup.resolve(name, table.states(first));
+            for (int i = first + 1; i < first + table.stateCount(name); i++) {
+                if (lookup.resolve(name, table.states(i)) != flow) {
+                    return FallingFlowMaterial.NOT_SEARCHED;
+                }
+            }
+            return flow.isKnown() ? flow : FallingFlowMaterial.NOT_SEARCHED;
         }
 
         // By protocol, so that a table loaded again shares the cache of the table of its protocol
