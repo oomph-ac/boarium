@@ -1,8 +1,11 @@
 package ac.oomph.boarium.client;
 
+import ac.oomph.boarium.NetherNetHttps;
+import ac.oomph.boarium.TestCertificate;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.handler.ssl.SslContext;
 import org.cloudburstmc.netty.channel.nethernet.signaling.HttpSignalingSettings;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPClientSignaling;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
@@ -13,12 +16,14 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.net.ConnectException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-// The listener's NetherNet side: joins by address over plain HTTP signaling on loopback, next to RakNet on the same port.
+// The listener's NetherNet side: joins by address over HTTP or HTTPS signaling on loopback, next to RakNet on the same port.
 @Timeout(60)
 class ClientListenerNetherNetTest {
     private static final BedrockCodec CODEC = Bedrock_v1001.CODEC;
@@ -69,9 +74,13 @@ class ClientListenerNetherNetTest {
     }
 
     private InetSocketAddress listen(int port, boolean netherNet, boolean requireXbox) throws Exception {
+        return this.listen(port, netherNet, requireXbox, null);
+    }
+
+    private InetSocketAddress listen(int port, boolean netherNet, boolean requireXbox, SslContext tls) throws Exception {
         assertFalse(TAKEN_PORTS.contains(port), String.valueOf(port));
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival").playerCount(3).maximumPlayerCount(10);
-        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", port), pong, requireXbox, netherNet, Duration.ofMinutes(1), this.login::complete);
+        this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", port), pong, requireXbox, netherNet, tls, Duration.ofMinutes(1), this.login::complete);
         InetSocketAddress address = this.listener.address();
         assertFalse(TAKEN_PORTS.contains(address.getPort()), address.toString());
         return address;
@@ -88,6 +97,32 @@ class ClientListenerNetherNetTest {
         assertEquals("Tester", login.identity().displayName());
         assertTrue(client.received.stream().anyMatch(p -> p instanceof PlayStatusPacket status && status.getStatus() == PlayStatusPacket.Status.LOGIN_SUCCESS));
         assertTrue(login.session().getPeer() instanceof NetherNetPeer);
+    }
+
+    @Test
+    void logsInAClientThatJoinsByAddressOverHttps(@TempDir Path dir) throws Exception {
+        TestCertificate certificate = TestCertificate.create(dir);
+        InetSocketAddress address = this.listen(0, true, false, new NetherNetHttps(certificate.certificate(), certificate.privateKey(), null).load());
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        HttpSignalingSettings https = HttpSignalingSettings.DEFAULT.withScheme(HttpSignalingSettings.Scheme.HTTPS).withSslContext(certificate.trusted());
+        this.clients.add(client.joinByAddress(this.group, address, https));
+
+        client.loginDone.get(30, TimeUnit.SECONDS);
+        ClientLogin login = this.login.get(10, TimeUnit.SECONDS);
+        assertEquals("Tester", login.identity().displayName());
+        assertTrue(login.session().getPeer() instanceof NetherNetPeer);
+    }
+
+    @Test
+    void turnsAwayPlainHttpWhenServingHttps(@TempDir Path dir) throws Exception {
+        TestCertificate certificate = TestCertificate.create(dir);
+        InetSocketAddress address = this.listen(0, true, false, new NetherNetHttps(certificate.pkcs12(), null, certificate.password()).load());
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.clients.add(client.joinByAddress(this.group, address));
+
+        String error = assertThrows(ExecutionException.class, () -> client.loginDone.get(30, TimeUnit.SECONDS)).getCause().getMessage();
+        assertTrue(error.contains("HTTP 426"), error);
+        assertFalse(this.login.isDone());
     }
 
     @Test
@@ -138,7 +173,7 @@ class ClientListenerNetherNetTest {
     void turnsAwayAJoinWhoseOfferCarriesNoIdentity() throws Exception {
         InetSocketAddress address = this.listen(true);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        this.clients.add(client.joinByAddress(this.group, address, null));
+        this.clients.add(client.joinByAddress(this.group, address, null, TestClient.PLAIN_HTTP));
 
         String error = assertThrows(ExecutionException.class, () -> client.loginDone.get(30, TimeUnit.SECONDS)).getCause().getMessage();
         // The signaling refuses the offer before any login.

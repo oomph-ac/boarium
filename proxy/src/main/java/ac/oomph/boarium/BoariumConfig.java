@@ -15,8 +15,10 @@ import java.util.Map;
 
 /**
  * boarium's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
+ *
+ * @param netherNetHttps null when NetherNet signaling serves plain HTTP
  */
-public record BoariumConfig(String listen, boolean netherNet, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
+public record BoariumConfig(String listen, boolean netherNet, NetherNetHttps netherNetHttps, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
                             String shutdownMessage, boolean boarEnabled, boolean boarMitigations) {
 
     static final String DEFAULT_FILE = """
@@ -24,6 +26,12 @@ public record BoariumConfig(String listen, boolean netherNet, String server, Str
             listen: ":19132"
             # Whether players can also join over NetherNet, which the game tries before RakNet when it joins by address. It takes the TCP side of the listen port, and each NetherNet player another UDP port, so turn it off when only the listen port is open.
             nethernet: true
+            # A certificate for NetherNet to serve HTTPS with instead of HTTP: a PEM certificate chain with its PEM private key, or a PKCS12 file alone, with nethernet_private_key left empty. Paths are relative to this file's folder.
+            # The game asks its player to trust a server it reaches over plain HTTP.
+            nethernet_certificate: ""
+            nethernet_private_key: ""
+            # The PKCS12 file's password, or the private key's when it is encrypted.
+            nethernet_password: ""
             # The Spectrum server players join first.
             server: 127.0.0.1:19133
             # Where players go when their server is lost. Leave it empty for none.
@@ -55,11 +63,16 @@ public record BoariumConfig(String listen, boolean netherNet, String server, Str
             Files.writeString(path, DEFAULT_FILE, StandardCharsets.UTF_8);
         }
         try (Reader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8)) {
-            return parse(reader);
+            return parse(reader, path.toAbsolutePath().getParent());
         }
     }
 
     static BoariumConfig parse(Reader reader) {
+        return parse(reader, Path.of(""));
+    }
+
+    // folder is what relative paths in the config are relative to.
+    static BoariumConfig parse(Reader reader, Path folder) {
         Object root = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
         Map<?, ?> values = root == null ? Map.of() : root instanceof Map<?, ?> map ? map : null;
         if (values == null) {
@@ -74,6 +87,7 @@ public record BoariumConfig(String listen, boolean netherNet, String server, Str
         return new BoariumConfig(
                 listen,
                 get(values, "nethernet", Boolean.class, true),
+                netherNetHttps(values, folder),
                 server,
                 fallback.isEmpty() ? null : fallback,
                 get(values, "xbox_auth", Boolean.class, true),
@@ -95,6 +109,24 @@ public record BoariumConfig(String listen, boolean netherNet, String server, Str
             throw new IllegalArgumentException(key + ": " + e.getMessage(), e);
         }
         return addr;
+    }
+
+    private static NetherNetHttps netherNetHttps(Map<?, ?> values, Path folder) {
+        String certificate = get(values, "nethernet_certificate", String.class, "");
+        String privateKey = get(values, "nethernet_private_key", String.class, "");
+        // Not through get(), whose error would print the password.
+        Object value = values.get("nethernet_password");
+        if (value != null && !(value instanceof String)) {
+            throw new IllegalArgumentException("nethernet_password must be a string; put it in quotes");
+        }
+        String password = value == null ? "" : (String) value;
+        if (certificate.isEmpty()) {
+            if (!privateKey.isEmpty() || !password.isEmpty()) {
+                throw new IllegalArgumentException("nethernet_private_key and nethernet_password need nethernet_certificate");
+            }
+            return null;
+        }
+        return new NetherNetHttps(folder.resolve(certificate), privateKey.isEmpty() ? null : folder.resolve(privateKey), password.isEmpty() ? null : password);
     }
 
     // A whole number from min up to Integer.MAX_VALUE; YAML reads larger ones as Long or BigInteger, and decimals as Double.

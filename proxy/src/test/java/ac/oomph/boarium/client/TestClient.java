@@ -69,6 +69,8 @@ import java.util.concurrent.TimeUnit;
  * Every packet it receives is also put in {@link #received}.
  */
 public final class TestClient {
+    public static final HttpSignalingSettings PLAIN_HTTP = HttpSignalingSettings.DEFAULT.withScheme(HttpSignalingSettings.Scheme.HTTP);
+
     final String name;
     final UUID identity = UUID.randomUUID();
     final KeyPair key = EncryptionUtils.createKeyPair();
@@ -172,12 +174,19 @@ public final class TestClient {
      * Joins by address over NetherNet as the game does, through plain HTTP signaling on the address's TCP port, with an offer that carries the client's own key.
      */
     public Channel joinByAddress(EventLoopGroup group, InetSocketAddress address) throws JoseException {
-        return this.joinByAddress(group, address, new OperatorIdentity(this.key.getPrivate(), this.key.getPublic(), null, "boarium-test").forPlayer("", this.name));
+        return this.joinByAddress(group, address, PLAIN_HTTP);
+    }
+
+    /**
+     * Joins by address over NetherNet with the given signaling settings, such as HTTPS with a certificate the test trusts.
+     */
+    public Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, HttpSignalingSettings signaling) throws JoseException {
+        return this.joinByAddress(group, address, new OperatorIdentity(this.key.getPrivate(), this.key.getPublic(), null, "boarium-test").forPlayer("", this.name), signaling);
     }
 
     // signalingIdentity is null for an offer without one.
-    Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity) {
-        return this.connectNetherNet(group, address, signalingIdentity, null, new NetherNetHTTPClientSignaling(HttpSignalingSettings.DEFAULT.withScheme(HttpSignalingSettings.Scheme.HTTP)));
+    Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity, HttpSignalingSettings signaling) {
+        return this.connectNetherNet(group, address, signalingIdentity, null, new NetherNetHTTPClientSignaling(signaling));
     }
 
     // A null serverTrust leaves the server's answer unchecked.

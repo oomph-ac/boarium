@@ -6,6 +6,7 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
+import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.concurrent.Promise;
@@ -50,10 +51,10 @@ public final class ClientListener {
     /**
      * Binds the listener for RakNet only.
      *
-     * @see #bind(EventLoopGroup, InetSocketAddress, BedrockPong, boolean, boolean, Duration, Consumer)
+     * @see #bind(EventLoopGroup, InetSocketAddress, BedrockPong, boolean, boolean, SslContext, Duration, Consumer)
      */
     public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
-        return bind(group, address, pong, requireXbox, false, loginTimeout, onLogin);
+        return bind(group, address, pong, requireXbox, false, null, loginTimeout, onLogin);
     }
 
     /**
@@ -61,11 +62,12 @@ public final class ClientListener {
      * Fails if Mojang's login settings cannot be fetched, since no client could log in then.
      *
      * @param requireXbox  whether clients must have an identity signed by Xbox Live
-     * @param netherNet    whether clients may also join over NetherNet, through plain HTTP signaling on the TCP side of the bound port; if that cannot start, the listener logs why and takes RakNet clients only
+     * @param netherNet    whether clients may also join over NetherNet, through signaling on the TCP side of the bound port; if that cannot start, the listener logs why and takes RakNet clients only
+     * @param netherNetTls what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
      * @param loginTimeout how long a client may take to log in before it is disconnected
      * @param onLogin      runs on the client's event loop once a client has logged in
      */
-    public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, boolean netherNet, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
+    public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, boolean netherNet, SslContext netherNetTls, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
         }
@@ -89,14 +91,14 @@ public final class ClientListener {
                 .sync();
 
         InetSocketAddress bound = (InetSocketAddress) bind.channel().localAddress();
-        NetherNet listening = netherNet ? bindNetherNet(group, bound, requireXbox, new NetherNetInitializer(requireXbox, loginTimeout, onLogin)) : null;
+        NetherNet listening = netherNet ? bindNetherNet(group, bound, requireXbox, netherNetTls, new NetherNetInitializer(requireXbox, loginTimeout, onLogin)) : null;
         ClientListener listener = new ClientListener(bind.channel(), listening, requireXbox);
         listener.pong(pong);
         return listener;
     }
 
     // Returns null when NetherNet cannot start, such as when its native library does not load on this platform or the TCP port is taken.
-    private static NetherNet bindNetherNet(EventLoopGroup group, InetSocketAddress address, boolean requireXbox, NetherNetInitializer initializer) throws InterruptedException {
+    private static NetherNet bindNetherNet(EventLoopGroup group, InetSocketAddress address, boolean requireXbox, SslContext tls, NetherNetInitializer initializer) throws InterruptedException {
         Throwable failure;
         try {
             NetherNetHTTPServerSignaling signaling = new NetherNetHTTPServerSignaling.Builder()
@@ -105,6 +107,7 @@ public final class ClientListener {
                     .setTokenTrust(requireXbox ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
                     // RakNet holds the UDP side of the port, so each NetherNet connection takes a UDP port of its own.
                     .setIceOnLocalPort(false)
+                    .setSslContext(tls)
                     .build();
             ChannelFuture bind = new ServerBootstrap()
                     .group(group)
@@ -113,7 +116,7 @@ public final class ClientListener {
                     .bind(address)
                     .await();
             if (bind.isSuccess()) {
-                LOG.info("players can also join over NetherNet, through HTTP signaling on TCP port {}", address.getPort());
+                LOG.info("players can also join over NetherNet, through {} signaling on TCP port {}", tls == null ? "HTTP" : "HTTPS", address.getPort());
                 return new NetherNet(bind.channel(), signaling);
             }
             bind.channel().close();

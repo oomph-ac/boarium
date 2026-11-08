@@ -30,6 +30,7 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 |---|---|---|
 | `listen` | `":19132"` | Where players connect. An empty host means every address of this machine; put an IPv6 address in quotes. |
 | `nethernet` | `true` | Whether players can also join over NetherNet, which the game tries before RakNet when it joins by address. It takes the TCP side of the listen port, and each NetherNet player another UDP port, so turn it off when only the listen port is open. |
+| `nethernet_certificate`, `nethernet_private_key`, `nethernet_password` | empty | A certificate for NetherNet to serve HTTPS with instead of HTTP, which then turns plain HTTP away: a PEM certificate chain with its PEM private key, or a PKCS12 file alone, with `nethernet_private_key` left empty; and the password of the PKCS12 file or of an encrypted key. Paths are relative to the config's folder. The game asks its player to trust a server it reaches over plain HTTP. boarium does not start if the files cannot be read or the key does not belong to the certificate, and warns when the certificate is out of its dates. Unused while `nethernet` is off. |
 | `server` | `127.0.0.1:19133` | The Spectrum server players join first. |
 | `fallback_server` | empty | Where players go when their server is lost. Empty for none. |
 | `xbox_auth` | `true` | Whether players must sign in with Xbox Live. |

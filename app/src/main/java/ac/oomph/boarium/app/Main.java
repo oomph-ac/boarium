@@ -7,6 +7,7 @@ import ac.oomph.boarium.client.ClientLogin;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.SessionSettings;
+import io.netty.handler.ssl.SslContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,9 +27,11 @@ public final class Main {
     public static void main(String[] args) {
         Path path = Path.of(args.length > 0 ? args[0] : "config.yml");
         BoariumConfig config;
+        SslContext netherNetTls;
         Function<ClientLogin, Processor> processors;
         try {
             config = BoariumConfig.load(path);
+            netherNetTls = netherNetTls(config);
             processors = processors(config, path);
         } catch (Exception | Error e) {
             // A block table that cannot load comes as an ExceptionInInitializerError, with the reason as its cause.
@@ -44,7 +47,7 @@ public final class Main {
         }
         Boarium boarium;
         try {
-            boarium = Boarium.start(config, processors);
+            boarium = Boarium.start(config, netherNetTls, processors);
         } catch (Exception e) {
             // Netty also throws checked exceptions it does not declare, such as a BindException.
             LOG.error("could not start on {}: {}", config.listen(), e.toString());
@@ -57,6 +60,18 @@ public final class Main {
             LOG.info("shutting down");
             boarium.close();
         }));
+    }
+
+    // Null for plain HTTP. Never falls back to HTTP: a certificate that cannot be read stops boarium.
+    private static SslContext netherNetTls(BoariumConfig config) {
+        if (config.netherNetHttps() == null) {
+            return null;
+        }
+        if (!config.netherNet()) {
+            LOG.warn("nethernet is off, so nethernet_certificate is not used");
+            return null;
+        }
+        return config.netherNetHttps().load();
     }
 
     private static Function<ClientLogin, Processor> processors(BoariumConfig config, Path configPath) throws IOException {

@@ -70,7 +70,7 @@ class BoariumTest {
 
     // On a free loopback port, with NetherNet on.
     private static Boarium start(FakeSpectrumServer server) throws InterruptedException {
-        return Boarium.start(new BoariumConfig("127.0.0.1:0", true, server.address(), null, false, "boarium", "test", 10, Duration.ofSeconds(3), "bye", false, false),
+        return Boarium.start(new BoariumConfig("127.0.0.1:0", true, null, server.address(), null, false, "boarium", "test", 10, Duration.ofSeconds(3), "bye", false, false), null,
                 SessionSettings.DEFAULT.processors());
     }
 

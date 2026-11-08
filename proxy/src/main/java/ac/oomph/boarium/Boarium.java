@@ -12,6 +12,7 @@ import ac.oomph.boarium.transport.TcpTransport;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import io.netty.handler.ssl.SslContext;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.slf4j.Logger;
@@ -50,12 +51,12 @@ public final class Boarium implements AutoCloseable {
     private final ScheduledFuture<?> pongs;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private Boarium(BoariumConfig config, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException {
+    private Boarium(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException {
         this.config = config;
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
         SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), processors);
-        this.listener = ClientListener.bind(group, listenAddress(config.listen()), this.pong(), config.xboxAuth(), config.netherNet(), CLIENT_LOGIN_TIMEOUT,
+        this.listener = ClientListener.bind(group, listenAddress(config.listen()), this.pong(), config.xboxAuth(), config.netherNet(), netherNetTls, CLIENT_LOGIN_TIMEOUT,
                 login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
@@ -63,12 +64,13 @@ public final class Boarium implements AutoCloseable {
     /**
      * Starts listening for players with {@code config}.
      *
-     * @param processors gives each player's session its processor
+     * @param netherNetTls what NetherNet signaling serves HTTPS with, from {@link NetherNetHttps#load()}; null for plain HTTP
+     * @param processors   gives each player's session its processor
      */
-    public static Boarium start(BoariumConfig config, Function<ClientLogin, Processor> processors) throws InterruptedException {
+    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors) throws InterruptedException {
         EventLoopGroup group = new NioEventLoopGroup();
         try {
-            return new Boarium(config, processors, group);
+            return new Boarium(config, netherNetTls, processors, group);
         } catch (Throwable t) {
             // Netty also throws checked exceptions it does not declare, such as a BindException; the event loops would otherwise keep the JVM running.
             group.shutdownGracefully();

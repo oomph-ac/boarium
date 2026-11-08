@@ -131,14 +131,42 @@ class MainTest {
         }
     }
 
+    @Test
+    void stopsWhenTheNetherNetCertificateCannotBeRead(@TempDir Path dir) throws Exception {
+        Process process = this.start(dir, "127.0.0.1:1", "", "nethernet_certificate: missing.pem\nnethernet_private_key: key.pem\n");
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            this.awaitLine("could not start: java.lang.IllegalArgumentException: cannot read the NetherNet HTTPS file " + dir.resolve("missing.pem"));
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    @Test
+    void warnsThatTheNetherNetCertificateIsUnusedWithNetherNetOff(@TempDir Path dir) throws Exception {
+        Process process = this.start(dir, "127.0.0.1:1", "", "nethernet: false\nnethernet_certificate: missing.pem\n");
+        try {
+            assertTrue(this.awaitLine("nethernet is off, so nethernet_certificate is not used").contains(" WARN "));
+            this.awaitLine("listening on ");
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
     private Process start(Path dir, String server) throws Exception {
         return this.start(dir, server, "");
     }
 
-    // Starts the installed boarium in dir, on a free loopback port, with Boar on and javaOpts given to its JVM.
     private Process start(Path dir, String server, String javaOpts) throws Exception {
+        return this.start(dir, server, javaOpts, "");
+    }
+
+    // Starts the installed boarium in dir, on a free loopback port, with Boar on, javaOpts given to its JVM, and extraConfig added to its config.
+    private Process start(Path dir, String server, String javaOpts, String extraConfig) throws Exception {
         Path config = dir.resolve("config.yml");
-        Files.writeString(config, "listen: 127.0.0.1:0\nserver: " + server + "\nxbox_auth: false\n");
+        Files.writeString(config, "listen: 127.0.0.1:0\nserver: " + server + "\nxbox_auth: false\n" + extraConfig);
         ProcessBuilder builder = new ProcessBuilder(Path.of(System.getProperty("boarium.install"), "bin", "boarium").toString(), config.toString())
                 .directory(dir.toFile())
                 .redirectErrorStream(true);

@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -21,7 +22,7 @@ class BoariumConfigTest {
         BoariumConfig config = BoariumConfig.load(path);
 
         assertTrue(Files.exists(path));
-        assertEquals(new BoariumConfig(":19132", true, "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed.", true, false), config);
+        assertEquals(new BoariumConfig(":19132", true, null, "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed.", true, false), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -43,7 +44,31 @@ class BoariumConfigTest {
                 boar_mitigations: true
                 """));
 
-        assertEquals(new BoariumConfig("127.0.0.1:19000", false, "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye", false, true), config);
+        assertEquals(new BoariumConfig("127.0.0.1:19000", false, null, "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye", false, true), config);
+    }
+
+    @Test
+    void readsTheNetherNetHttpsFilesRelativeToTheConfigFolder(@TempDir Path dir) throws Exception {
+        Path path = Files.writeString(dir.resolve("config.yml"), """
+                nethernet_certificate: tls/chain.pem
+                nethernet_private_key: /etc/boarium/key.pem
+                nethernet_password: secret
+                """);
+        assertEquals(new NetherNetHttps(dir.resolve("tls/chain.pem"), Path.of("/etc/boarium/key.pem"), "secret"), BoariumConfig.load(path).netherNetHttps());
+        // A PKCS12 file takes no private key.
+        assertEquals(new NetherNetHttps(Path.of("cert.p12"), null, null), BoariumConfig.parse(new StringReader("nethernet_certificate: cert.p12")).netherNetHttps());
+    }
+
+    // YAML reads an unquoted 123456 as a number and yes as true; the error must not print them.
+    @Test
+    void keepsTheNetherNetPasswordOutOfErrorsAndToString() {
+        for (String password : new String[]{"123456", "yes"}) {
+            String error = assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_certificate: a.p12\nnethernet_password: " + password))).getMessage();
+            assertEquals("nethernet_password must be a string; put it in quotes", error);
+        }
+        BoariumConfig config = BoariumConfig.parse(new StringReader("nethernet_certificate: a.p12\nnethernet_password: hunter2"));
+        assertEquals("hunter2", config.netherNetHttps().password());
+        assertFalse(config.toString().contains("hunter2"), config.toString());
     }
 
     @Test
@@ -67,6 +92,9 @@ class BoariumConfigTest {
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: 1")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\"")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_mitigations: sometimes")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_private_key: key.pem")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_password: secret")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_certificate: 5")));
         assertNull(BoariumConfig.parse(new StringReader("fallback_server: \"\"")).fallbackServer());
     }
 }
