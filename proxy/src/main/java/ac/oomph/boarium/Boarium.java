@@ -63,7 +63,10 @@ public final class Boarium implements AutoCloseable {
         InetSocketAddress listen = listenAddress(config.listen());
         // A listen port of 0 is picked here once, so that every port that follows the listen port is the same free one.
         int picked = listen.getPort() == 0 ? Addresses.freePort(listen.getAddress(), Set.copyOf(List.of(config.rakNet().port(), config.netherNet().port(), config.netherNet().signalingPort()))) : listen.getPort();
-        InetSocketAddress rakNet = config.rakNet().enabled() ? new InetSocketAddress(listen.getAddress(), port(config.rakNet().port(), picked)) : null;
+        BoariumConfig.RakNet rakNetConfig = config.rakNet();
+        ClientListener.RakNetSettings rakNet = rakNetConfig.enabled()
+                ? new ClientListener.RakNetSettings(new InetSocketAddress(listen.getAddress(), port(rakNetConfig.port(), picked)), rakNetConfig.maxConnectionsPerAddress(), rakNetConfig.packetLimit(), rakNetConfig.rateLimiting())
+                : null;
         ClientListener.NetherNetSettings netherNet = config.netherNet().enabled()
                 ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls, netherNetIdentity,
                         config.netherNet().advertiseAddresses(), stunServers(config.netherNet(), listen.getAddress()))

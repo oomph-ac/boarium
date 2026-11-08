@@ -62,6 +62,23 @@ public final class ClientListener {
     public static final List<String> PUBLIC_STUN_SERVERS = List.of("stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302");
 
     /**
+     * Where RakNet listens, and how much each client may connect and send.
+     *
+     * @param maxConnectionsPerAddress how many connections one IP may have open at once
+     * @param packetLimit              how many UDP packets one IP and port may send in each 10 ms before RakNet ignores it for 10 seconds
+     * @param rateLimiting             whether the limits apply, these two and the one on new connections from an IP
+     */
+    public record RakNetSettings(InetSocketAddress address, int maxConnectionsPerAddress, int packetLimit, boolean rateLimiting) {
+
+        /**
+         * Listens without limits.
+         */
+        public RakNetSettings(InetSocketAddress address) {
+            this(address, 10, 120, false);
+        }
+    }
+
+    /**
      * Where NetherNet listens: signaling on TCP at {@code signaling}, and connections on UDP {@code port} of the same host.
      *
      * @param tls                what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
@@ -86,12 +103,12 @@ public final class ClientListener {
     }
 
     /**
-     * Binds the listener for RakNet only.
+     * Binds the listener for RakNet only, without limits on what each client may connect and send.
      *
-     * @see #bind(EventLoopGroup, InetSocketAddress, NetherNetSettings, BedrockPong, boolean, Duration, Consumer)
+     * @see #bind(EventLoopGroup, RakNetSettings, NetherNetSettings, BedrockPong, boolean, Duration, Consumer)
      */
     public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
-        return bind(group, address, null, pong, requireXbox, loginTimeout, onLogin);
+        return bind(group, new RakNetSettings(address), null, pong, requireXbox, loginTimeout, onLogin);
     }
 
     /**
@@ -99,13 +116,13 @@ public final class ClientListener {
      * Fails if Mojang's login settings cannot be fetched, since no client could log in then.
      * If NetherNet cannot start, such as when its native library does not load, a port is taken or its identity file cannot be read, the listener logs why and takes RakNet clients only, or fails when RakNet is off.
      *
-     * @param rakNet       where RakNet listens; null for no RakNet
+     * @param rakNet       where RakNet listens and its limits; null for no RakNet
      * @param netherNet    where NetherNet listens; null for no NetherNet. Its signaling port must not be 0.
      * @param requireXbox  whether clients must have an identity signed by Xbox Live
      * @param loginTimeout how long a client may take to log in before it is disconnected
      * @param onLogin      runs on the client's event loop once a client has logged in
      */
-    public static ClientListener bind(EventLoopGroup group, InetSocketAddress rakNet, NetherNetSettings netherNet, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin)
+    public static ClientListener bind(EventLoopGroup group, RakNetSettings rakNet, NetherNetSettings netherNet, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin)
             throws InterruptedException {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
@@ -131,13 +148,19 @@ public final class ClientListener {
 
         Channel rakNetChannel = null;
         if (rakNet != null) {
-            rakNetChannel = new ServerBootstrap()
+            ServerBootstrap bootstrap = new ServerBootstrap()
                     .group(group)
                     .channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
-                    .childHandler(new ClientInitializer(requireXbox, loginTimeout, onLogin))
-                    .bind(rakNet)
-                    .sync()
-                    .channel();
+                    .childHandler(new ClientInitializer(requireXbox, loginTimeout, onLogin));
+            // The limits as Geyser sets them.
+            if (rakNet.rateLimiting()) {
+                bootstrap.option(RakChannelOption.RAK_THROTTLE, new RakNetThrottle(rakNet.maxConnectionsPerAddress()))
+                        .option(RakChannelOption.RAK_PACKET_LIMIT, rakNet.packetLimit());
+            } else {
+                // 0 turns the library's packet limit off, which is otherwise on at 120.
+                bootstrap.option(RakChannelOption.RAK_PACKET_LIMIT, 0);
+            }
+            rakNetChannel = bootstrap.bind(rakNet.address()).sync().channel();
             LOG.info("RakNet on UDP {}", text((InetSocketAddress) rakNetChannel.localAddress()));
         }
         NetherNet netherNetListening = null;

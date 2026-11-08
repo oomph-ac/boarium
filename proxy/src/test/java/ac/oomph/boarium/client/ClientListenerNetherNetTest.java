@@ -114,7 +114,7 @@ class ClientListenerNetherNetTest {
 
     private void listen(InetSocketAddress rakNet, ClientListener.NetherNetSettings netherNet, boolean requireXbox) throws Exception {
         BedrockPong pong = new BedrockPong().edition("MCPE").motd("boarium").subMotd("test").protocolVersion(CODEC.getProtocolVersion()).version(CODEC.getMinecraftVersion()).gameType("Survival").playerCount(3).maximumPlayerCount(10);
-        this.listener = ClientListener.bind(this.group, rakNet, netherNet, pong, requireXbox, Duration.ofMinutes(1), this.logins::add);
+        this.listener = ClientListener.bind(this.group, rakNet == null ? null : new ClientListener.RakNetSettings(rakNet), netherNet, pong, requireXbox, Duration.ofMinutes(1), this.logins::add);
     }
 
     private ClientLogin login() throws InterruptedException {

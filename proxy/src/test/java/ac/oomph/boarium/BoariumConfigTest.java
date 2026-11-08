@@ -27,7 +27,7 @@ class BoariumConfigTest {
         BoariumConfig config = BoariumConfig.load(path);
 
         assertTrue(Files.exists(path));
-        assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132), new BoariumConfig.NetherNet(true, 19132, 19132, null, List.of(), true), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
+        assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132, 10, 120, true), new BoariumConfig.NetherNet(true, 19132, 19132, null, List.of(), true), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
                 "boarium closed.", true, false, 1), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
@@ -40,6 +40,9 @@ class BoariumConfigTest {
                 raknet:
                   enabled: true
                   port: 19001
+                  max_connections_per_address: 2
+                  packet_limit: 500
+                  rate_limiting: true
                 nethernet:
                   enabled: false
                   port: 19002
@@ -57,7 +60,7 @@ class BoariumConfigTest {
                 boar_alert_limit: 0
                 """));
 
-        assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001), new BoariumConfig.NetherNet(false, 19002, 19003, null, List.of(), true), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
+        assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001, 2, 500, true), new BoariumConfig.NetherNet(false, 19002, 19003, null, List.of(), true), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
                 false, true, 0), config);
     }
 
@@ -71,7 +74,7 @@ class BoariumConfigTest {
                 nethernet:
                   port: 19500
                 """));
-        assertEquals(new BoariumConfig.RakNet(true, 19000), config.rakNet());
+        assertEquals(new BoariumConfig.RakNet(true, 19000, 10, 120, true), config.rakNet());
         assertEquals(new BoariumConfig.NetherNet(true, 19500, 19000, null, List.of(), true), config.netherNet());
         // An empty section takes the defaults.
         assertEquals(new BoariumConfig.NetherNet(true, 19000, 19000, null, List.of(), true), BoariumConfig.parse(new StringReader("listen: :19000\nnethernet:\n")).netherNet());
@@ -123,13 +126,15 @@ class BoariumConfigTest {
     // A misspelt key would otherwise be left at its default without a word.
     @Test
     void turnsAwayUnknownKeysInTheSections() {
-        assertEquals("unknown key in raknet: enable (did you mean enabled?); raknet takes: enabled, port", error("raknet:\n  enable: true"));
+        assertEquals("unknown key in raknet: enable (did you mean enabled?); raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting", error("raknet:\n  enable: true"));
         assertEquals("unknown key in nethernet: signalling_port (did you mean signaling_port?); nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  signalling_port: 19000"));
         assertEquals("unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password", assertThrows(IllegalArgumentException.class, () -> https("cert: a.pem")).getMessage());
         assertEquals("unknown key in nethernet: 5; nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  5: x"));
         assertEquals("unknown key in nethernet: advertise_address (did you mean advertise_addresses?); nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  advertise_address: [play.example.com]"));
         assertEquals("unknown key in nethernet: stun_discover (did you mean stun_discovery?); nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  stun_discover: false"));
-        assertEquals("unknown keys in raknet: enable (did you mean enabled?), prot (did you mean port?); raknet takes: enabled, port", error("raknet:\n  enable: true\n  prot: 1"));
+        assertEquals("unknown keys in raknet: enable (did you mean enabled?), prot (did you mean port?); raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting", error("raknet:\n  enable: true\n  prot: 1"));
+        assertEquals("unknown keys in raknet: max_connection_per_address (did you mean max_connections_per_address?), packet_limt (did you mean packet_limit?), rate_limit; raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting",
+                error("raknet:\n  max_connection_per_address: 5\n  packet_limt: 5\n  rate_limit: false"));
     }
 
     @Test
@@ -157,7 +162,7 @@ class BoariumConfigTest {
         assertEquals(String.join("\n",
                 "nethernet_password is now nethernet.https.password",
                 "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit",
-                "unknown key in raknet: prot (did you mean port?); raknet takes: enabled, port",
+                "unknown key in raknet: prot (did you mean port?); raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting",
                 "unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password"), error);
     }
 
@@ -182,6 +187,9 @@ class BoariumConfigTest {
                 raknet:
                   enabled: true
                   port: 19001
+                  max_connections_per_address: 2
+                  packet_limit: 500
+                  rate_limiting: true
                 nethernet:
                   port: 19002
                   signaling_port: 19003
@@ -303,6 +311,13 @@ class BoariumConfigTest {
         assertEquals("raknet.port must be a whole number from 0 to 65535, got the text \"19264\"", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  port: \"19264\""))).getMessage());
         assertEquals("boar_enabled must be a boolean, got the text \"true\"", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\""))).getMessage());
         assertNull(BoariumConfig.parse(new StringReader("fallback_server: \"\"")).fallbackServer());
+        assertEquals("raknet.max_connections_per_address must be at least 1; set raknet.rate_limiting to false to turn RakNet's limits off", error("raknet:\n  max_connections_per_address: 0"));
+        assertEquals("raknet.packet_limit must be at least 1; set raknet.rate_limiting to false to turn RakNet's limits off", error("raknet:\n  packet_limit: 0"));
+        assertEquals("raknet.max_connections_per_address must be a whole number from 1 to 2147483647, got -1", error("raknet:\n  max_connections_per_address: -1"));
+        assertEquals("raknet.packet_limit must be a whole number from 1 to 2147483647, got the text \"many\"", error("raknet:\n  packet_limit: many"));
+        assertEquals("raknet.packet_limit must be a whole number from 1 to 2147483647, got 3000000000", error("raknet:\n  packet_limit: 3000000000"));
+        assertEquals(new BoariumConfig.RakNet(false, 19132, 10, 120, false), BoariumConfig.parse(new StringReader("raknet:\n  rate_limiting: false\n  max_connections_per_address: 0\n  packet_limit: many")).rakNet());
+        assertEquals("raknet.rate_limiting must be a boolean, got the text \"off\"", error("raknet:\n  rate_limiting: \"off\""));
     }
 
     private static String error(String config) {

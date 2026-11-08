@@ -28,9 +28,12 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                             String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit) {
 
     /**
-     * @param port the UDP port
+     * @param port                     the UDP port
+     * @param maxConnectionsPerAddress how many connections one IP may have open at once
+     * @param packetLimit              how many UDP packets one IP and port may send in each 10 ms
+     * @param rateLimiting             whether maxConnectionsPerAddress and packetLimit apply; while it is false, they are the defaults whatever the file says
      */
-    public record RakNet(boolean enabled, int port) {
+    public record RakNet(boolean enabled, int port, int maxConnectionsPerAddress, int packetLimit, boolean rateLimiting) {
     }
 
     /**
@@ -51,6 +54,14 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
               enabled: false
               # The UDP port. 0 means the listen port. It must differ from nethernet's port while both are on.
               port: 0
+              # How many RakNet connections one IP may have open at once. RakNet does not let in more, and logs the IP.
+              # Each IP may also open only 3 new connections in 4 seconds; a client over that can try again after them.
+              max_connections_per_address: 10
+              # How many UDP packets one client, an IP and port, may send to RakNet in each 10 milliseconds. A client that sends more is ignored for 10 seconds.
+              # Clients send packets in bursts, so a low limit cuts off normal players.
+              packet_limit: 120
+              # Whether the two limits above apply. Turn it off when players reach RakNet through a proxy, which gives them all its IP.
+              rate_limiting: true
             # NetherNet, which the game tries first when it joins by address.
             nethernet:
               enabled: true
@@ -100,7 +111,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
     // The keys each section of the file takes, by the section's name; "" is the top of the file.
     private static final Map<String, List<String>> SECTIONS = Map.of(
             "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit"),
-            "raknet", List.of("enabled", "port"),
+            "raknet", List.of("enabled", "port", "max_connections_per_address", "packet_limit", "rate_limiting"),
             "nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery"),
             "nethernet.https", List.of("certificate", "private_key", "password"));
 
@@ -241,7 +252,22 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
     }
 
     private static RakNet rakNet(Section values, int listenPort) {
-        return new RakNet(values.get("enabled", Boolean.class, false), values.port("port", listenPort));
+        boolean enabled = values.get("enabled", Boolean.class, false);
+        int port = values.port("port", listenPort);
+        boolean rateLimiting = values.get("rate_limiting", Boolean.class, true);
+        // The limits are unused while rate_limiting is false, so they are not checked then either.
+        if (!rateLimiting) {
+            return new RakNet(enabled, port, 10, 120, false);
+        }
+        return new RakNet(enabled, port, rakNetLimit(values, "max_connections_per_address", 10), rakNetLimit(values, "packet_limit", 120), true);
+    }
+
+    // 0 is turned away with its own error, since someone who sets it most likely wants the limit off, which rate_limiting does.
+    private static int rakNetLimit(Section values, String key, int fallback) {
+        if (Integer.valueOf(0).equals(values.value(key))) {
+            throw new IllegalArgumentException(values.name(key) + " must be at least 1; set " + values.name("rate_limiting") + " to false to turn RakNet's limits off");
+        }
+        return values.integer(key, fallback, 1, Integer.MAX_VALUE);
     }
 
     private static NetherNet netherNet(Section values, int listenPort, Path folder) {

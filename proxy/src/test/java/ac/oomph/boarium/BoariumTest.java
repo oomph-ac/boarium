@@ -33,6 +33,7 @@ import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -167,6 +168,28 @@ class BoariumTest {
         try {
             assertNull(boarium.netherNetAddress());
             assertTrue(Files.notExists(this.folder.resolve("nethernet")));
+        } finally {
+            boarium.close();
+            server.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
+    @Test
+    void takesRakNetsLimitsFromTheConfig() throws Exception {
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        Boarium boarium = this.start(BoariumConfig.parse(new StringReader(config(server, "listen: 127.0.0.1:%d\nraknet:\n  enabled: true\n  max_connections_per_address: 1\nnethernet:\n  enabled: false\n".formatted(freePort())))), null);
+        try {
+            TestClient first = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
+            first.connect(group, boarium.rakNetAddress());
+            first.loginDone.get(10, TimeUnit.SECONDS);
+
+            TestClient second = new TestClient("Second", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
+            second.maxConnectionAttempts = 1;
+            second.connect(group, boarium.rakNetAddress());
+            String error = assertThrows(ExecutionException.class, () -> second.loginDone.get(10, TimeUnit.SECONDS)).getCause().getMessage();
+            assertTrue(error.contains("Already connected"), error);
         } finally {
             boarium.close();
             server.close();

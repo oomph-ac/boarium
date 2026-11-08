@@ -79,6 +79,8 @@ public final class TestClient {
     public final CompletableFuture<Void> loginDone = new CompletableFuture<>();
     // The client data's DeviceOS: 7 is Windows.
     public int deviceOs = 7;
+    // How many times RakNet asks to connect before it gives up on a server that refuses it; 10 is the RakNet library's default.
+    public int maxConnectionAttempts = 10;
 
     // Knobs for tests of logins the proxy must turn away.
     KeyPair chainSigner = this.key;
@@ -146,6 +148,7 @@ public final class TestClient {
                 .channelFactory(RakChannelFactory.client(NioDatagramChannel.class))
                 // Bedrock clients use RakNet protocol 11.
                 .option(RakChannelOption.RAK_PROTOCOL_VERSION, 11)
+                .option(RakChannelOption.RAK_MAX_CONNECTION_ATTEMPTS, this.maxConnectionAttempts)
                 .handler(new BedrockClientInitializer() {
                     @Override
                     protected void initSession(BedrockClientSession session) {
