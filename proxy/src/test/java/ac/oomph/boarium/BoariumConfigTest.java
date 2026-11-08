@@ -28,7 +28,7 @@ class BoariumConfigTest {
 
         assertTrue(Files.exists(path));
         assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132, 10, 120, true), new BoariumConfig.NetherNet(true, 19132, 19132, null, List.of(), true), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
-                "boarium closed.", true, false, 1), config);
+                "boarium closed.", true, true, 1), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -56,12 +56,12 @@ class BoariumConfigTest {
                 latency_interval: 1000
                 shutdown_message: bye
                 boar_enabled: false
-                boar_mitigations: true
+                boar_mitigations: false
                 boar_alert_limit: 0
                 """));
 
         assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001, 2, 500, true), new BoariumConfig.NetherNet(false, 19002, 19003, null, List.of(), true), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
-                false, true, 0), config);
+                false, false, 0), config);
     }
 
     @Test

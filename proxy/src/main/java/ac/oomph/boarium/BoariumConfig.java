@@ -102,8 +102,8 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             # Whether the Boar anticheat checks players. Boar keeps its own config in boar/config.yml, next to this file.
             boar_enabled: true
             # Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them.
-            # Leave it off until Boar has been tested on a real network.
-            boar_mitigations: false
+            # When it is off, Boar only logs what it finds.
+            boar_mitigations: true
             # How many of Boar's flags a second, for each player and check, boarium logs to its console. 0 logs every flag.
             boar_alert_limit: 1
             """;
@@ -205,7 +205,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 Duration.ofMillis(values.integer("latency_interval", 3000, 1, Integer.MAX_VALUE)),
                 values.get("shutdown_message", String.class, "boarium closed."),
                 values.get("boar_enabled", Boolean.class, true),
-                values.get("boar_mitigations", Boolean.class, false),
+                values.get("boar_mitigations", Boolean.class, true),
                 values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE));
     }
 

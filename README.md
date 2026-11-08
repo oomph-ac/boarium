@@ -4,7 +4,7 @@ boarium is a Minecraft: Bedrock Edition proxy built on the design of [Spectrum](
 
 Clients join boarium over NetherNet, and over RakNet when it is turned on. boarium talks to downstream servers with the Spectrum protocol as [oomph-ac/spectrum-internal](https://github.com/oomph-ac/spectrum-internal) speaks it, so servers that run [spectrum-pm-internal](https://github.com/oomph-ac/spectrum-pm-internal) or [spectrum-df-internal](https://github.com/oomph-ac/spectrum-df-internal) can sit behind it. The public spectrum-pm and spectrum-df use an older frame format and do not work with boarium.
 
-boarium is in early development. It logs players in, passes packets between them and their server, and moves them between servers, as Spectrum does. Boar checks players, and changes what they do only when `boar_mitigations` is on.
+boarium is in early development. It logs players in, passes packets between them and their server, and moves them between servers, as Spectrum does. Boar checks players and, with `boar_mitigations` on as it is by default, corrects what they do on the server's side.
 
 To put boarium in front of a Dragonfly server, follow [SETUP.md](SETUP.md).
 
@@ -49,7 +49,7 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `latency_interval` | `3000` | How often, in milliseconds, each player's latency is sent to its server. |
 | `shutdown_message` | `boarium closed.` | What players see when boarium shuts down. |
 | `boar_enabled` | `true` | Whether the Boar anticheat checks players. |
-| `boar_mitigations` | `false` | Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them. Leave it off until Boar has been tested on a real network. |
+| `boar_mitigations` | `true` | Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them. When it is off, Boar only logs what it finds. |
 | `boar_alert_limit` | `1` | How many of Boar's flags a second, for each player and check, boarium logs to its console. The next line after some were held back ends with `(+N more)`. 0 logs every flag. Boar still counts and acts on every flag. |
 
 boarium does not start when its config has a key it does not take, such as a misspelt one, and names that key.

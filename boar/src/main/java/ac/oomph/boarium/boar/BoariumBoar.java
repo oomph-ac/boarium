@@ -82,7 +82,7 @@ public final class BoariumBoar {
         for (int protocol : CHECKED_PROTOCOLS) {
             processors.put(protocol, new BoarProcessor(players, BedrockVersions.codec(protocol)));
         }
-        // Boar's default disable-mitigations: false disagrees with boarium's default, so only a true is worth a warning.
+        // disable-mitigations: false is Boar's default, so only a true is the owner's choice and worth a warning.
         if (Boar.getConfig().disableMitigations() && mitigations) {
             LOG.warn("Boar's config says disable-mitigations: true, but boarium's boar_mitigations: true decides");
         }

@@ -9,7 +9,7 @@ Bedrock players ──NetherNet (TCP + UDP 19132)──▶ boarium ──Spectru
                  ──RakNet (UDP, if turned on)──▶
 ```
 
-boarium is in early development. Boar only logs what it finds, unless `boar_mitigations` is turned on. So while you try it, Boar cannot kick a player or set one back.
+boarium is in early development. By default Boar acts on what it finds, on the server's side: it can set a player back, undo what they did, or kick them. To have it only log what it finds, set `boar_mitigations: false`.
 
 ## Before you start
 
@@ -154,7 +154,7 @@ listen: ":19132"          # where players connect; an empty host means every add
 server: 127.0.0.1:19133   # the Dragonfly server from Step 2
 xbox_auth: true           # players must sign in with Xbox Live
 motd: My server           # the name in the server list
-boar_mitigations: false   # Boar only logs; turn this on once you trust its results
+boar_mitigations: true    # Boar acts on what it finds; false makes it only log
 ```
 
 Keep `xbox_auth: true` with Dragonfly. spectrum-df gives each player an entity ID made from their Xbox ID. Players without Xbox Live have none, so they would all get the same ID.
@@ -203,7 +203,7 @@ With Dragonfly running, start boarium from its `run` folder:
 
 - `NetherNet signaling on TCP *:19132 over HTTP, NetherNet on UDP *:19132`
 - `NetherNet advertises …`
-- `Boar started with its config in …, mitigations off`
+- `Boar started with its config in …, mitigations on`
 - `started, sending players to 127.0.0.1:19133, for Bedrock 26.0, …, 26.60`
 - `RakNet on UDP *:19134`, if you turned RakNet on
 
@@ -219,7 +219,7 @@ In Minecraft 26.60, add a server with your machine's address and port 19132, and
 
 **Check:** boarium logs `<name> joined 127.0.0.1:19133`, and Dragonfly logs `Player joined.`
 
-boarium logs each of Boar's flags as one line, such as `Boar > Steve failed Bad Packet (B) x1 … [mitigations off]`. It logs at most one a second for each player and check (`boar_alert_limit`).
+boarium logs each of Boar's flags as one line, such as `Boar > Steve failed Bad Packet (B) x1 … [mitigations on]`. It logs at most one a second for each player and check (`boar_alert_limit`).
 
 ## Troubleshooting
 
@@ -233,6 +233,7 @@ boarium logs each of Boar's flags as one line, such as `Boar > Steve failed Bad 
 | Players are asked to trust the server after every restart | `run/nethernet/identity.pem` was lost. Keep it with the config. |
 | `WARN Send failed, errno=65` and `WARN STUN message send failed`, at start or at a join | Harmless. NetherNet's library logs them when it cannot reach an address, such as over IPv6. |
 | `BedrockPalette - StartGame gives components or permutations to vanilla blocks, 98 of them …` at a join | Expected with Dragonfly. Boar uses the vanilla shapes for those blocks. |
+| A fair player is set back or kicked | Boar got them wrong. Set `boar_mitigations: false` so it only logs, and open an issue on [oomph-ac/boarium](https://github.com/oomph-ac/boarium/issues) with the flag lines for that player. |
 | A RakNet player cannot connect, and boarium logs `RakNet turned away …` | RakNet's limits for each IP; players behind one IP share them. See `raknet.*` in the README. |
 
 ## Checklist for AI agents
@@ -243,7 +244,7 @@ Run these in order. Stop at the first check that fails, and report the exact log
 2. Run `git clone https://github.com/oomph-ac/boarium.git && cd boarium && git checkout dev && ./gradlew :app:installDist`. Check that `app/build/install/boarium/bin/boarium` exists.
 3. Next to the `boarium` folder, not inside it, make `myserver`. In it run `go mod init example.com/myserver`, `go mod edit -replace github.com/cooldogedev/spectrum-df=github.com/oomph-ac/spectrum-df-internal@main` and `go get github.com/df-mc/dragonfly@v0.11.6`. Write `main.go` from Step 2 exactly. Then run `go mod tidy` and `go build -o myserver .`.
 4. Start `./myserver` in the background and keep its log. Check the log says `Dragonfly server started.` and that TCP `127.0.0.1:19133` listens. Never expose that port publicly.
-5. In `boarium/run`, write `config.yml` from Step 3, with `motd` and anything else the owner asked for. Keep `server: 127.0.0.1:19133`, `xbox_auth: true` and `boar_mitigations: false`.
+5. In `boarium/run`, write `config.yml` from Step 3, with `motd` and anything else the owner asked for. Keep `server: 127.0.0.1:19133` and `xbox_auth: true`. Leave `boar_mitigations` on unless the owner asked for Boar to only log.
 6. Ask the owner to open and forward TCP and UDP 19132. You cannot check from the inside that players outside can reach it.
 7. Start boarium in the background from `boarium/run` and keep its log. Check the log for `NetherNet signaling on TCP`, `Boar started` and `started, sending players to 127.0.0.1:19133`. To stop it later, send SIGTERM (`kill <pid>`); a background job ignores Ctrl+C.
 8. Tell the owner to join with a 26.60 client on port 19132 and accept the trust prompt, and to back up `run/config.yml` and `run/nethernet/identity.pem`.

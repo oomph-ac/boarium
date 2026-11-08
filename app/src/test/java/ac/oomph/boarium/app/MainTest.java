@@ -65,7 +65,7 @@ class MainTest {
         int netherNetPort = freePort();
         Process process = this.start(dir, server.address(), "", RAKNET_ON + "nethernet:\n  port: " + netherNetPort + "\n");
         try {
-            this.awaitLine("Boar started with its config in " + dir.resolve("boar") + ", mitigations off");
+            this.awaitLine("Boar started with its config in " + dir.resolve("boar") + ", mitigations on");
             Matcher rakNet = this.awaitMatch(RAKNET);
             Matcher netherNet = this.awaitMatch(NETHERNET);
             assertEquals(rakNet.group(1), netherNet.group(1));
