@@ -25,7 +25,7 @@ import java.util.Set;
  * A port of 0 in the file means the listen port, and is read as that port here, so a port is 0 only when the listen port is.
  */
 public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
-                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations) {
+                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit) {
 
     /**
      * @param port the UDP port
@@ -93,6 +93,8 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             # Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them.
             # Leave it off until Boar has been tested on a real network.
             boar_mitigations: false
+            # How many of Boar's flags a second, for each player and check, boarium logs to its console. 0 logs every flag.
+            boar_alert_limit: 1
             """;
 
     // Keys of an older layout, each with the key that took its place.
@@ -170,7 +172,8 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 Duration.ofMillis(values.integer("latency_interval", 3000, 1, Integer.MAX_VALUE)),
                 values.get("shutdown_message", String.class, "boarium closed."),
                 values.get("boar_enabled", Boolean.class, true),
-                values.get("boar_mitigations", Boolean.class, false));
+                values.get("boar_mitigations", Boolean.class, false),
+                values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE));
     }
 
     private static RakNet rakNet(Section values, int listenPort) {

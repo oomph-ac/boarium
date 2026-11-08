@@ -47,11 +47,16 @@ public final class BoariumBoar {
      * Starts Boar, which can run once in a JVM, with its config in {@code dataFolder}.
      *
      * @param mitigations whether Boar may change what players do, such as setting them back
+     * @param alertLimit  how many of Boar's flags a second for each player and check go to the console, or 0 for all
      * @return the processors for {@link ac.oomph.boarium.session.SessionSettings}, which give each player to Boar
+     * @throws IllegalArgumentException if alertLimit is negative
      * @throws IllegalStateException if Boar has started already
      * @throws IOException if Boar's config cannot be read, or its default cannot be written
      */
-    public static synchronized Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations) throws IOException {
+    public static synchronized Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations, int alertLimit) throws IOException {
+        if (alertLimit < 0) {
+            throw new IllegalArgumentException("alertLimit must be 0 or more, got " + alertLimit);
+        }
         if (started) {
             throw new IllegalStateException("Boar has started already");
         }
@@ -65,8 +70,10 @@ public final class BoariumBoar {
             BedrockItems.forProtocol(protocol);
         }
         started = true;
-        BoariumPlayerManager players = new BoariumPlayerManager(mitigations);
+        BoariumPlayerManager players = new BoariumPlayerManager(mitigations, alertLimit);
         Boar.getInstance().init(new BoariumPlatform(dataFolder, players));
+        // Boar's own alerts reach only those who turn them on with a command, and boarium has no commands.
+        Boar.getInstance().getViolationRegistry().register(players.alerts);
         BoarDefaultChecks.registerAll(Boar.getInstance().getCheckRegistry());
         BoarDefaultAcknowledgments.registerAll(Boar.getInstance().getAcknowledgmentRegistry());
         BoarDefaultPacketListeners.registerAll();

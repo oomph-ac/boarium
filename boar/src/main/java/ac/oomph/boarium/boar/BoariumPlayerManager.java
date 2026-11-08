@@ -54,9 +54,11 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
     private final Map<Session, BlockMappingInfo> adding = new ConcurrentHashMap<>();
     // Not final, since the tests share one Boar and change it.
     volatile boolean mitigations;
+    final ConsoleAlerts alerts;
 
-    BoariumPlayerManager(boolean mitigations) {
+    BoariumPlayerManager(boolean mitigations, int alertLimit) {
         this.mitigations = mitigations;
+        this.alerts = new ConsoleAlerts(alertLimit);
     }
 
     // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs, or returns null when Boar does not know them.
@@ -241,7 +243,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         // Boar asks this when the client stops answering its NetworkStackLatency packets; the client's answers sent before it spawned never reach Boar, so a slow login would look like that.
         @Override
         public void disconnectFromServer(String reason) {
-            LOG.warn("Boar would have sent {} off its server: {}", this.name(), reason);
+            LOG.warn("Boar would have sent {} off its server: {}", this.name(), ConsoleAlerts.plain(reason));
         }
 
         @Override

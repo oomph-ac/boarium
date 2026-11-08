@@ -45,4 +45,10 @@ class BoariumBoarTest {
 
         assertEquals("Boar's data folder " + folder + " is a file", assertThrows(IOException.class, () -> BoariumBoar.readConfig(folder)).getMessage());
     }
+
+    // Checked before Boar starts, which it can only do once in a JVM.
+    @Test
+    void turnsAwayANegativeAlertLimit(@TempDir Path dir) {
+        assertEquals("alertLimit must be 0 or more, got -1", assertThrows(IllegalArgumentException.class, () -> BoariumBoar.start(dir, false, -1)).getMessage());
+    }
 }

@@ -45,9 +45,12 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `shutdown_message` | `boarium closed.` | What players see when boarium shuts down. |
 | `boar_enabled` | `true` | Whether the Boar anticheat checks players. |
 | `boar_mitigations` | `false` | Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them. Leave it off until Boar has been tested on a real network. |
+| `boar_alert_limit` | `1` | How many of Boar's flags a second, for each player and check, boarium logs to its console. The next line after some were held back ends with `(+N more)`. 0 logs every flag. Boar still counts and acts on every flag. |
 
 With `listen` on one address, the WebRTC library under NetherNet logs a few warnings at each NetherNet join, such as `juice: Send failed, errno=65` and `juice: STUN message send failed`. The join still works.
 
 While NetherNet is on, boarium keeps the key that the game trusts the server by in `nethernet/identity.pem`, next to boarium's config, and creates it on its first start. Back it up with the config: if it is deleted, every player has to confirm the server again. The file cannot be a symbolic link, as some secret mounts make it, so copy it in. NetherNet does not start if the file cannot be read.
 
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.
+
+boarium logs Boar's flags to its console, up to `boar_alert_limit`, in one line each: Boar's alert, with the `prefix` from Boar's config, and whether `boar_mitigations` lets Boar act on the player. A movement trace that Boar adds with `debug-mode` on goes to the DEBUG level, which boarium shows when started with `JAVA_OPTS=-Dorg.slf4j.simpleLogger.log.Boar=debug`.

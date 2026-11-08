@@ -200,6 +200,7 @@ final class BoarProcessor implements Processor {
     public void disconnect(Session session) {
         BoarPlayer player = this.players.remove(session);
         if (player != null) {
+            this.players.alerts.forget(player);
             if (player.future != null) {
                 player.future.cancel(false);
             }

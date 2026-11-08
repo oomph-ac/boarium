@@ -1,6 +1,7 @@
 package ac.oomph.boarium.session;
 
 import ac.boar.anticheat.Boar;
+import ac.boar.anticheat.check.api.BaseCheck;
 import ac.boar.anticheat.compensated.CompensatedInventory;
 import ac.boar.anticheat.compensated.cache.entity.EntityCache;
 import ac.boar.anticheat.data.ItemUseTracker;
@@ -138,6 +139,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -299,6 +301,89 @@ class BoarSessionTest {
 
         assertTrue(this.client.received.stream().noneMatch(packet -> packet instanceof DisconnectPacket));
         this.assertNothingFailed();
+    }
+
+    // A pitch past straight down fails Boar's Bad Packet B.
+    @Test
+    void logsAFlagToTheConsole() throws Exception {
+        this.spawn();
+        this.sendPitch(100);
+
+        String flag = " INFO Boar - Boar > Tester failed Bad Packet (B) x1 claimedPitch=100.0, wrappedPitch=90.0 [mitigations off]" + System.lineSeparator();
+        String log = this.awaitLog(flag);
+        assertEquals(1, occurrences(log, flag), log);
+        assertFalse(log.contains("§"), log);
+        this.assertNothingFailed();
+    }
+
+    // TestBoar's boar_alert_limit is 1.
+    @Test
+    void holdsBackFlagsPastTheAlertLimitAndCountsThemWhenThePlayerLeaves() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        List<String> flags = this.violationsWhile(player, () -> {
+            for (int i = 0; i < 5; i++) {
+                this.sendPitch(100);
+            }
+            awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= 5);
+            return null;
+        });
+        assertEquals(5, flags.size(), flags.toString());
+        Thread.sleep(1100);
+        this.sendPitch(100);
+
+        String next = " INFO Boar - Boar > Tester failed Bad Packet (B) x6 claimedPitch=100.0, wrappedPitch=90.0 [mitigations off] (+4 more)" + System.lineSeparator();
+        String log = this.awaitLog(next);
+        assertEquals(2, occurrences(log, "failed Bad Packet (B)"), log);
+        assertTrue(log.contains(" x1 claimedPitch=100.0, wrappedPitch=90.0 [mitigations off]" + System.lineSeparator()), log);
+        assertEquals(1, occurrences(log, next), log);
+
+        // 3 more in the same second, which only the player's leaving reports
+        for (int i = 0; i < 3; i++) {
+            this.sendPitch(100);
+        }
+        awaitOnLoop(session, () -> RECORDER.received.stream().filter(PlayerAuthInputPacket.class::equals).count() >= 9);
+        assertTrue(TestBoar.tracksAlertsOf(player));
+        this.client.session.get().disconnect();
+        String last = " INFO Boar - Boar > Tester failed Bad Packet (B) (+3 more)" + System.lineSeparator();
+        log = this.awaitLog(last);
+        assertEquals(3, occurrences(log, "failed Bad Packet (B)"), log);
+        assertFalse(TestBoar.tracksAlertsOf(player));
+        this.assertNothingFailed();
+    }
+
+    // A flag whose details have more than one line.
+    @Test
+    void logsTheLinesAfterTheFirstOfAFlagAtDebug() throws Exception {
+        Session session = this.spawn();
+        BoarPlayer player = Boar.getInstance().getPlayerManager().get(session);
+        new BaseCheck(player, "MovementCorrection", "", false).fail("o: 0.5\npath: §cprediction\ntick=3");
+
+        String n = System.lineSeparator();
+        String log = this.awaitLog(" DEBUG Boar - path: prediction" + n + "tick=3" + n);
+        assertEquals(1, occurrences(log, " INFO Boar - Boar > Tester failed MovementCorrection x1 o: 0.5 [mitigations off]" + n), log);
+        this.assertNothingFailed();
+    }
+
+    private void sendPitch(float pitch) throws Exception {
+        PlayerAuthInputPacket input = authInput();
+        input.setRotation(Vector3f.from(pitch, 0, 0));
+        this.client.session.get().sendPacket(input);
+    }
+
+    // The log once it has this text, or after 10 seconds.
+    private String awaitLog(String text) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (!this.logged.toString(StandardCharsets.UTF_8).contains(text) && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        String log = this.logged.toString(StandardCharsets.UTF_8);
+        assertTrue(log.contains(text), log);
+        return log;
+    }
+
+    private static int occurrences(String text, String part) {
+        return text.split(Pattern.quote(part), -1).length - 1;
     }
 
     @Test

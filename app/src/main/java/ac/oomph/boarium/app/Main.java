@@ -81,7 +81,7 @@ public final class Main {
             return SessionSettings.DEFAULT.processors();
         }
         Path dataFolder = configPath.toAbsolutePath().resolveSibling("boar");
-        Function<ClientLogin, Processor> processors = BoariumBoar.start(dataFolder, config.boarMitigations());
+        Function<ClientLogin, Processor> processors = BoariumBoar.start(dataFolder, config.boarMitigations(), config.boarAlertLimit());
         LOG.info("Boar started with its config in {}, mitigations {}", dataFolder, config.boarMitigations() ? "on" : "off");
         return processors;
     }

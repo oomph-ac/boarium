@@ -30,6 +30,11 @@ public final class TestBoar {
         ((BoariumPlayerManager) Boar.getInstance().getPlayerManager()).mitigations = on;
     }
 
+    // Whether the console's limit on Boar's flags still keeps a count for this player.
+    public static boolean tracksAlertsOf(BoarPlayer player) {
+        return ((BoariumPlayerManager) Boar.getInstance().getPlayerManager()).alerts.limiter.tracks(player);
+    }
+
     // Lets Boar warn again about players on a protocol it does not check.
     public static void forgetWarnings() {
         BoariumBoar.WARNED_PROTOCOLS.clear();
@@ -37,7 +42,7 @@ public final class TestBoar {
 
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {
         if (processors == null) {
-            processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false);
+            processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false, 1);
             Boar.getConfig().setStaticSeatIdentifiers(List.of(STATIC_SEAT));
         }
         return processors;

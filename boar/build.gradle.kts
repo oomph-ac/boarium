@@ -29,3 +29,8 @@ tasks.register<JavaExec>("generateBedrockBlockUnion") {
 tasks.named("processResources") {
     mustRunAfter(":blockdata:generateBedrockBlocks")
 }
+
+// Boar's flags log the lines of their details after the first at DEBUG, which the tests check.
+tasks.test {
+    systemProperty("org.slf4j.simpleLogger.log.Boar", "debug")
+}

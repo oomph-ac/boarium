@@ -28,7 +28,7 @@ class BoariumConfigTest {
 
         assertTrue(Files.exists(path));
         assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132), new BoariumConfig.NetherNet(true, 19132, 19132, null, List.of(), true), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
-                "boarium closed.", true, false), config);
+                "boarium closed.", true, false, 1), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -54,10 +54,11 @@ class BoariumConfigTest {
                 shutdown_message: bye
                 boar_enabled: false
                 boar_mitigations: true
+                boar_alert_limit: 0
                 """));
 
         assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001), new BoariumConfig.NetherNet(false, 19002, 19003, null, List.of(), true), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
-                false, true), config);
+                false, true, 0), config);
     }
 
     @Test
@@ -229,6 +230,8 @@ class BoariumConfigTest {
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: 1")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\"")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_mitigations: sometimes")));
+        assertEquals("boar_alert_limit must be a whole number from 0 to 2147483647, got -1", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_alert_limit: -1"))).getMessage());
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_alert_limit: 1.5")));
         assertEquals("nethernet.https.private_key and nethernet.https.password need nethernet.https.certificate", assertThrows(IllegalArgumentException.class, () -> https("private_key: key.pem")).getMessage());
         assertThrows(IllegalArgumentException.class, () -> https("password: secret"));
         assertEquals("nethernet.https.certificate must be a string, got 5", assertThrows(IllegalArgumentException.class, () -> https("certificate: 5")).getMessage());

@@ -12,8 +12,8 @@ class BoariumPlayerManagerTest {
 
     @Test
     void disablesMitigationsUnlessTheyAreOn() {
-        assertTrue(new BoariumPlayerManager(false).shouldDisableMitigations(null));
-        assertFalse(new BoariumPlayerManager(true).shouldDisableMitigations(null));
+        assertTrue(new BoariumPlayerManager(false, 1).shouldDisableMitigations(null));
+        assertFalse(new BoariumPlayerManager(true, 1).shouldDisableMitigations(null));
     }
 
     // UWP (7), WIN32 (8) and XBOX (13), as in Geyser's BedrockPlatform. 0 is what a client data without a DeviceOS reads as, and -1 and 16 are outside Geyser's platforms.
