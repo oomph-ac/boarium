@@ -13,6 +13,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 import io.netty.channel.Channel;
 import io.netty.channel.EventLoopGroup;
+import io.netty.channel.local.LocalAddress;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
@@ -834,5 +835,7 @@ class SessionTest {
     void writesTheClientAddressAsHostAndPort() throws Exception {
         assertEquals("127.0.0.1:19132", Session.address(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 19132)));
         assertEquals("[0:0:0:0:0:0:0:1]:19132", Session.address(new InetSocketAddress(InetAddress.getByName("::1"), 19132)));
+        assertEquals("0.0.0.0:0", Session.address(InetSocketAddress.createUnresolved("player.example", 19132)));
+        assertEquals("0.0.0.0:0", Session.address(new LocalAddress("player")));
     }
 }

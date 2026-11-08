@@ -21,7 +21,7 @@ class BoariumConfigTest {
         BoariumConfig config = BoariumConfig.load(path);
 
         assertTrue(Files.exists(path));
-        assertEquals(new BoariumConfig(":19132", "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed.", true, false), config);
+        assertEquals(new BoariumConfig(":19132", true, "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed.", true, false), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -30,6 +30,7 @@ class BoariumConfigTest {
     void readsEachKey() {
         BoariumConfig config = BoariumConfig.parse(new StringReader("""
                 listen: 127.0.0.1:19000
+                nethernet: false
                 server: lobby:19133
                 fallback_server: hub:19133
                 xbox_auth: false
@@ -42,7 +43,7 @@ class BoariumConfigTest {
                 boar_mitigations: true
                 """));
 
-        assertEquals(new BoariumConfig("127.0.0.1:19000", "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye", false, true), config);
+        assertEquals(new BoariumConfig("127.0.0.1:19000", false, "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye", false, true), config);
     }
 
     @Test

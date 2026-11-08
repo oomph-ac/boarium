@@ -40,6 +40,7 @@ import org.slf4j.LoggerFactory;
 
 import java.net.Inet6Address;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -107,7 +108,7 @@ public final class Session {
         this.serverHelper = this.codec.createHelper();
         this.serverHelper.setEncodingSettings(EncodingSettings.CLIENT);
         this.serverHelper.setBlockDefinitions(Definitions.ANY_BLOCK);
-        this.clientAddr = address((InetSocketAddress) this.session.getPeer().getChannel().remoteAddress());
+        this.clientAddr = address(this.session.getPeer().getChannel().remoteAddress());
         this.clientData = SpectrumLoginData.clientData(client.clientData());
         this.identityData = SpectrumLoginData.identity(client.identity());
     }
@@ -609,10 +610,13 @@ public final class Session {
         return this.cache;
     }
 
-    // host:port, with brackets around an IPv6 host.
-    static String address(InetSocketAddress address) {
-        String host = address.getAddress().getHostAddress();
-        return (address.getAddress() instanceof Inet6Address ? "[" + host + "]" : host) + ":" + address.getPort();
+    // host:port, with brackets around an IPv6 host, or 0.0.0.0:0 for an address without an IP, since Spectrum reads it as a UDP address.
+    static String address(SocketAddress address) {
+        if (!(address instanceof InetSocketAddress inet) || inet.getAddress() == null) {
+            return "0.0.0.0:0";
+        }
+        String host = inet.getAddress().getHostAddress();
+        return (inet.getAddress() instanceof Inet6Address ? "[" + host + "]" : host) + ":" + inet.getPort();
     }
 
     /**

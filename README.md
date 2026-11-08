@@ -29,6 +29,7 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | Key | Default | Meaning |
 |---|---|---|
 | `listen` | `":19132"` | Where players connect. An empty host means every address of this machine; put an IPv6 address in quotes. |
+| `nethernet` | `true` | Whether players can also join over NetherNet, which the game tries before RakNet when it joins by address. It takes the TCP side of the listen port, and each NetherNet player another UDP port, so turn it off when only the listen port is open. |
 | `server` | `127.0.0.1:19133` | The Spectrum server players join first. |
 | `fallback_server` | empty | Where players go when their server is lost. Empty for none. |
 | `xbox_auth` | `true` | Whether players must sign in with Xbox Live. |

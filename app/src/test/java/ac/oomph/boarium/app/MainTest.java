@@ -18,7 +18,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.ConnectException;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +33,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 // The tests run the installed start script, which is a shell script.
@@ -50,6 +53,7 @@ class MainTest {
         Process process = this.start(dir, server.address());
         try {
             this.awaitLine("Boar started with its config in " + dir.resolve("boar") + ", mitigations off");
+            this.awaitLine("players can also join over NetherNet");
             Matcher listening = LISTENING.matcher(this.awaitLine("listening on "));
             assertTrue(listening.find());
             assertTrue(Files.exists(dir.resolve("boar").resolve("config.yml")));
@@ -99,14 +103,47 @@ class MainTest {
         }
     }
 
-    // Starts the installed boarium in dir, on a free loopback port, with Boar on.
+    // A NetherNet native library that cannot load leaves boarium taking players over RakNet alone.
+    @Test
+    void takesRakNetPlayersWhenNetherNetCannotLoad(@TempDir Path dir) throws Exception {
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        // libdatachannel loads its native library from the file this property names, when it is set.
+        Process process = this.start(dir, server.address(), "-Dlibdatachannel.native.datachannel-java.path=" + dir.resolve("missing.dylib"));
+        try {
+            String error = this.awaitLine("NetherNet could not start");
+            assertTrue(error.contains(" ERROR ") && error.contains("UnsatisfiedLinkError"), error);
+            Matcher listening = LISTENING.matcher(this.awaitLine("listening on "));
+            assertTrue(listening.find());
+            InetSocketAddress address = new InetSocketAddress("127.0.0.1", Integer.parseInt(listening.group(1)));
+            try (Socket socket = new Socket()) {
+                assertThrows(ConnectException.class, () -> socket.connect(address, 5000));
+            }
+
+            TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
+            client.connect(group, address);
+            client.loginDone.get(10, TimeUnit.SECONDS);
+            assertEquals(1, this.output.stream().filter(line -> line.contains(" ERROR ")).count(), String.join("\n", this.output));
+        } finally {
+            process.destroyForcibly();
+            server.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
     private Process start(Path dir, String server) throws Exception {
+        return this.start(dir, server, "");
+    }
+
+    // Starts the installed boarium in dir, on a free loopback port, with Boar on and javaOpts given to its JVM.
+    private Process start(Path dir, String server, String javaOpts) throws Exception {
         Path config = dir.resolve("config.yml");
         Files.writeString(config, "listen: 127.0.0.1:0\nserver: " + server + "\nxbox_auth: false\n");
         ProcessBuilder builder = new ProcessBuilder(Path.of(System.getProperty("boarium.install"), "bin", "boarium").toString(), config.toString())
                 .directory(dir.toFile())
                 .redirectErrorStream(true);
         builder.environment().put("JAVA_HOME", System.getProperty("java.home"));
+        builder.environment().put("JAVA_OPTS", javaOpts);
         Process process = builder.start();
         this.reader = new Thread(() -> {
             try (BufferedReader in = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {

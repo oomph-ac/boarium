@@ -16,12 +16,14 @@ import java.util.Map;
 /**
  * boarium's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
  */
-public record BoariumConfig(String listen, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
+public record BoariumConfig(String listen, boolean netherNet, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
                             String shutdownMessage, boolean boarEnabled, boolean boarMitigations) {
 
     static final String DEFAULT_FILE = """
             # Where players connect to boarium. An empty host means every address of this machine; put an IPv6 address in quotes.
             listen: ":19132"
+            # Whether players can also join over NetherNet, which the game tries before RakNet when it joins by address. It takes the TCP side of the listen port, and each NetherNet player another UDP port, so turn it off when only the listen port is open.
+            nethernet: true
             # The Spectrum server players join first.
             server: 127.0.0.1:19133
             # Where players go when their server is lost. Leave it empty for none.
@@ -71,6 +73,7 @@ public record BoariumConfig(String listen, String server, String fallbackServer,
         }
         return new BoariumConfig(
                 listen,
+                get(values, "nethernet", Boolean.class, true),
                 server,
                 fallback.isEmpty() ? null : fallback,
                 get(values, "xbox_auth", Boolean.class, true),

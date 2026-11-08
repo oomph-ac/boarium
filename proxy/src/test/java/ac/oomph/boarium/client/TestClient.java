@@ -8,7 +8,10 @@ import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
 import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.signaling.HttpSignalingSettings;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetClientSignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetDiscoverySignaling;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPClientSignaling;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
 import org.cloudburstmc.netty.channel.raknet.config.RakChannelOption;
 import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
@@ -47,6 +50,7 @@ import org.jose4j.json.JsonUtil;
 import org.jose4j.jws.AlgorithmIdentifiers;
 import org.jose4j.jws.JsonWebSignature;
 import org.jose4j.jwx.HeaderParameterNames;
+import org.jose4j.lang.JoseException;
 
 import java.net.InetSocketAddress;
 import java.security.KeyPair;
@@ -161,10 +165,26 @@ public final class TestClient {
      * {@code signalingIdentity} is the identity the offer carries, or null for an offer without one.
      */
     public Channel connectNetherNet(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity, TokenTrust serverTrust) {
+        return this.connectNetherNet(group, address, signalingIdentity, serverTrust, new NetherNetDiscoverySignaling());
+    }
+
+    /**
+     * Joins by address over NetherNet as the game does, through plain HTTP signaling on the address's TCP port, with an offer that carries the client's own key.
+     */
+    public Channel joinByAddress(EventLoopGroup group, InetSocketAddress address) throws JoseException {
+        return this.joinByAddress(group, address, new OperatorIdentity(this.key.getPrivate(), this.key.getPublic(), null, "boarium-test").forPlayer("", this.name));
+    }
+
+    // signalingIdentity is null for an offer without one.
+    Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity) {
+        return this.connectNetherNet(group, address, signalingIdentity, null, new NetherNetHTTPClientSignaling(HttpSignalingSettings.DEFAULT.withScheme(HttpSignalingSettings.Scheme.HTTP)));
+    }
+
+    // A null serverTrust leaves the server's answer unchecked.
+    private Channel connectNetherNet(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity, TokenTrust serverTrust, NetherNetClientSignaling signaling) {
         Bootstrap bootstrap = new Bootstrap()
                 .group(group)
-                .channelFactory(NetherNetChannelFactory.client(new NetherNetDiscoverySignaling()))
-                .option(NetherChannelOption.NETHER_CLIENT_SERVER_TRUST, serverTrust)
+                .channelFactory(NetherNetChannelFactory.client(signaling))
                 .handler(new BedrockClientInitializer() {
                     @Override
                     protected void preInitChannel(Channel channel) {
@@ -191,6 +211,9 @@ public final class TestClient {
                 });
         if (signalingIdentity != null) {
             bootstrap.option(NetherChannelOption.NETHER_CLIENT_IDENTITY, signalingIdentity);
+        }
+        if (serverTrust != null) {
+            bootstrap.option(NetherChannelOption.NETHER_CLIENT_SERVER_TRUST, serverTrust);
         }
         return bootstrap.connect(address)
                 .addListener(connected -> {
