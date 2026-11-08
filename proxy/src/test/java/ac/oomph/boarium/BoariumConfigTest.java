@@ -123,16 +123,76 @@ class BoariumConfigTest {
     // A misspelt key would otherwise be left at its default without a word.
     @Test
     void turnsAwayUnknownKeysInTheSections() {
-        assertEquals("raknet.enable is not a key; did you mean raknet.enabled?", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  enable: true"))).getMessage());
-        assertEquals("nethernet.signalling_port is not a key; did you mean nethernet.signaling_port?",
-                assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  signalling_port: 19000"))).getMessage());
-        assertEquals("nethernet.https.cert is not a key; it takes certificate, private_key, password", assertThrows(IllegalArgumentException.class, () -> https("cert: a.pem")).getMessage());
-        assertEquals("nethernet.5 is not a key; it takes enabled, port, signaling_port, https, advertise_addresses, stun_discovery", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  5: x"))).getMessage());
-        assertEquals("nethernet.advertise_address is not a key; did you mean nethernet.advertise_addresses?",
-                assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  advertise_address: [play.example.com]"))).getMessage());
-        assertEquals("nethernet.stun_discover is not a key; did you mean nethernet.stun_discovery?", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  stun_discover: false"))).getMessage());
-        // Keys outside the sections are not checked.
-        assertEquals(":19132", BoariumConfig.parse(new StringReader("lisen: :19000")).listen());
+        assertEquals("unknown key in raknet: enable (did you mean enabled?); raknet takes: enabled, port", error("raknet:\n  enable: true"));
+        assertEquals("unknown key in nethernet: signalling_port (did you mean signaling_port?); nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  signalling_port: 19000"));
+        assertEquals("unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password", assertThrows(IllegalArgumentException.class, () -> https("cert: a.pem")).getMessage());
+        assertEquals("unknown key in nethernet: 5; nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  5: x"));
+        assertEquals("unknown key in nethernet: advertise_address (did you mean advertise_addresses?); nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  advertise_address: [play.example.com]"));
+        assertEquals("unknown key in nethernet: stun_discover (did you mean stun_discovery?); nethernet takes: enabled, port, signaling_port, https, advertise_addresses, stun_discovery", error("nethernet:\n  stun_discover: false"));
+        assertEquals("unknown keys in raknet: enable (did you mean enabled?), prot (did you mean port?); raknet takes: enabled, port", error("raknet:\n  enable: true\n  prot: 1"));
+    }
+
+    @Test
+    void turnsAwayUnknownKeysAtTheTop() {
+        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("rakent:\n  enabled: true"));
+        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("boar_mitigation: true"));
+        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("lisen: :19000\ncolour: red"));
+        // A short key is not close to another just because both are short.
+        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("mtu: 1400"));
+    }
+
+    // Every bad key in one error, from every section, with the keys of the old layout first; a bad value next to them is not read.
+    @Test
+    void namesEveryBadKeyAtOnce() {
+        String error = error("""
+                max_players: many
+                nethernet_password: a
+                lisen: :19000
+                raknet:
+                  prot: 1
+                nethernet:
+                  https:
+                    cert: a.pem
+                """);
+        assertEquals(String.join("\n",
+                "nethernet_password is now nethernet.https.password",
+                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit",
+                "unknown key in raknet: prot (did you mean port?); raknet takes: enabled, port",
+                "unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password"), error);
+    }
+
+    // YAML would keep the last of two values without a word.
+    @Test
+    void turnsAwayAKeySetTwice() {
+        assertEquals("motd is set twice; the second is on line 3", error("motd: a\nmax_players: 5\nmotd: b"));
+        assertEquals("port is set twice; the second is on line 3", error("raknet:\n  port: 19000\n  port: 19001"));
+    }
+
+    @Test
+    void takesEveryKeyOfTheDefaultFile() {
+        assertEquals(BoariumConfig.parse(new StringReader("")), BoariumConfig.parse(new StringReader(BoariumConfig.DEFAULT_FILE)));
+    }
+
+    // A read of a key its section does not take throws IllegalStateException, and every key is read when a parse succeeds.
+    @Test
+    void readsOnlyKeysItTakes() {
+        BoariumConfig.parse(new StringReader(""));
+        BoariumConfig.parse(new StringReader("""
+                listen: 127.0.0.1:19000
+                raknet:
+                  enabled: true
+                  port: 19001
+                nethernet:
+                  port: 19002
+                  signaling_port: 19003
+                  advertise_addresses: [play.example.com]
+                  stun_discovery: false
+                  https:
+                    certificate: a.pem
+                    private_key: a.key
+                    password: secret
+                fallback_server: hub:19133
+                """));
     }
 
     @Test
@@ -243,6 +303,10 @@ class BoariumConfigTest {
         assertEquals("raknet.port must be a whole number from 0 to 65535, got the text \"19264\"", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  port: \"19264\""))).getMessage());
         assertEquals("boar_enabled must be a boolean, got the text \"true\"", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\""))).getMessage());
         assertNull(BoariumConfig.parse(new StringReader("fallback_server: \"\"")).fallbackServer());
+    }
+
+    private static String error(String config) {
+        return assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader(config))).getMessage();
     }
 
     // A config with the given lines in its nethernet.https section.

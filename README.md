@@ -47,6 +47,8 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `boar_mitigations` | `false` | Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them. Leave it off until Boar has been tested on a real network. |
 | `boar_alert_limit` | `1` | How many of Boar's flags a second, for each player and check, boarium logs to its console. The next line after some were held back ends with `(+N more)`. 0 logs every flag. Boar still counts and acts on every flag. |
 
+boarium does not start when its config has a key it does not take, such as a misspelt one, and names that key.
+
 With `listen` on one address, the WebRTC library under NetherNet logs a few warnings at each NetherNet join, such as `juice: Send failed, errno=65` and `juice: STUN message send failed`. The join still works.
 
 While NetherNet is on, boarium keeps the key that the game trusts the server by in `nethernet/identity.pem`, next to boarium's config, and creates it on its first start. Back it up with the config: if it is deleted, every player has to confirm the server again. The file cannot be a symbolic link, as some secret mounts make it, so copy it in. NetherNet does not start if the file cannot be read.

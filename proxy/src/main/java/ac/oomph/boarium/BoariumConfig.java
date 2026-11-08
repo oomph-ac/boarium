@@ -4,6 +4,7 @@ import ac.oomph.boarium.transport.Addresses;
 import org.cloudburstmc.netty.channel.nethernet.signaling.AdvertisedAddresses;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
+import org.yaml.snakeyaml.constructor.DuplicateKeyException;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
@@ -13,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -97,6 +97,13 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             boar_alert_limit: 1
             """;
 
+    // The keys each section of the file takes, by the section's name; "" is the top of the file.
+    private static final Map<String, List<String>> SECTIONS = Map.of(
+            "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit"),
+            "raknet", List.of("enabled", "port"),
+            "nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery"),
+            "nethernet.https", List.of("certificate", "private_key", "password"));
+
     // Keys of an older layout, each with the key that took its place.
     private static final List<Map.Entry<String, String>> MOVED_KEYS = List.of(
             Map.entry("nethernet_certificate", "nethernet.https.certificate"),
@@ -123,12 +130,22 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
 
     // folder is what relative paths in the config are relative to.
     static BoariumConfig parse(Reader reader, Path folder) {
-        Object root = new Yaml(new SafeConstructor(new LoaderOptions())).load(reader);
+        LoaderOptions options = new LoaderOptions();
+        options.setAllowDuplicateKeys(false);
+        Object root;
+        try {
+            root = new Yaml(new SafeConstructor(options)).load(reader);
+        } catch (DuplicateKeyException e) {
+            // SnakeYAML names the key only in its message, as "found duplicate key <key>", and its message spans several lines.
+            String key = e.getProblem().substring("found duplicate key ".length());
+            throw new IllegalArgumentException(key + " is set twice; the second is on line " + (e.getProblemMark().getLine() + 1), e);
+        }
         Map<?, ?> map = root == null ? Map.of() : root instanceof Map<?, ?> m ? m : null;
         if (map == null) {
             throw new IllegalArgumentException("the config is not a map of keys to values");
         }
-        Section values = new Section(map, "");
+        // Every bad key in one error, before any value is read, so that one restart fixes them all.
+        List<String> errors = new ArrayList<>();
         List<String> moved = new ArrayList<>();
         if (map.get("nethernet") instanceof Boolean) {
             moved.add("nethernet is now a section; set nethernet.enabled instead");
@@ -139,8 +156,13 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             }
         }
         if (!moved.isEmpty()) {
-            throw new IllegalArgumentException(String.join("; ", moved));
+            errors.add(String.join("; ", moved));
         }
+        checkKeys(map, "", errors);
+        if (!errors.isEmpty()) {
+            throw new IllegalArgumentException(String.join("\n", errors));
+        }
+        Section values = new Section(map, "");
         String listen = values.address("listen", ":19132");
         int listenPort = Addresses.parse(listen).getPort();
         String server = values.address("server", "127.0.0.1:19133");
@@ -176,13 +198,53 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE));
     }
 
+    // Adds a line to errors naming each key of section that it does not take, as a misspelt key would otherwise be left at its default without a word, then does the same for the sections inside it.
+    private static void checkKeys(Map<?, ?> map, String section, List<String> errors) {
+        List<String> keys = SECTIONS.get(section);
+        List<String> unknown = new ArrayList<>();
+        for (Object key : map.keySet()) {
+            String name = String.valueOf(key);
+            boolean moved = section.isEmpty() && MOVED_KEYS.stream().anyMatch(entry -> entry.getKey().equals(name));
+            if (!keys.contains(name) && !moved) {
+                String closest = keys.stream().min(Comparator.comparingInt(k -> distance(k, name))).orElseThrow();
+                unknown.add(distance(closest, name) <= Math.min(2, name.length() / 2) ? name + " (did you mean " + closest + "?)" : name);
+            }
+        }
+        if (!unknown.isEmpty()) {
+            String place = section.isEmpty() ? "boarium" : section;
+            errors.add("unknown key" + (unknown.size() > 1 ? "s" : "") + (section.isEmpty() ? "" : " in " + section) + ": " + String.join(", ", unknown) + "; " + place + " takes: " + String.join(", ", keys));
+        }
+        for (String key : keys) {
+            String child = section.isEmpty() ? key : section + "." + key;
+            if (SECTIONS.containsKey(child) && map.get(key) instanceof Map<?, ?> values) {
+                checkKeys(values, child, errors);
+            }
+        }
+    }
+
+    // The Levenshtein distance: how many letters to add, remove or change to turn a into b.
+    private static int distance(String a, String b) {
+        int[] row = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) {
+            row[j] = j;
+        }
+        for (int i = 1; i <= a.length(); i++) {
+            int diagonal = row[0];
+            row[0] = i;
+            for (int j = 1; j <= b.length(); j++) {
+                int above = row[j];
+                row[j] = Math.min(Math.min(row[j] + 1, row[j - 1] + 1), diagonal + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1));
+                diagonal = above;
+            }
+        }
+        return row[b.length()];
+    }
+
     private static RakNet rakNet(Section values, int listenPort) {
-        values.allow("enabled", "port");
         return new RakNet(values.get("enabled", Boolean.class, false), values.port("port", listenPort));
     }
 
     private static NetherNet netherNet(Section values, int listenPort, Path folder) {
-        values.allow("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery");
         int port = values.port("port", listenPort);
         return new NetherNet(values.get("enabled", Boolean.class, true), port, values.port("signaling_port", listenPort), netherNetHttps(values.section("https"), folder), advertiseAddresses(values, port),
                 values.get("stun_discovery", Boolean.class, true));
@@ -191,7 +253,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
     // Checked here with the NetherNet library's own rules, so that a bad entry stops boarium at start; host names are only looked up when NetherNet starts.
     private static List<String> advertiseAddresses(Section values, int port) {
         String key = "advertise_addresses";
-        Object value = values.map().get(key);
+        Object value = values.value(key);
         if (value == null) {
             return List.of();
         }
@@ -220,11 +282,10 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
     }
 
     private static NetherNetHttps netherNetHttps(Section values, Path folder) {
-        values.allow("certificate", "private_key", "password");
         String certificate = values.get("certificate", String.class, "");
         String privateKey = values.get("private_key", String.class, "");
         // Not through get(), whose error would print the password.
-        Object value = values.map().get("password");
+        Object value = values.value("password");
         if (value != null && !(value instanceof String)) {
             throw new IllegalArgumentException(values.name("password") + " must be a string; put it in quotes");
         }
@@ -238,31 +299,29 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         return new NetherNetHttps(folder.resolve(certificate), privateKey.isEmpty() ? null : folder.resolve(privateKey), password.isEmpty() ? null : password);
     }
 
-    // The keys of one section of the file, named in errors with the section in front, as in nethernet.https.password.
-    private record Section(Map<?, ?> map, String prefix) {
+    // One section of the file, named as in SECTIONS; errors put that name in front of a key, as in nethernet.https.password.
+    private record Section(Map<?, ?> map, String section) {
 
         String name(String key) {
-            return this.prefix + key;
+            return this.section.isEmpty() ? key : this.section + "." + key;
         }
 
-        // Turns away a key that is not known, as a misspelt key would otherwise be left at its default without a word.
-        void allow(String... known) {
-            for (Object key : this.map.keySet()) {
-                if (!List.of(known).contains(String.valueOf(key))) {
-                    String closest = Arrays.stream(known).min(Comparator.comparingInt(k -> distance(k, String.valueOf(key)))).orElseThrow();
-                    String hint = distance(closest, String.valueOf(key)) <= 2 ? "; did you mean " + this.name(closest) + "?" : "; it takes " + String.join(", ", known);
-                    throw new IllegalArgumentException(this.name(String.valueOf(key)) + " is not a key" + hint);
-                }
+        // Every read goes through here, so that reading a key that checkKeys would turn away fails every parse.
+        Object value(String key) {
+            List<String> keys = SECTIONS.get(this.section);
+            if (keys == null || !keys.contains(key)) {
+                throw new IllegalStateException(this.name(key) + " is read but is not in SECTIONS");
             }
+            return this.map.get(key);
         }
 
         // An absent or empty section reads as one with no keys.
         Section section(String key) {
-            Object value = this.map.get(key);
+            Object value = this.value(key);
             if (value != null && !(value instanceof Map<?, ?>)) {
                 throw new IllegalArgumentException(this.name(key) + " must be a section of keys, got " + value);
             }
-            return new Section(value == null ? Map.of() : (Map<?, ?>) value, this.name(key) + ".");
+            return new Section(value == null ? Map.of() : (Map<?, ?>) value, this.name(key));
         }
 
         // A host:port, checked now so that a bad one fails at start and not at each join.
@@ -284,7 +343,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
 
         // A whole number from min to max; YAML reads numbers past Integer.MAX_VALUE as Long or BigInteger, and decimals as Double.
         int integer(String key, int fallback, int min, int max) {
-            Object value = this.map.get(key);
+            Object value = this.value(key);
             if (value == null) {
                 return fallback;
             }
@@ -295,7 +354,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         }
 
         <T> T get(String key, Class<T> type, T fallback) {
-            Object value = this.map.get(key);
+            Object value = this.value(key);
             if (value == null) {
                 return fallback;
             }
@@ -308,24 +367,6 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         // A value as it reads in an error, where text in quotes shows it is not the number or boolean it looks like.
         static String describe(Object value) {
             return value instanceof String text ? "the text \"" + text + "\"" : String.valueOf(value);
-        }
-
-        // The Levenshtein distance: how many letters to add, remove or change to turn a into b.
-        private static int distance(String a, String b) {
-            int[] row = new int[b.length() + 1];
-            for (int j = 0; j <= b.length(); j++) {
-                row[j] = j;
-            }
-            for (int i = 1; i <= a.length(); i++) {
-                int diagonal = row[0];
-                row[0] = i;
-                for (int j = 1; j <= b.length(); j++) {
-                    int above = row[j];
-                    row[j] = Math.min(Math.min(row[j] + 1, row[j - 1] + 1), diagonal + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1));
-                    diagonal = above;
-                }
-            }
-            return row[b.length()];
         }
     }
 }
