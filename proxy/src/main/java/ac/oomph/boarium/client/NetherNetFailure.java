@@ -1,5 +1,7 @@
 package ac.oomph.boarium.client;
 
+import java.util.Objects;
+
 /**
  * Why NetherNet could not start, with the message ready to log.
  */
@@ -19,6 +21,7 @@ final class NetherNetFailure extends Exception {
 
     // The failure with its cause, as a native library that does not load comes as the cause of an IOException that does not say why.
     static String reason(Throwable failure) {
-        return failure + (failure.getCause() == null ? "" : " (" + failure.getCause() + ")");
+        Throwable cause = failure.getCause();
+        return failure + (cause == null || Objects.equals(cause.getMessage(), failure.getMessage()) ? "" : " (" + cause + ")");
     }
 }

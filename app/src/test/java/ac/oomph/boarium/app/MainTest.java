@@ -146,6 +146,29 @@ class MainTest {
         }
     }
 
+    // .invalid never resolves (RFC 6761), and resolvers may refuse it without asking a DNS server.
+    @Test
+    void takesRakNetPlayersWhenAnAdvertisedNameDoesNotResolve(@TempDir Path dir) throws Exception {
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        Process process = this.start(dir, server.address(), "", RAKNET_ON + "nethernet:\n  port: " + freePort() + "\n  advertise_addresses: [x.invalid]\n");
+        try {
+            Matcher rakNet = this.awaitMatch(RAKNET);
+            String error = this.awaitLine("NetherNet could not start");
+            assertTrue(error.contains(" ERROR ") && error.endsWith("NetherNet could not start: nethernet.advertise_addresses: cannot resolve x.invalid, so players can only join over RakNet"), error);
+            this.awaitLine("started, sending players to ");
+
+            TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
+            client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
+            client.loginDone.get(10, TimeUnit.SECONDS);
+            assertEquals(1, this.output.stream().filter(line -> line.contains(" ERROR ")).count(), String.join("\n", this.output));
+        } finally {
+            process.destroyForcibly();
+            server.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
     // NetherNet alone, as the default config has it, takes players by address on one port.
     @Test
     void takesNetherNetPlayersAloneByDefault(@TempDir Path dir) throws Exception {
@@ -156,6 +179,9 @@ class MainTest {
             Matcher netherNet = this.awaitMatch(NETHERNET);
             assertEquals(netherNet.group(1), netherNet.group(2));
             this.awaitLine("started, sending players to ");
+            // On loopback, as the tests listen, no public STUN server is asked.
+            assertTrue(this.output.stream().anyMatch(line -> line.endsWith("STUN discovery is skipped, as boarium listens on the loopback address 127.0.0.1")), String.join("\n", this.output));
+            assertTrue(this.output.stream().anyMatch(line -> line.endsWith("NetherNet advertises this machine's addresses, without STUN discovery")), String.join("\n", this.output));
             assertTrue(this.output.stream().noneMatch(line -> line.contains("RakNet on UDP")), String.join("\n", this.output));
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());

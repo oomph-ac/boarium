@@ -10,6 +10,7 @@ import io.netty.handler.ssl.SslContext;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannel;
 import org.cloudburstmc.netty.channel.nethernet.signaling.HttpSignalingSettings;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPClientSignaling;
+import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetSignaling;
 import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
 import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
@@ -44,6 +45,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -305,6 +307,98 @@ class ClientListenerNetherNetTest {
         try (Socket socket = new Socket()) {
             assertThrows(ConnectException.class, () -> socket.connect(new InetSocketAddress(LOOPBACK, signalingPort), 5000));
         }
+    }
+
+    // For a server behind NAT, the answer tells a joining player to reach the UDP port at the configured addresses, on NetherNet's port where an address names none.
+    // Loopback addresses, so that the client's checks of them never leave this machine.
+    @Test
+    void advertisesTheConfiguredAddresses() throws Exception {
+        int port = this.freePort();
+        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null, this.identity, List.of("127.0.0.2", "127.0.0.3:40000"), List.of()), false);
+        AnswerKeeper signaling = new AnswerKeeper();
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.clients.add(client.joinByAddress(this.group, this.listener.netherNetAddress(), signaling));
+
+        String answer = signaling.answer.get(30, TimeUnit.SECONDS);
+        assertTrue(answer.contains(" 127.0.0.2 " + port + " typ srflx "), answer);
+        assertTrue(answer.contains(" 127.0.0.3 40000 typ srflx "), answer);
+        client.loginDone.get(30, TimeUnit.SECONDS);
+        assertEquals("Tester", this.login().identity().displayName());
+    }
+
+    // Plain HTTP signaling that keeps the server's SDP answer.
+    private static final class AnswerKeeper extends NetherNetHTTPClientSignaling {
+        final CompletableFuture<String> answer = new CompletableFuture<>();
+
+        AnswerKeeper() {
+            super(TestClient.PLAIN_HTTP);
+        }
+
+        @Override
+        public void setSignalHandler(String connectionId, NetherNetSignaling.SignalHandler handler) {
+            super.setSignalHandler(connectionId, signal -> {
+                // CONNECTRESPONSE, the connection ID, then the answer.
+                this.answer.complete(signal.split(" ", 3)[2]);
+                handler.onSignal(signal);
+            });
+        }
+    }
+
+    // .invalid never resolves (RFC 6761), and resolvers may refuse it without asking a DNS server.
+    @Test
+    void failsWhenAnAdvertisedNameDoesNotResolveAndRakNetIsOff() throws Exception {
+        int port = this.freePort();
+        ClientListener.NetherNetSettings settings = new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null, this.identity, List.of("x.invalid"), List.of());
+        String error = assertThrows(IllegalStateException.class, () -> this.listen(null, settings, false)).getMessage();
+        assertEquals("NetherNet could not start: nethernet.advertise_addresses: cannot resolve x.invalid; RakNet is off, so no player could join", error);
+        try (Socket socket = new Socket()) {
+            assertThrows(ConnectException.class, () -> socket.connect(new InetSocketAddress(LOOPBACK, port), 5000));
+        }
+    }
+
+    @Test
+    void stillLogsInOverRakNetWhenAnAdvertisedNameDoesNotResolve() throws Exception {
+        InetSocketAddress address = new InetSocketAddress(LOOPBACK, this.freePort());
+        this.listen(address, new ClientListener.NetherNetSettings(address, this.freePort(), null, this.identity, List.of("x.invalid"), List.of()), false);
+        assertNull(this.listener.netherNetAddress());
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.clients.add(client.connect(this.group, address));
+        client.loginDone.get(10, TimeUnit.SECONDS);
+        assertEquals("Tester", this.login().identity().displayName());
+    }
+
+    // A STUN server on a local port where nothing answers, in place of the public ones.
+    @Test
+    void logsInWhenNoStunServerAnswers() throws Exception {
+        int port = this.freePort();
+        int stunPort = this.freePort();
+        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null, this.identity, List.of(), List.of("stun:127.0.0.1:" + stunPort)), false);
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        Channel channel = client.joinByAddress(this.group, this.listener.netherNetAddress());
+        this.clients.add(channel);
+        client.loginDone.get(30, TimeUnit.SECONDS);
+        assertMediaPort(port, channel, this.login());
+    }
+
+    // A failure that is not STUN's stops NetherNet with STUN on, as with it off.
+    @Test
+    void failsWithStunOnWhenTheTcpPortIsTaken() throws Exception {
+        try (ServerSocket taken = new ServerSocket(0, 50, LOOPBACK)) {
+            int port = taken.getLocalPort();
+            ClientListener.NetherNetSettings settings = new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null, this.identity, List.of(), List.of("stun:127.0.0.1:" + this.freePort()));
+            String error = assertThrows(IllegalStateException.class, () -> this.listen(null, settings, false)).getMessage();
+            assertTrue(error.startsWith("NetherNet could not start with signaling on TCP 127.0.0.1:" + port + " and connections on UDP 127.0.0.1:" + port + ": "), error);
+            assertTrue(error.endsWith("; RakNet is off, so no player could join"), error);
+        }
+    }
+
+    // The library's failure when its STUN monitors cannot open, the only one after which boarium binds again without STUN.
+    @Test
+    void tellsTheStunStartFailureFromOthers() {
+        assertTrue(ClientListener.isStunStartFailure(new ConnectException("Could not start STUN discovery on udp/19500: failed")));
+        assertFalse(ClientListener.isStunStartFailure(new ConnectException("Failed to bind HTTP signaling to /127.0.0.1:19500: Address already in use")));
+        assertFalse(ClientListener.isStunStartFailure(new BindException("Could not start STUN discovery")));
+        assertFalse(ClientListener.isStunStartFailure(null));
     }
 
     @Test

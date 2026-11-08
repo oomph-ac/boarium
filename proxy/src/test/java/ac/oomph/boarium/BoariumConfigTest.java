@@ -4,10 +4,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.StringReader;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.List;
+import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -23,7 +27,7 @@ class BoariumConfigTest {
         BoariumConfig config = BoariumConfig.load(path);
 
         assertTrue(Files.exists(path));
-        assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132), new BoariumConfig.NetherNet(true, 19132, 19132, null), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
+        assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132), new BoariumConfig.NetherNet(true, 19132, 19132, null, List.of(), true), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
                 "boarium closed.", true, false), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
@@ -52,7 +56,7 @@ class BoariumConfigTest {
                 boar_mitigations: true
                 """));
 
-        assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001), new BoariumConfig.NetherNet(false, 19002, 19003, null), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
+        assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001), new BoariumConfig.NetherNet(false, 19002, 19003, null, List.of(), true), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
                 false, true), config);
     }
 
@@ -67,11 +71,11 @@ class BoariumConfigTest {
                   port: 19500
                 """));
         assertEquals(new BoariumConfig.RakNet(true, 19000), config.rakNet());
-        assertEquals(new BoariumConfig.NetherNet(true, 19500, 19000, null), config.netherNet());
+        assertEquals(new BoariumConfig.NetherNet(true, 19500, 19000, null, List.of(), true), config.netherNet());
         // An empty section takes the defaults.
-        assertEquals(new BoariumConfig.NetherNet(true, 19000, 19000, null), BoariumConfig.parse(new StringReader("listen: :19000\nnethernet:\n")).netherNet());
+        assertEquals(new BoariumConfig.NetherNet(true, 19000, 19000, null, List.of(), true), BoariumConfig.parse(new StringReader("listen: :19000\nnethernet:\n")).netherNet());
         // A listen port of 0 leaves them 0, for boarium to pick one port at start.
-        assertEquals(new BoariumConfig.NetherNet(true, 0, 0, null), BoariumConfig.parse(new StringReader("listen: 127.0.0.1:0")).netherNet());
+        assertEquals(new BoariumConfig.NetherNet(true, 0, 0, null, List.of(), true), BoariumConfig.parse(new StringReader("listen: 127.0.0.1:0")).netherNet());
     }
 
     @Test
@@ -122,9 +126,65 @@ class BoariumConfigTest {
         assertEquals("nethernet.signalling_port is not a key; did you mean nethernet.signaling_port?",
                 assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  signalling_port: 19000"))).getMessage());
         assertEquals("nethernet.https.cert is not a key; it takes certificate, private_key, password", assertThrows(IllegalArgumentException.class, () -> https("cert: a.pem")).getMessage());
-        assertEquals("nethernet.5 is not a key; it takes enabled, port, signaling_port, https", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  5: x"))).getMessage());
+        assertEquals("nethernet.5 is not a key; it takes enabled, port, signaling_port, https, advertise_addresses, stun_discovery", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  5: x"))).getMessage());
+        assertEquals("nethernet.advertise_address is not a key; did you mean nethernet.advertise_addresses?",
+                assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  advertise_address: [play.example.com]"))).getMessage());
+        assertEquals("nethernet.stun_discover is not a key; did you mean nethernet.stun_discovery?", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  stun_discover: false"))).getMessage());
         // Keys outside the sections are not checked.
         assertEquals(":19132", BoariumConfig.parse(new StringReader("lisen: :19000")).listen());
+    }
+
+    @Test
+    void readsTheAdvertisedAddressesAndStunDiscovery() {
+        BoariumConfig.NetherNet flow = BoariumConfig.parse(new StringReader("""
+                nethernet:
+                  advertise_addresses: [play.example.com, " 1.1.1.1 ", "1.1.1.1:19500", "2606:4700::1111", "[2606:4700::1111]", "[2606:4700::1111]:19133"]
+                  stun_discovery: false
+                """)).netherNet();
+        assertEquals(List.of("play.example.com", "1.1.1.1", "1.1.1.1:19500", "2606:4700::1111", "[2606:4700::1111]", "[2606:4700::1111]:19133"), flow.advertiseAddresses());
+        assertFalse(flow.stunDiscovery());
+        BoariumConfig.NetherNet block = BoariumConfig.parse(new StringReader("""
+                nethernet:
+                  advertise_addresses:
+                    - play.example.com:19500
+                    - 10.0.0.5
+                """)).netherNet();
+        assertEquals(List.of("play.example.com:19500", "10.0.0.5"), block.advertiseAddresses());
+        assertTrue(block.stunDiscovery());
+        assertEquals(List.of(), BoariumConfig.parse(new StringReader("nethernet:\n  advertise_addresses:\n")).netherNet().advertiseAddresses());
+        // The same entry twice is kept once.
+        assertEquals(List.of("play.example.com", "1.1.1.1"), BoariumConfig.parse(new StringReader("nethernet:\n  advertise_addresses: [play.example.com, \" play.example.com\", 1.1.1.1]")).netherNet().advertiseAddresses());
+    }
+
+    @Test
+    void turnsAwayBadAdvertisedAddresses() {
+        assertEquals("nethernet.advertise_addresses must be a list, such as [play.example.com], got the text \"play.example.com\"", advertiseError("play.example.com"));
+        assertEquals("nethernet.advertise_addresses takes host names and IPs, each with an optional port, got 19132", advertiseError("[19132]"));
+        assertEquals("nethernet.advertise_addresses takes host names and IPs, each with an optional port, got the text \" \"", advertiseError("[\" \"]"));
+        assertEquals("nethernet.advertise_addresses takes host names and IPs, each with an optional port, got {[2606:4700::1111]=19133}; put an IPv6 address in quotes", advertiseError("[[2606:4700::1111]:19133]"));
+        for (String bad : new String[]{"1.1.1.1:70000", "1.1.1.1:0", "play.example.com:0", "play.example.com:port", "2606:4700::1111:19133", "[2606:4700::1111", "http://play.example.com", "300.1.1.1"}) {
+            String error = advertiseError("[\"" + bad + "\"]");
+            assertEquals("nethernet.advertise_addresses: Invalid advertised address " + bad + ", expected an IP or host name, optionally with a port", error);
+        }
+        // Addresses no player can reach, such as the ones set aside for documentation.
+        assertEquals("nethernet.advertise_addresses: Advertised address 198.51.100.1 is special purpose, no player can reach it", advertiseError("[198.51.100.1]"));
+        assertTrue(advertiseError("[0.0.0.0]").endsWith("is special purpose, no player can reach it"));
+        String tooMany = "[" + String.join(", ", IntStream.range(1, 34).mapToObj(i -> "1.1.1." + i).toList()) + "]";
+        assertEquals("nethernet.advertise_addresses takes at most 32 addresses, got 33", advertiseError(tooMany));
+        assertEquals("nethernet.stun_discovery must be a boolean, got 1", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  stun_discovery: 1"))).getMessage());
+    }
+
+    @Test
+    void asksPublicStunServersOnlyWithoutAdvertisedAddressesOffLoopback() {
+        InetAddress any = new InetSocketAddress(0).getAddress();
+        assertEquals(List.of("stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302"), Boarium.stunServers(BoariumConfig.parse(new StringReader("")).netherNet(), any));
+        assertEquals(List.of(), Boarium.stunServers(BoariumConfig.parse(new StringReader("nethernet:\n  stun_discovery: false")).netherNet(), any));
+        assertEquals(List.of(), Boarium.stunServers(BoariumConfig.parse(new StringReader("nethernet:\n  advertise_addresses: [play.example.com]")).netherNet(), any));
+        assertEquals(List.of(), Boarium.stunServers(BoariumConfig.parse(new StringReader("")).netherNet(), InetAddress.getLoopbackAddress()));
+    }
+
+    private static String advertiseError(String value) {
+        return assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  advertise_addresses: " + value))).getMessage();
     }
 
     @Test

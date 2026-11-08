@@ -13,6 +13,7 @@ import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.concurrent.Promise;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
 import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
+import org.cloudburstmc.netty.channel.nethernet.signaling.AdvertisedAddresses;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
@@ -26,9 +27,14 @@ import org.slf4j.LoggerFactory;
 import tel.schich.libdatachannel.IceUdpMuxListener;
 
 import java.io.IOException;
+import java.net.ConnectException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.UnknownHostException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -39,6 +45,7 @@ import java.util.function.Consumer;
 public final class ClientListener {
     private static final String VALIDATE_ENCRYPTION = "cloudburst.validateEncryption";
     private static final Logger LOG = LoggerFactory.getLogger(ClientListener.class);
+    private static final Duration CLOSE_WAIT = Duration.ofSeconds(5);
 
     // Null when RakNet is off.
     private final Channel rakNet;
@@ -50,12 +57,26 @@ public final class ClientListener {
     }
 
     /**
+     * The public STUN servers that find this machine's public address, two operators' so that one blocked where boarium runs does not stop it.
+     */
+    public static final List<String> PUBLIC_STUN_SERVERS = List.of("stun:stun.cloudflare.com:3478", "stun:stun.l.google.com:19302");
+
+    /**
      * Where NetherNet listens: signaling on TCP at {@code signaling}, and connections on UDP {@code port} of the same host.
      *
-     * @param tls      what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
-     * @param identity the PEM file of the key the signaling signs its answers with, created on first start
+     * @param tls                what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
+     * @param identity           the PEM file of the key the signaling signs its answers with, created on first start
+     * @param advertiseAddresses where joining players are told to reach the UDP port, as host names or IPs with an optional port that defaults to {@code port}; empty for this machine's own addresses
+     * @param stunServers        the {@code stun:host:port} servers that find this machine's public address for joining players; must be empty while advertiseAddresses is not
      */
-    public record NetherNetSettings(InetSocketAddress signaling, int port, SslContext tls, Path identity) {
+    public record NetherNetSettings(InetSocketAddress signaling, int port, SslContext tls, Path identity, List<String> advertiseAddresses, List<String> stunServers) {
+
+        /**
+         * Advertises this machine's own addresses, without STUN.
+         */
+        public NetherNetSettings(InetSocketAddress signaling, int port, SslContext tls, Path identity) {
+            this(signaling, port, tls, identity, List.of(), List.of());
+        }
     }
 
     private ClientListener(Channel rakNet, NetherNet netherNet, boolean requireXbox) {
@@ -137,34 +158,28 @@ public final class ClientListener {
 
     private static NetherNet bindNetherNet(EventLoopGroup group, NetherNetSettings settings, boolean requireXbox, NetherNetInitializer initializer) throws InterruptedException, NetherNetFailure {
         OperatorIdentity identity = NetherNetIdentity.loadOrCreate(settings.identity());
+        List<String> advertised = resolve(settings.advertiseAddresses(), settings.port());
         InetSocketAddress signalingAddress = settings.signaling();
         InetSocketAddress udp = new InetSocketAddress(signalingAddress.getAddress(), settings.port());
-        // On the signaling's port number, ICE takes the UDP side of the signaling's own address; on another, it is told where to bind.
-        boolean sharedPort = settings.port() == signalingAddress.getPort();
         Throwable failure;
         IceUdpMuxListener udpPort = null;
         try {
             udpPort = holdUdpPort(udp);
-            NetherNetHTTPServerSignaling signaling = new NetherNetHTTPServerSignaling.Builder()
-                    .setIdentity(identity)
-                    // ANY skips the token's signature, as xbox_auth off does for logins.
-                    .setTokenTrust(requireXbox ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
-                    .setIceOnLocalPort(sharedPort)
-                    .setSslContext(settings.tls())
-                    .build();
-            ServerBootstrap bootstrap = new ServerBootstrap()
-                    .group(group)
-                    .channelFactory(NetherNetChannelFactory.server(signaling))
-                    .childHandler(initializer);
-            if (!sharedPort) {
-                bootstrap.option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, udp);
+            List<String> stunServers = settings.stunServers();
+            Signaling signaling = bindSignaling(group, settings, udp, identity, requireXbox, initializer, advertised, stunServers);
+            // The signaling starts STUN discovery as it binds, and STUN failing to start must not keep players out.
+            if (!stunServers.isEmpty() && isStunStartFailure(signaling.bind().cause())) {
+                LOG.warn("STUN discovery could not start, so NetherNet advertises this machine's own addresses only: {}", NetherNetFailure.reason(signaling.bind().cause()));
+                stunServers = List.of();
+                awaitClosed(signaling.signaling());
+                signaling = bindSignaling(group, settings, udp, identity, requireXbox, initializer, advertised, stunServers);
             }
-            ChannelFuture bind = bootstrap.bind(signalingAddress).await();
+            ChannelFuture bind = signaling.bind();
             if (bind.isSuccess()) {
                 LOG.info("NetherNet signaling on TCP {} over {}, NetherNet on UDP {}", text(signalingAddress), settings.tls() == null ? "HTTP" : "HTTPS", text(udp));
-                return new NetherNet(bind.channel(), signaling, signalingAddress, udpPort);
+                LOG.info("NetherNet advertises {}", advertised(settings.advertiseAddresses(), advertised, stunServers));
+                return new NetherNet(bind.channel(), signaling.signaling(), signalingAddress, udpPort);
             }
-            bind.channel().close();
             failure = bind.cause();
         } catch (IOException | RuntimeException | LinkageError e) {
             failure = e;
@@ -174,6 +189,87 @@ public final class ClientListener {
         }
         String where = "signaling on TCP " + text(signalingAddress) + " and connections on UDP " + text(udp);
         throw new NetherNetFailure("NetherNet could not start with " + where + ": " + NetherNetFailure.reason(failure), null, failure);
+    }
+
+    private record Signaling(NetherNetHTTPServerSignaling signaling, ChannelFuture bind) {
+    }
+
+    // Looks each host name up now, so that one that does not resolve is named in the error; the signaling gets the addresses as IPs.
+    private static List<String> resolve(List<String> advertised, int port) throws NetherNetFailure {
+        List<String> resolved = new ArrayList<>();
+        try {
+            for (InetSocketAddress endpoint : AdvertisedAddresses.parse(advertised, port)) {
+                if (!endpoint.isUnresolved()) {
+                    resolved.add(NetUtil.toSocketAddressString(endpoint));
+                    continue;
+                }
+                try {
+                    for (InetAddress address : InetAddress.getAllByName(endpoint.getHostString())) {
+                        resolved.add(NetUtil.toSocketAddressString(new InetSocketAddress(address, endpoint.getPort())));
+                    }
+                } catch (UnknownHostException e) {
+                    throw new NetherNetFailure("NetherNet could not start: nethernet.advertise_addresses: cannot resolve " + endpoint.getHostString(), null, e);
+                }
+            }
+            // Host names can stand for addresses the entries alone did not show, so the library's checks run again on the IPs.
+            List<String> distinct = resolved.stream().distinct().toList();
+            if (distinct.size() > AdvertisedAddresses.MAX_ENDPOINTS) {
+                throw new IllegalArgumentException("its host names stand for " + distinct.size() + " addresses, more than the " + AdvertisedAddresses.MAX_ENDPOINTS + " the signaling takes");
+            }
+            AdvertisedAddresses.parse(distinct, port);
+            return distinct;
+        } catch (IllegalArgumentException e) {
+            throw new NetherNetFailure("NetherNet could not start: nethernet.advertise_addresses: " + e.getMessage(), null, e);
+        }
+    }
+
+    // How the signaling fails its bind when it cannot open its STUN monitors.
+    static boolean isStunStartFailure(Throwable failure) {
+        return failure instanceof ConnectException && failure.getMessage() != null && failure.getMessage().startsWith("Could not start STUN discovery");
+    }
+
+    // A signaling whose bind failed closes its TCP listener on that listener's own thread, so the port is only free again once that is done.
+    private static void awaitClosed(NetherNetHTTPServerSignaling signaling) throws InterruptedException {
+        long deadline = System.nanoTime() + CLOSE_WAIT.toNanos();
+        while (signaling.isActive() && System.nanoTime() - deadline < 0) {
+            Thread.sleep(10);
+        }
+    }
+
+    // Binds the signaling, closing its channel again if the bind fails.
+    private static Signaling bindSignaling(EventLoopGroup group, NetherNetSettings settings, InetSocketAddress udp, OperatorIdentity identity, boolean requireXbox, NetherNetInitializer initializer,
+                                           List<String> advertised, List<String> stunServers) throws InterruptedException {
+        // On the signaling's port number, ICE takes the UDP side of the signaling's own address; on another, it is told where to bind.
+        boolean sharedPort = settings.port() == settings.signaling().getPort();
+        NetherNetHTTPServerSignaling signaling = new NetherNetHTTPServerSignaling.Builder()
+                .setIdentity(identity)
+                // ANY skips the token's signature, as xbox_auth off does for logins.
+                .setTokenTrust(requireXbox ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
+                .setIceOnLocalPort(sharedPort)
+                .setSslContext(settings.tls())
+                .setAdvertisedAddresses(advertised)
+                .setStunServers(stunServers)
+                .build();
+        ServerBootstrap bootstrap = new ServerBootstrap()
+                .group(group)
+                .channelFactory(NetherNetChannelFactory.server(signaling))
+                .childHandler(initializer);
+        if (!sharedPort) {
+            bootstrap.option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, udp);
+        }
+        ChannelFuture bind = bootstrap.bind(settings.signaling()).await();
+        if (!bind.isSuccess()) {
+            bind.channel().close().await();
+        }
+        return new Signaling(signaling, bind);
+    }
+
+    // What joining players are told to reach NetherNet's UDP port at, for the log: as configured, then as the IPs and ports that they stand for.
+    private static String advertised(List<String> configured, List<String> resolved, List<String> stunServers) {
+        if (!configured.isEmpty()) {
+            return String.join(", ", configured) + " (" + String.join(", ", resolved) + ")";
+        }
+        return "this machine's addresses, " + (stunServers.isEmpty() ? "without STUN discovery" : "with the public address that STUN discovery finds through " + String.join(", ", stunServers));
     }
 
     // The ICE agent opens its UDP port only while a player is connected, so between players another program could take it, and every join would then fail.

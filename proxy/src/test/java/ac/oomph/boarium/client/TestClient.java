@@ -200,6 +200,11 @@ public final class TestClient {
         return this.connectNetherNet(group, address, signalingIdentity, null, new NetherNetHTTPClientSignaling(signaling));
     }
 
+    // Joins over the given plain HTTP signaling, such as one that keeps the server's answer for the test to read.
+    Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, NetherNetHTTPClientSignaling signaling) throws JoseException {
+        return this.connectNetherNet(group, address, this.signalingIdentity(), null, signaling);
+    }
+
     // A null serverTrust leaves the server's answer unchecked.
     private Channel connectNetherNet(EventLoopGroup group, InetSocketAddress address, OperatorIdentity signalingIdentity, TokenTrust serverTrust, NetherNetClientSignaling signaling) {
         Bootstrap bootstrap = new Bootstrap()

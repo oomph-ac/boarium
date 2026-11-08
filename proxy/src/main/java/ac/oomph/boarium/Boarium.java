@@ -13,12 +13,14 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.NetUtil;
 import io.netty.util.concurrent.ScheduledFuture;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -63,7 +65,8 @@ public final class Boarium implements AutoCloseable {
         int picked = listen.getPort() == 0 ? Addresses.freePort(listen.getAddress(), Set.copyOf(List.of(config.rakNet().port(), config.netherNet().port(), config.netherNet().signalingPort()))) : listen.getPort();
         InetSocketAddress rakNet = config.rakNet().enabled() ? new InetSocketAddress(listen.getAddress(), port(config.rakNet().port(), picked)) : null;
         ClientListener.NetherNetSettings netherNet = config.netherNet().enabled()
-                ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls, netherNetIdentity)
+                ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls, netherNetIdentity,
+                        config.netherNet().advertiseAddresses(), stunServers(config.netherNet(), listen.getAddress()))
                 : null;
         this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
@@ -85,6 +88,18 @@ public final class Boarium implements AutoCloseable {
             group.shutdownGracefully();
             throw t;
         }
+    }
+
+    // None while advertise_addresses is set, as those already say where players reach this machine, and none on a loopback address, from which no STUN server can be reached.
+    static List<String> stunServers(BoariumConfig.NetherNet netherNet, InetAddress listenHost) {
+        if (!netherNet.advertiseAddresses().isEmpty() || !netherNet.stunDiscovery()) {
+            return List.of();
+        }
+        if (listenHost.isLoopbackAddress()) {
+            LOG.info("STUN discovery is skipped, as boarium listens on the loopback address {}", NetUtil.toAddressString(listenHost));
+            return List.of();
+        }
+        return ClientListener.PUBLIC_STUN_SERVERS;
     }
 
     private static int port(int port, int picked) {

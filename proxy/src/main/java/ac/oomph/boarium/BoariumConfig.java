@@ -1,6 +1,7 @@
 package ac.oomph.boarium;
 
 import ac.oomph.boarium.transport.Addresses;
+import org.cloudburstmc.netty.channel.nethernet.signaling.AdvertisedAddresses;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
@@ -14,8 +15,10 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * boarium's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
@@ -31,11 +34,13 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
     }
 
     /**
-     * @param port          the UDP port NetherNet connections use
-     * @param signalingPort the TCP port of NetherNet's signaling
-     * @param https         null when signaling serves plain HTTP
+     * @param port               the UDP port NetherNet connections use
+     * @param signalingPort      the TCP port of NetherNet's signaling
+     * @param https              null when signaling serves plain HTTP
+     * @param advertiseAddresses the host names and IPs, each with an optional port, that joining players are told to reach the UDP port at; empty for this machine's own
+     * @param stunDiscovery      whether to find this machine's public address through public STUN servers while advertiseAddresses is empty
      */
-    public record NetherNet(boolean enabled, int port, int signalingPort, NetherNetHttps https) {
+    public record NetherNet(boolean enabled, int port, int signalingPort, NetherNetHttps https, List<String> advertiseAddresses, boolean stunDiscovery) {
     }
 
     static final String DEFAULT_FILE = """
@@ -53,6 +58,15 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
               port: 0
               # The TCP port of NetherNet's signaling, where the game asks to join. 0 means the listen port, which is where the game looks for it.
               signaling_port: 0
+              # Where joining players are told to reach NetherNet's UDP port, for a server behind NAT or port forwarding: host names or IPs, each with an optional port, which is nethernet's port when left out.
+              # For example [play.example.com, "play.example.com:19133"], or your public IP; put an IPv6 address with a port in brackets and quotes, as "[IPv6]:19133".
+              # A host name is looked up when NetherNet starts, and NetherNet does not start if it does not resolve.
+              # Players also get this machine's own addresses, such as its LAN address, unless the list names one of them.
+              # Empty means this machine's own addresses, plus the public address that stun_discovery finds.
+              advertise_addresses: []
+              # Whether to find this machine's public address through Cloudflare's and Google's public STUN servers while advertise_addresses is empty and listen is not a loopback address.
+              # boarium contacts them when NetherNet starts, and keeps asking while it runs.
+              stun_discovery: true
               # A certificate for signaling to serve HTTPS with instead of HTTP: a PEM certificate chain with its PEM private key, or a PKCS12 file alone, with private_key left empty. Paths are relative to this file's folder.
               # The game asks its player to trust a server it reaches over plain HTTP.
               https:
@@ -165,8 +179,41 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
     }
 
     private static NetherNet netherNet(Section values, int listenPort, Path folder) {
-        values.allow("enabled", "port", "signaling_port", "https");
-        return new NetherNet(values.get("enabled", Boolean.class, true), values.port("port", listenPort), values.port("signaling_port", listenPort), netherNetHttps(values.section("https"), folder));
+        values.allow("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery");
+        int port = values.port("port", listenPort);
+        return new NetherNet(values.get("enabled", Boolean.class, true), port, values.port("signaling_port", listenPort), netherNetHttps(values.section("https"), folder), advertiseAddresses(values, port),
+                values.get("stun_discovery", Boolean.class, true));
+    }
+
+    // Checked here with the NetherNet library's own rules, so that a bad entry stops boarium at start; host names are only looked up when NetherNet starts.
+    private static List<String> advertiseAddresses(Section values, int port) {
+        String key = "advertise_addresses";
+        Object value = values.map().get(key);
+        if (value == null) {
+            return List.of();
+        }
+        if (!(value instanceof List<?> list)) {
+            throw new IllegalArgumentException(values.name(key) + " must be a list, such as [play.example.com], got " + Section.describe(value));
+        }
+        Set<String> addresses = new LinkedHashSet<>();
+        for (Object entry : list) {
+            if (!(entry instanceof String address) || address.isBlank()) {
+                // YAML reads an unquoted [IPv6]:port in a list as a map.
+                String hint = entry instanceof Map<?, ?> ? "; put an IPv6 address in quotes" : "";
+                throw new IllegalArgumentException(values.name(key) + " takes host names and IPs, each with an optional port, got " + Section.describe(entry) + hint);
+            }
+            addresses.add(address.trim());
+        }
+        int count;
+        try {
+            count = AdvertisedAddresses.parse(addresses, port).size();
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException(values.name(key) + ": " + e.getMessage(), e);
+        }
+        if (count > AdvertisedAddresses.MAX_ENDPOINTS) {
+            throw new IllegalArgumentException(values.name(key) + " takes at most " + AdvertisedAddresses.MAX_ENDPOINTS + " addresses, got " + count);
+        }
+        return List.copyOf(addresses);
     }
 
     private static NetherNetHttps netherNetHttps(Section values, Path folder) {
@@ -256,7 +303,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         }
 
         // A value as it reads in an error, where text in quotes shows it is not the number or boolean it looks like.
-        private static String describe(Object value) {
+        static String describe(Object value) {
             return value instanceof String text ? "the text \"" + text + "\"" : String.valueOf(value);
         }
 
