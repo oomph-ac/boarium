@@ -6,6 +6,8 @@ Clients join boarium over NetherNet, and over RakNet when it is turned on. boari
 
 boarium is in early development. It logs players in, passes packets between them and their server, and moves them between servers, as Spectrum does. Boar checks players, and changes what they do only when `boar_mitigations` is on.
 
+To put boarium in front of a Dragonfly server, follow [SETUP.md](SETUP.md).
+
 ## Building
 
 Requires JDK 21.
