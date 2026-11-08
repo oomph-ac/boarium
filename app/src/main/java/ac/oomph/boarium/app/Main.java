@@ -47,7 +47,8 @@ public final class Main {
         }
         Boarium boarium;
         try {
-            boarium = Boarium.start(config, netherNetTls, processors);
+            // The game pins the key the identity holds, so a new one at each start would make every player confirm the server again.
+            boarium = Boarium.start(config, netherNetTls, path.toAbsolutePath().resolveSibling("nethernet").resolve("identity.pem"), processors);
         } catch (Exception e) {
             // Netty also throws checked exceptions it does not declare, such as a BindException.
             LOG.error("could not start: {}", e.toString());

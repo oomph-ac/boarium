@@ -181,7 +181,18 @@ public final class TestClient {
      * Joins by address over NetherNet with the given signaling settings, such as HTTPS with a certificate the test trusts.
      */
     public Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, HttpSignalingSettings signaling) throws JoseException {
-        return this.joinByAddress(group, address, new OperatorIdentity(this.key.getPrivate(), this.key.getPublic(), null, "boarium-test").forPlayer("", this.name), signaling);
+        return this.joinByAddress(group, address, this.signalingIdentity(), signaling);
+    }
+
+    /**
+     * Joins by address over plain HTTP signaling, as the game does once it has pinned a server's key: the join fails unless the server's answer is signed with a key {@code serverTrust} holds.
+     */
+    public Channel joinByAddress(EventLoopGroup group, InetSocketAddress address, TokenTrust serverTrust) throws JoseException {
+        return this.connectNetherNet(group, address, this.signalingIdentity(), serverTrust, new NetherNetHTTPClientSignaling(PLAIN_HTTP));
+    }
+
+    private OperatorIdentity signalingIdentity() throws JoseException {
+        return new OperatorIdentity(this.key.getPrivate(), this.key.getPublic(), null, "boarium-test").forPlayer("", this.name);
     }
 
     // signalingIdentity is null for an offer without one.

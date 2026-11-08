@@ -10,6 +10,8 @@ import io.netty.handler.ssl.SslContext;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannel;
 import org.cloudburstmc.netty.channel.nethernet.signaling.HttpSignalingSettings;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPClientSignaling;
+import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
+import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
@@ -30,7 +32,11 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.security.PublicKey;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -48,6 +54,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 // The listener's NetherNet side: joins by address over HTTP or HTTPS signaling on loopback, alone or next to RakNet.
 @Timeout(60)
@@ -62,10 +70,14 @@ class ClientListenerNetherNetTest {
     private final BlockingQueue<ClientLogin> logins = new LinkedBlockingQueue<>();
     private final List<Channel> clients = new ArrayList<>();
     private final Set<Integer> picked = new HashSet<>();
+    @TempDir
+    Path folder;
+    private Path identity;
 
     @BeforeEach
     void setUp() {
         this.group = new NioEventLoopGroup(2);
+        this.identity = this.folder.resolve("nethernet").resolve("identity.pem");
     }
 
     @AfterEach
@@ -94,7 +106,7 @@ class ClientListenerNetherNetTest {
 
     private InetSocketAddress listen(boolean requireXbox, SslContext tls) throws Exception {
         int port = this.freePort();
-        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, tls), requireXbox);
+        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, tls, this.identity), requireXbox);
         return this.listener.netherNetAddress();
     }
 
@@ -184,7 +196,7 @@ class ClientListenerNetherNetTest {
     void logsInOverRakNetAndNetherNetOnTheirOwnUdpPorts() throws Exception {
         int port = this.freePort();
         int netherNetPort = this.freePort();
-        this.listen(new InetSocketAddress(LOOPBACK, port), new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), netherNetPort, null), false);
+        this.listen(new InetSocketAddress(LOOPBACK, port), new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), netherNetPort, null, this.identity), false);
         assertEquals(port, this.listener.rakNetAddress().getPort());
         assertEquals(port, this.listener.netherNetAddress().getPort());
 
@@ -208,7 +220,7 @@ class ClientListenerNetherNetTest {
     void takesSignalingOnItsOwnTcpPort() throws Exception {
         int signalingPort = this.freePort();
         int netherNetPort = this.freePort();
-        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, signalingPort), netherNetPort, null), false);
+        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, signalingPort), netherNetPort, null, this.identity), false);
         try (Socket socket = new Socket()) {
             assertThrows(ConnectException.class, () -> socket.connect(new InetSocketAddress(LOOPBACK, netherNetPort), 5000));
         }
@@ -225,7 +237,7 @@ class ClientListenerNetherNetTest {
     void holdsTheUdpPortBetweenPlayers() throws Exception {
         int signalingPort = this.freePort();
         int netherNetPort = this.freePort();
-        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, signalingPort), netherNetPort, null), false);
+        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, signalingPort), netherNetPort, null, this.identity), false);
         assertUdpPortHeld(new InetSocketAddress(LOOPBACK, netherNetPort));
 
         for (String name : new String[]{"First", "Second"}) {
@@ -248,7 +260,7 @@ class ClientListenerNetherNetTest {
     @Test
     void logsInOnEveryAddress() throws Exception {
         int port = this.freePort();
-        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(port), port, null), false);
+        this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(port), port, null, this.identity), false);
         assertUdpPortHeld(new InetSocketAddress(port));
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         Channel channel = client.joinByAddress(this.group, new InetSocketAddress(LOOPBACK, port));
@@ -265,7 +277,7 @@ class ClientListenerNetherNetTest {
     void stillLogsInOverRakNetWhenTheTcpPortIsTaken() throws Exception {
         try (ServerSocket taken = new ServerSocket(0, 50, LOOPBACK)) {
             InetSocketAddress address = new InetSocketAddress(LOOPBACK, taken.getLocalPort());
-            this.listen(address, new ClientListener.NetherNetSettings(address, this.freePort(), null), false);
+            this.listen(address, new ClientListener.NetherNetSettings(address, this.freePort(), null, this.identity), false);
             assertNull(this.listener.netherNetAddress());
             TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
             this.clients.add(client.connect(this.group, address));
@@ -279,14 +291,14 @@ class ClientListenerNetherNetTest {
     void failsWhenNetherNetCannotStartAndRakNetIsOff() throws Exception {
         try (ServerSocket taken = new ServerSocket(0, 50, LOOPBACK)) {
             int port = taken.getLocalPort();
-            String error = assertThrows(IllegalStateException.class, () -> this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null), false)).getMessage();
+            String error = assertThrows(IllegalStateException.class, () -> this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null, this.identity), false)).getMessage();
             assertTrue(error.startsWith("NetherNet could not start with signaling on TCP 127.0.0.1:" + port + " and connections on UDP 127.0.0.1:" + port + ": "), error);
             assertTrue(error.endsWith("; RakNet is off, so no player could join"), error);
         }
         int signalingPort = this.freePort();
         try (DatagramSocket taken = new DatagramSocket(0, LOOPBACK)) {
             int port = taken.getLocalPort();
-            String error = assertThrows(IllegalStateException.class, () -> this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, signalingPort), port, null), false)).getMessage();
+            String error = assertThrows(IllegalStateException.class, () -> this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, signalingPort), port, null, this.identity), false)).getMessage();
             assertTrue(error.contains("cannot bind UDP 127.0.0.1:" + port + ", which another program may hold"), error);
         }
         // Nothing is left listening.
@@ -302,6 +314,70 @@ class ClientListenerNetherNetTest {
         try (Socket socket = new Socket()) {
             assertThrows(ConnectException.class, () -> socket.connect(this.listener.rakNetAddress(), 5000));
         }
+    }
+
+    // The game pins the key the signaling signs its answers with, so a player who trusted the server is not asked again after a restart.
+    @Test
+    void keepsItsIdentityAcrossStarts() throws Exception {
+        InetSocketAddress address = this.listen();
+        String pem = Files.readString(this.identity);
+        if (Files.getFileStore(this.folder).supportsFileAttributeView(PosixFileAttributeView.class)) {
+            assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(this.identity));
+        }
+        PublicKey key = OperatorIdentity.fromPem(this.identity.toFile(), "test").publicKey();
+        this.joinPinnedTo(address, key);
+
+        // A client that pinned another key is turned away.
+        TestClient stranger = new TestClient("Stranger", CODEC, CODEC.getProtocolVersion());
+        this.clients.add(stranger.joinByAddress(this.group, address, TokenTrust.pinnedTo(OperatorIdentity.generate("other").publicKey())));
+        String error = assertThrows(ExecutionException.class, () -> stranger.loginDone.get(30, TimeUnit.SECONDS)).getCause().getMessage();
+        assertTrue(error.contains("The token was not signed by a pinned key"), error);
+
+        this.listener.close().syncUninterruptibly();
+        this.joinPinnedTo(this.listen(), key);
+        assertEquals(pem, Files.readString(this.identity));
+    }
+
+    private void joinPinnedTo(InetSocketAddress address, PublicKey key) throws Exception {
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.clients.add(client.joinByAddress(this.group, address, TokenTrust.pinnedTo(key)));
+        client.loginDone.get(30, TimeUnit.SECONDS);
+        assertEquals("Tester", this.login().identity().displayName());
+    }
+
+    @Test
+    void failsAndKeepsAnIdentityFileItCannotRead() throws Exception {
+        Files.createDirectories(this.identity.getParent());
+        Files.writeString(this.identity, "not a key");
+        int port = this.freePort();
+        String error = assertThrows(IllegalStateException.class, () -> this.listen(null, new ClientListener.NetherNetSettings(new InetSocketAddress(LOOPBACK, port), port, null, this.identity), false)).getMessage();
+        assertTrue(error.startsWith("NetherNet could not start: cannot read its identity file " + this.identity + " as a key: "), error);
+        assertTrue(error.endsWith("; RakNet is off, so no player could join. Only delete that file if it cannot be recovered, as a new identity makes every player confirm the server again"), error);
+        assertEquals("not a key", Files.readString(this.identity));
+        try (Socket socket = new Socket()) {
+            assertThrows(ConnectException.class, () -> socket.connect(new InetSocketAddress(LOOPBACK, port), 5000));
+        }
+    }
+
+    // A file boarium's user may not read, such as one copied in as root.
+    @Test
+    void logsInOverRakNetAndKeepsAnIdentityFileItMayNotRead() throws Exception {
+        Files.createDirectories(this.identity.getParent());
+        Files.writeString(this.identity, "a key");
+        assumeTrue(Files.getFileStore(this.folder).supportsFileAttributeView(PosixFileAttributeView.class));
+        Files.setPosixFilePermissions(this.identity, Set.of());
+        assumeFalse(Files.isReadable(this.identity), "the tests run as a user who may read any file");
+        InetSocketAddress address = new InetSocketAddress(LOOPBACK, this.freePort());
+        this.listen(address, new ClientListener.NetherNetSettings(address, this.freePort(), null, this.identity), false);
+        assertNull(this.listener.netherNetAddress());
+
+        TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
+        this.clients.add(client.connect(this.group, this.listener.rakNetAddress()));
+        client.loginDone.get(10, TimeUnit.SECONDS);
+        assertEquals("Tester", this.login().identity().displayName());
+        assertEquals(Set.of(), Files.getPosixFilePermissions(this.identity));
+        Files.setPosixFilePermissions(this.identity, PosixFilePermissions.fromString("rw-------"));
+        assertEquals("a key", Files.readString(this.identity));
     }
 
     @Test

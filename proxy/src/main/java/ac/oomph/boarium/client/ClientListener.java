@@ -21,13 +21,13 @@ import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
 import org.cloudburstmc.netty.util.nethernet.TokenTrust;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
-import org.jose4j.lang.JoseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import tel.schich.libdatachannel.IceUdpMuxListener;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -52,9 +52,10 @@ public final class ClientListener {
     /**
      * Where NetherNet listens: signaling on TCP at {@code signaling}, and connections on UDP {@code port} of the same host.
      *
-     * @param tls what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
+     * @param tls      what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
+     * @param identity the PEM file of the key the signaling signs its answers with, created on first start
      */
-    public record NetherNetSettings(InetSocketAddress signaling, int port, SslContext tls) {
+    public record NetherNetSettings(InetSocketAddress signaling, int port, SslContext tls, Path identity) {
     }
 
     private ClientListener(Channel rakNet, NetherNet netherNet, boolean requireXbox) {
@@ -75,7 +76,7 @@ public final class ClientListener {
     /**
      * Binds the listener and advertises {@code pong}, with its ports set to RakNet's.
      * Fails if Mojang's login settings cannot be fetched, since no client could log in then.
-     * If NetherNet cannot start, such as when its native library does not load or a port is taken, the listener logs why and takes RakNet clients only, or fails when RakNet is off.
+     * If NetherNet cannot start, such as when its native library does not load, a port is taken or its identity file cannot be read, the listener logs why and takes RakNet clients only, or fails when RakNet is off.
      *
      * @param rakNet       where RakNet listens; null for no RakNet
      * @param netherNet    where NetherNet listens; null for no NetherNet. Its signaling port must not be 0.
@@ -124,9 +125,9 @@ public final class ClientListener {
                 netherNetListening = bindNetherNet(group, netherNet, requireXbox, new NetherNetInitializer(requireXbox, loginTimeout, onLogin));
             } catch (NetherNetFailure e) {
                 if (rakNetChannel == null) {
-                    throw new IllegalStateException(e.getMessage() + "; RakNet is off, so no player could join", e.getCause());
+                    throw new IllegalStateException(e.explain("; RakNet is off, so no player could join"), e.getCause());
                 }
-                LOG.error("{}, so players can only join over RakNet", e.getMessage());
+                LOG.error("{}", e.explain(", so players can only join over RakNet"));
             }
         }
         ClientListener listener = new ClientListener(rakNetChannel, netherNetListening, requireXbox);
@@ -134,14 +135,8 @@ public final class ClientListener {
         return listener;
     }
 
-    // Why NetherNet could not start, with the message ready to log.
-    private static final class NetherNetFailure extends Exception {
-        NetherNetFailure(String message, Throwable cause) {
-            super(message, cause);
-        }
-    }
-
     private static NetherNet bindNetherNet(EventLoopGroup group, NetherNetSettings settings, boolean requireXbox, NetherNetInitializer initializer) throws InterruptedException, NetherNetFailure {
+        OperatorIdentity identity = NetherNetIdentity.loadOrCreate(settings.identity());
         InetSocketAddress signalingAddress = settings.signaling();
         InetSocketAddress udp = new InetSocketAddress(signalingAddress.getAddress(), settings.port());
         // On the signaling's port number, ICE takes the UDP side of the signaling's own address; on another, it is told where to bind.
@@ -151,7 +146,7 @@ public final class ClientListener {
         try {
             udpPort = holdUdpPort(udp);
             NetherNetHTTPServerSignaling signaling = new NetherNetHTTPServerSignaling.Builder()
-                    .setIdentity(OperatorIdentity.generate("boarium"))
+                    .setIdentity(identity)
                     // ANY skips the token's signature, as xbox_auth off does for logins.
                     .setTokenTrust(requireXbox ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
                     .setIceOnLocalPort(sharedPort)
@@ -171,15 +166,14 @@ public final class ClientListener {
             }
             bind.channel().close();
             failure = bind.cause();
-        } catch (JoseException | IOException | RuntimeException | LinkageError e) {
+        } catch (IOException | RuntimeException | LinkageError e) {
             failure = e;
         }
         if (udpPort != null) {
             udpPort.close();
         }
-        // A native library that does not load comes as the cause of an IOException that does not say why.
         String where = "signaling on TCP " + text(signalingAddress) + " and connections on UDP " + text(udp);
-        throw new NetherNetFailure("NetherNet could not start with " + where + ": " + failure + (failure.getCause() == null ? "" : " (" + failure.getCause() + ")"), failure);
+        throw new NetherNetFailure("NetherNet could not start with " + where + ": " + NetherNetFailure.reason(failure), null, failure);
     }
 
     // The ICE agent opens its UDP port only while a player is connected, so between players another program could take it, and every join would then fail.

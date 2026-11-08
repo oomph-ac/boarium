@@ -20,6 +20,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -52,7 +53,7 @@ public final class Boarium implements AutoCloseable {
     private final ScheduledFuture<?> pongs;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private Boarium(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException, IOException {
+    private Boarium(BoariumConfig config, SslContext netherNetTls, Path netherNetIdentity, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException, IOException {
         this.config = config;
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
@@ -62,7 +63,7 @@ public final class Boarium implements AutoCloseable {
         int picked = listen.getPort() == 0 ? Addresses.freePort(listen.getAddress(), Set.copyOf(List.of(config.rakNet().port(), config.netherNet().port(), config.netherNet().signalingPort()))) : listen.getPort();
         InetSocketAddress rakNet = config.rakNet().enabled() ? new InetSocketAddress(listen.getAddress(), port(config.rakNet().port(), picked)) : null;
         ClientListener.NetherNetSettings netherNet = config.netherNet().enabled()
-                ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls)
+                ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls, netherNetIdentity)
                 : null;
         this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
@@ -71,13 +72,14 @@ public final class Boarium implements AutoCloseable {
     /**
      * Starts listening for players with {@code config}.
      *
-     * @param netherNetTls what NetherNet signaling serves HTTPS with, from {@link NetherNetHttps#load()}; null for plain HTTP
-     * @param processors   gives each player's session its processor
+     * @param netherNetTls      what NetherNet signaling serves HTTPS with, from {@link NetherNetHttps#load()}; null for plain HTTP
+     * @param netherNetIdentity the PEM file of NetherNet's identity key, created on first start and read only while NetherNet is on
+     * @param processors        gives each player's session its processor
      */
-    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors) throws InterruptedException, IOException {
+    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Path netherNetIdentity, Function<ClientLogin, Processor> processors) throws InterruptedException, IOException {
         EventLoopGroup group = new NioEventLoopGroup();
         try {
-            return new Boarium(config, netherNetTls, processors, group);
+            return new Boarium(config, netherNetTls, netherNetIdentity, processors, group);
         } catch (Throwable t) {
             // Netty also throws checked exceptions it does not declare, such as a BindException; the event loops would otherwise keep the JVM running.
             group.shutdownGracefully();

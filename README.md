@@ -46,4 +46,6 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 
 With `listen` on one address, the WebRTC library under NetherNet logs a few warnings at each NetherNet join, such as `juice: Send failed, errno=65` and `juice: STUN message send failed`. The join still works.
 
+While NetherNet is on, boarium keeps the key that the game trusts the server by in `nethernet/identity.pem`, next to boarium's config, and creates it on its first start. Back it up with the config: if it is deleted, every player has to confirm the server again. The file cannot be a symbolic link, as some secret mounts make it, so copy it in. NetherNet does not start if the file cannot be read.
+
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.

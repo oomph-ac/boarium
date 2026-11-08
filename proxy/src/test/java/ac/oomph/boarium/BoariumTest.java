@@ -46,11 +46,14 @@ class BoariumTest {
     // The QA network and live tests hold these, so a test must never bind them.
     private static final Set<Integer> TAKEN_PORTS = Set.of(19132, 19133, 19142, 19143);
 
+    @TempDir
+    Path folder;
+
     @Test
     void sendsPlayersToTheServerAndDisconnectsThemOnClose() throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
         FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
-        Boarium boarium = startBoth(server);
+        Boarium boarium = this.startBoth(server);
         try {
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, boarium.rakNetAddress());
@@ -72,7 +75,7 @@ class BoariumTest {
     void sendsPlayersWhoJoinOverNetherNetToTheServer() throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
         FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
-        Boarium boarium = startBoth(server);
+        Boarium boarium = this.startBoth(server);
         try {
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.joinByAddress(group, boarium.netherNetAddress());
@@ -102,7 +105,7 @@ class BoariumTest {
     void takesNetherNetAloneByDefault() throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
         FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
-        Boarium boarium = start(BoariumConfig.parse(new StringReader(config(server, "listen: 127.0.0.1:0"))), null);
+        Boarium boarium = this.start(BoariumConfig.parse(new StringReader(config(server, "listen: 127.0.0.1:0"))), null);
         try {
             assertNull(boarium.rakNetAddress());
             InetSocketAddress address = boarium.netherNetAddress();
@@ -142,7 +145,7 @@ class BoariumTest {
                     password: "%s"
                 """.formatted(certificate.pkcs12().getFileName(), certificate.password())));
         BoariumConfig config = BoariumConfig.load(path);
-        Boarium boarium = start(config, config.netherNet().https().load());
+        Boarium boarium = this.start(config, config.netherNet().https().load());
         try {
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             HttpSignalingSettings https = HttpSignalingSettings.DEFAULT.withScheme(HttpSignalingSettings.Scheme.HTTPS).withSslContext(certificate.trusted());
@@ -156,13 +159,28 @@ class BoariumTest {
         }
     }
 
+    @Test
+    void createsNoNetherNetIdentityWithNetherNetOff() throws Exception {
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        Boarium boarium = this.start(BoariumConfig.parse(new StringReader(config(server, "listen: 127.0.0.1:%d\nraknet:\n  enabled: true\nnethernet:\n  enabled: false\n".formatted(freePort())))), null);
+        try {
+            assertNull(boarium.netherNetAddress());
+            assertTrue(Files.notExists(this.folder.resolve("nethernet")));
+        } finally {
+            boarium.close();
+            server.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
     // RakNet on a free loopback port, and NetherNet's signaling on its TCP side with connections on another free UDP port.
-    private static Boarium startBoth(FakeSpectrumServer server) throws Exception {
+    private Boarium startBoth(FakeSpectrumServer server) throws Exception {
         int port = freePort();
         Set<Integer> skip = new HashSet<>(TAKEN_PORTS);
         skip.add(port);
         int netherNetPort = Addresses.freePort(LOOPBACK, skip);
-        return start(BoariumConfig.parse(new StringReader(config(server, """
+        return this.start(BoariumConfig.parse(new StringReader(config(server, """
                 listen: 127.0.0.1:%d
                 raknet:
                   enabled: true
@@ -171,8 +189,8 @@ class BoariumTest {
                 """.formatted(port, netherNetPort)))), null);
     }
 
-    private static Boarium start(BoariumConfig config, SslContext netherNetTls) throws Exception {
-        return Boarium.start(config, netherNetTls, SessionSettings.DEFAULT.processors());
+    private Boarium start(BoariumConfig config, SslContext netherNetTls) throws Exception {
+        return Boarium.start(config, netherNetTls, this.folder.resolve("nethernet").resolve("identity.pem"), SessionSettings.DEFAULT.processors());
     }
 
     // The test's config, with the keys in transports.

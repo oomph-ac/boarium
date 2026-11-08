@@ -5,6 +5,7 @@ import ac.oomph.boarium.session.FakeSpectrumServer;
 import ac.oomph.boarium.transport.Addresses;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
+import org.cloudburstmc.netty.util.nethernet.OperatorIdentity;
 import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
 import org.cloudburstmc.protocol.bedrock.packet.DisconnectPacket;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
@@ -26,6 +27,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
@@ -70,6 +72,7 @@ class MainTest {
             assertEquals(netherNetPort, Integer.parseInt(netherNet.group(2)));
             this.awaitLine("started, sending players to " + server.address());
             assertTrue(Files.exists(dir.resolve("boar").resolve("config.yml")));
+            assertTrue(Files.exists(dir.resolve("nethernet").resolve("identity.pem")));
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
@@ -180,6 +183,67 @@ class MainTest {
         } finally {
             process.destroyForcibly();
         }
+    }
+
+    @Test
+    void stopsWhenTheNetherNetIdentityCannotBeReadAndRakNetIsOff(@TempDir Path dir) throws Exception {
+        Path identity = brokenIdentity(dir);
+        Process process = this.start(dir, "127.0.0.1:1");
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            String error = this.awaitLine("could not start: java.lang.IllegalStateException: NetherNet could not start: cannot read its identity file " + identity + " as a key: ");
+            assertTrue(error.endsWith("; RakNet is off, so no player could join. Only delete that file if it cannot be recovered, as a new identity makes every player confirm the server again"), error);
+            assertEquals("not a key", Files.readString(identity));
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    @Test
+    void takesRakNetPlayersWhenTheNetherNetIdentityCannotBeRead(@TempDir Path dir) throws Exception {
+        Path identity = brokenIdentity(dir);
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        Process process = this.start(dir, server.address(), "", RAKNET_ON + "nethernet:\n  port: " + freePort() + "\n");
+        try {
+            Matcher rakNet = this.awaitMatch(RAKNET);
+            String error = this.awaitLine("NetherNet could not start: cannot read its identity file " + identity + " as a key: ");
+            assertTrue(error.contains(" ERROR ") && error.endsWith(", so players can only join over RakNet. Only delete that file if it cannot be recovered, as a new identity makes every player confirm the server again"), error);
+            this.awaitLine("started, sending players to ");
+
+            TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
+            client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
+            client.loginDone.get(10, TimeUnit.SECONDS);
+            assertEquals(1, this.output.stream().filter(line -> line.contains(" ERROR ")).count(), String.join("\n", this.output));
+            assertEquals("not a key", Files.readString(identity));
+        } finally {
+            process.destroyForcibly();
+            server.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
+    // boarium makes a key file that other users may read owner-only, and says so.
+    @Test
+    void warnsThatItMadeTheNetherNetIdentityOwnerOnly(@TempDir Path dir) throws Exception {
+        Path identity = dir.resolve("nethernet").resolve("identity.pem");
+        OperatorIdentity.fromPemOrCreate(identity.toFile(), "test");
+        Files.setPosixFilePermissions(identity, PosixFilePermissions.fromString("rw-r--r--"));
+        Process process = this.start(dir, "127.0.0.1:1");
+        try {
+            String warning = this.awaitLine("NetherNet's identity file " + identity + " was open to other users, so boarium made it readable by its owner only");
+            assertTrue(warning.contains(" WARN "), warning);
+            this.awaitMatch(NETHERNET);
+            assertEquals(PosixFilePermissions.fromString("rw-------"), Files.getPosixFilePermissions(identity));
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    private static Path brokenIdentity(Path dir) throws Exception {
+        return Files.writeString(Files.createDirectory(dir.resolve("nethernet")).resolve("identity.pem"), "not a key");
     }
 
     @Test
