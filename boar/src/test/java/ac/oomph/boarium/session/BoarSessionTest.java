@@ -192,19 +192,13 @@ class BoarSessionTest {
         return BedrockBlockTable.forProtocol(this.codec().getProtocolVersion());
     }
 
-    // The tests that BoarSession26_20Test, BoarSession26_40Test and BoarSession26_45Test also run
+    // The tests that each BoarSession26_*Test also runs
     @Retention(RetentionPolicy.RUNTIME)
     @Target(ElementType.METHOD)
     @interface EveryCheckedVersion {
     }
 
-    // The tests that BoarSession26_50Test also runs
-    @Retention(RetentionPolicy.RUNTIME)
-    @Target(ElementType.METHOD)
-    @interface On26_50 {
-    }
-
-    // Once for both test classes, so that the recorder does not see each packet twice.
+    // Once for all the test classes, so that the recorder does not see each packet twice.
     @BeforeAll
     static void startBoar() throws Exception {
         if (processors == null) {
@@ -1639,7 +1633,6 @@ class BoarSessionTest {
     // The client joins the two fences at once. The player fits between their posts, so only the bar that joins them stops it.
     @Test
     @EveryCheckedVersion
-    @On26_50
     void walksIntoTheBarOfAFenceItPlaced() throws Exception {
         SimpleItemDefinition fenceItem = new SimpleItemDefinition("minecraft:oak_fence", 1999, false);
         List<ItemDefinition> items = new ArrayList<>(ITEMS);

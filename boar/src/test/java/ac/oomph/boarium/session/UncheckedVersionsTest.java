@@ -16,8 +16,8 @@ import org.cloudburstmc.math.vector.Vector2f;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
-import org.cloudburstmc.protocol.bedrock.codec.v2225.Bedrock_v2225;
 import org.cloudburstmc.protocol.bedrock.codec.v924.Bedrock_v924;
+import org.cloudburstmc.protocol.bedrock.codec.v944.Bedrock_v944;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
 import org.cloudburstmc.protocol.bedrock.data.InputInteractionModel;
 import org.cloudburstmc.protocol.bedrock.data.InputMode;
@@ -66,7 +66,7 @@ class UncheckedVersionsTest {
     private final ByteArrayOutputStream logged = new ByteArrayOutputStream();
 
     static List<Named<BedrockCodec>> codecs() {
-        return List.of(Named.of("26.60", Bedrock_v2225.CODEC), Named.of("26.0", Bedrock_v924.CODEC));
+        return List.of(Named.of("26.0", Bedrock_v924.CODEC), Named.of("26.10", Bedrock_v944.CODEC));
     }
 
     @BeforeEach

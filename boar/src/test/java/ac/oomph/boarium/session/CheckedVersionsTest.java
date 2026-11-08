@@ -28,6 +28,7 @@ import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodecHelper;
 import org.cloudburstmc.protocol.bedrock.codec.v2168.Bedrock_v2168_hotfix4;
 import org.cloudburstmc.protocol.bedrock.codec.v2169.Bedrock_v2169;
+import org.cloudburstmc.protocol.bedrock.codec.v2193.Bedrock_v2193;
 import org.cloudburstmc.protocol.bedrock.codec.v2225.Bedrock_v2225;
 import org.cloudburstmc.protocol.bedrock.codec.v975.Bedrock_v975;
 import org.cloudburstmc.protocol.bedrock.data.ClientPlayMode;
@@ -96,12 +97,11 @@ class CheckedVersionsTest {
     private TestClient client;
     private PrintStream stderr;
     private final ByteArrayOutputStream logged = new ByteArrayOutputStream();
-    private int protocol;
     private StartGamePacket startGame;
 
-    // 26.40 and 26.45, whose poplar planks 1.26.30 does not have, and 26.60, which Boar checks only in the tests, whose fences have connection states.
+    // The checked versions with poplar planks, which 1.26.30 does not have; from 26.50 their fences have connection states.
     static List<Named<BedrockCodec>> codecs() {
-        return List.of(Named.of("26.40", Bedrock_v2168_hotfix4.CODEC), Named.of("26.45", Bedrock_v2169.CODEC), Named.of("26.60", Bedrock_v2225.CODEC));
+        return List.of(Named.of("26.40", Bedrock_v2168_hotfix4.CODEC), Named.of("26.45", Bedrock_v2169.CODEC), Named.of("26.50", Bedrock_v2193.CODEC), Named.of("26.60", Bedrock_v2225.CODEC));
     }
 
     @BeforeEach
@@ -113,7 +113,6 @@ class CheckedVersionsTest {
 
     @AfterEach
     void tearDown() {
-        TestBoar.check(this.protocol, false);
         System.setErr(this.stderr);
         if (this.listener != null) {
             this.listener.close().syncUninterruptibly();
@@ -127,11 +126,7 @@ class CheckedVersionsTest {
     @ParameterizedTest
     @MethodSource("codecs")
     void readsWalksAndPlacesWithItsOwnBlocksAndItems(BedrockCodec codec) throws Exception {
-        this.protocol = codec.getProtocolVersion();
-        if (this.protocol == Bedrock_v2225.CODEC.getProtocolVersion()) {
-            TestBoar.check(this.protocol, true);
-        }
-        BedrockBlockTable table = BedrockBlockTable.forProtocol(this.protocol);
+        BedrockBlockTable table = BedrockBlockTable.forProtocol(codec.getProtocolVersion());
         int stone = table.defaultIndex("minecraft:stone");
         int fence = table.defaultIndex("minecraft:oak_fence");
         int planks = table.defaultIndex("minecraft:poplar_planks");
@@ -161,7 +156,7 @@ class CheckedVersionsTest {
         assertBlock(session, player, origin.add(FENCE), "minecraft:oak_fence", fence);
         assertBlock(session, player, origin.add(PLANKS), "minecraft:poplar_planks", planks);
         assertBlock(session, player, origin.add(POPLAR_FENCE), "minecraft:poplar_fence", poplarFence);
-        // The poplar fence joins the planks west of it by its connection rule: a 26.40 one has no states, and a 26.60 one has its default state, with no connection set.
+        // The poplar fence joins the planks west of it by its connection rule: a 26.40 one has no states, and a 26.50 or 26.60 one has its default state, with no connection set.
         Vector3i poplarFenceAt = origin.add(POPLAR_FENCE);
         List<Box> boxes = onLoop(session, () -> player.compensatedWorld.getBlockState(poplarFenceAt, 0).findCollision(player, poplarFenceAt, null, false));
         float west = (float) boxes.stream().mapToDouble(box -> box.minX).min().orElseThrow() - poplarFenceAt.getX();
@@ -256,8 +251,7 @@ class CheckedVersionsTest {
     @Test
     void readsABlockThatOnlyNewerVersionsHaveAsAnUnknownFullCube() throws Exception {
         BedrockCodec codec = Bedrock_v975.CODEC;
-        this.protocol = codec.getProtocolVersion();
-        BedrockBlockTable table = BedrockBlockTable.forProtocol(this.protocol);
+        BedrockBlockTable table = BedrockBlockTable.forProtocol(codec.getProtocolVersion());
         BedrockBlockTable v26_30 = BedrockBlockTable.get();
         int spike = v26_30.networkHash(v26_30.defaultIndex("minecraft:sulfur_spike"));
         assertTrue(table.indexOfHash(spike) < 0);
