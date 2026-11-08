@@ -25,6 +25,10 @@ final class LoginChecks {
     // gophertunnel's name patterns are not anchored, so a name passes when it contains one such character.
     private static final Pattern OFFLINE_NAME_CHARACTER = Pattern.compile("[ \\p{L}]");
     private static final Pattern ONLINE_NAME_CHARACTER = Pattern.compile("[A-Za-z0-9 ]");
+    // Control, format and line-separator characters, such as a line break or a mark that turns text around, with which a name could write or disguise lines in the log.
+    private static final Pattern OFFLINE_UNPRINTABLE = Pattern.compile("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]");
+    // The same, but for the zero-width joiner and non-joiner, which some scripts' gamertags need.
+    private static final Pattern UNPRINTABLE = Pattern.compile("[\\p{Cc}\\p{Zl}\\p{Zp}[\\p{Cf}&&[^\\u200C\\u200D]]]");
     private static final Pattern UUID_FORM = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
     private LoginChecks() {
@@ -134,6 +138,10 @@ final class LoginChecks {
         int limit = xuid.isEmpty() ? 16 : 15;
         if (bytes.length == 0 || bytes.length > limit) {
             throw new IllegalStateException("display name must be 1 to " + limit + " bytes");
+        }
+        // Before the checks below, whose errors include the name.
+        if ((xuid.isEmpty() ? OFFLINE_UNPRINTABLE : UNPRINTABLE).matcher(name).find()) {
+            throw new IllegalStateException("display name has a character that is not printable");
         }
         if (bytes[0] == ' ' || bytes[bytes.length - 1] == ' ' || (bytes[0] >= '0' && bytes[0] <= '9') || name.contains("  ")) {
             throw new IllegalStateException("display name has a bad space or starts with a number: " + name);
