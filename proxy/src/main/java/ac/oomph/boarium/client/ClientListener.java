@@ -9,7 +9,6 @@ import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.concurrent.Promise;
-import io.netty.util.concurrent.PromiseCombiner;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
@@ -163,10 +162,10 @@ public final class ClientListener {
         if (this.netherNet == null) {
             return rakNet;
         }
-        PromiseCombiner closed = new PromiseCombiner(ImmediateEventExecutor.INSTANCE);
-        closed.addAll(rakNet, this.netherNet.channel().close());
+        ChannelFuture netherNet = this.netherNet.channel().close();
         Promise<Void> done = ImmediateEventExecutor.INSTANCE.newPromise();
-        closed.finish(done);
+        // PromiseCombiner is not thread-safe, and the two channels close on different event loops, so this waits for one close, then the other.
+        rakNet.addListener(closedRakNet -> netherNet.addListener(closedNetherNet -> done.trySuccess(null)));
         return done;
     }
 }
