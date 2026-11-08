@@ -77,7 +77,7 @@ class ClientGameStartTest {
             this.spawned.complete(ClientGameStart.start(login.session(), this.startGame, this.items.getItems(), chunkRadius));
         });
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        this.client.connect(this.group, this.listener.address());
+        this.client.connect(this.group, this.listener.rakNetAddress());
         this.client.loginDone.get(10, TimeUnit.SECONDS);
     }
 
@@ -208,7 +208,7 @@ class ClientGameStartTest {
             this.spawned.complete(ClientGameStart.start(login.session(), this.startGame, this.items.getItems(), 0));
         });
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        this.client.connect(this.group, this.listener.address());
+        this.client.connect(this.group, this.listener.rakNetAddress());
 
         CompletableFuture<Void> spawned = this.spawned.get(10, TimeUnit.SECONDS);
         assertThrows(ExecutionException.class, () -> spawned.get(10, TimeUnit.SECONDS));

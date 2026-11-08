@@ -50,11 +50,11 @@ public final class Main {
             boarium = Boarium.start(config, netherNetTls, processors);
         } catch (Exception e) {
             // Netty also throws checked exceptions it does not declare, such as a BindException.
-            LOG.error("could not start on {}: {}", config.listen(), e.toString());
+            LOG.error("could not start: {}", e.toString());
             System.exit(1);
             return;
         }
-        LOG.info("listening on {}, sending players to {}, for Bedrock {}", boarium.address(), config.server(), BedrockVersions.names());
+        LOG.info("started, sending players to {}, for Bedrock {}", config.server(), BedrockVersions.names());
         // The event loops keep the JVM running until the shutdown hook below closes them.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("shutting down");
@@ -64,14 +64,14 @@ public final class Main {
 
     // Null for plain HTTP. Never falls back to HTTP: a certificate that cannot be read stops boarium.
     private static SslContext netherNetTls(BoariumConfig config) {
-        if (config.netherNetHttps() == null) {
+        if (config.netherNet().https() == null) {
             return null;
         }
-        if (!config.netherNet()) {
-            LOG.warn("nethernet is off, so nethernet_certificate is not used");
+        if (!config.netherNet().enabled()) {
+            LOG.warn("nethernet.enabled is false, so nethernet.https.certificate is not used");
             return null;
         }
-        return config.netherNetHttps().load();
+        return config.netherNet().https().load();
     }
 
     private static Function<ClientLogin, Processor> processors(BoariumConfig config, Path configPath) throws IOException {

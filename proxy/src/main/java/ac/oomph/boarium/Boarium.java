@@ -18,6 +18,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockPong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -32,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 
 /**
- * The proxy: it takes players on its listen address and runs a {@link Session} for each, as spectrum-internal's Spectrum does.
+ * The proxy: it takes players over RakNet, NetherNet or both, and runs a {@link Session} for each, as spectrum-internal's Spectrum does.
  */
 public final class Boarium implements AutoCloseable {
     private static final Duration DIAL_TIMEOUT = Duration.ofSeconds(5);
@@ -51,13 +52,19 @@ public final class Boarium implements AutoCloseable {
     private final ScheduledFuture<?> pongs;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private Boarium(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException {
+    private Boarium(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException, IOException {
         this.config = config;
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
         SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), processors);
-        this.listener = ClientListener.bind(group, listenAddress(config.listen()), this.pong(), config.xboxAuth(), config.netherNet(), netherNetTls, CLIENT_LOGIN_TIMEOUT,
-                login -> this.join(login, transport, settings));
+        InetSocketAddress listen = listenAddress(config.listen());
+        // A listen port of 0 is picked here once, so that every port that follows the listen port is the same free one.
+        int picked = listen.getPort() == 0 ? Addresses.freePort(listen.getAddress(), Set.copyOf(List.of(config.rakNet().port(), config.netherNet().port(), config.netherNet().signalingPort()))) : listen.getPort();
+        InetSocketAddress rakNet = config.rakNet().enabled() ? new InetSocketAddress(listen.getAddress(), port(config.rakNet().port(), picked)) : null;
+        ClientListener.NetherNetSettings netherNet = config.netherNet().enabled()
+                ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls)
+                : null;
+        this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
 
@@ -67,7 +74,7 @@ public final class Boarium implements AutoCloseable {
      * @param netherNetTls what NetherNet signaling serves HTTPS with, from {@link NetherNetHttps#load()}; null for plain HTTP
      * @param processors   gives each player's session its processor
      */
-    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors) throws InterruptedException {
+    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Function<ClientLogin, Processor> processors) throws InterruptedException, IOException {
         EventLoopGroup group = new NioEventLoopGroup();
         try {
             return new Boarium(config, netherNetTls, processors, group);
@@ -76,6 +83,10 @@ public final class Boarium implements AutoCloseable {
             group.shutdownGracefully();
             throw t;
         }
+    }
+
+    private static int port(int port, int picked) {
+        return port == 0 ? picked : port;
     }
 
     // host:port, resolved; as in Go's net.Listen, an empty host means every address of this machine.
@@ -160,9 +171,16 @@ public final class Boarium implements AutoCloseable {
     }
 
     /**
-     * Where players connect.
+     * Where RakNet listens, or null when it is off.
      */
-    public InetSocketAddress address() {
-        return this.listener.address();
+    public InetSocketAddress rakNetAddress() {
+        return this.listener.rakNetAddress();
+    }
+
+    /**
+     * Where NetherNet's signaling listens, or null when NetherNet is off or could not start.
+     */
+    public InetSocketAddress netherNetAddress() {
+        return this.listener.netherNetAddress();
     }
 }

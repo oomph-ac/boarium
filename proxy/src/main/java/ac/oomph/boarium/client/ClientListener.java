@@ -7,10 +7,12 @@ import io.netty.channel.ChannelFuture;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.socket.nio.NioDatagramChannel;
 import io.netty.handler.ssl.SslContext;
+import io.netty.util.NetUtil;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.ImmediateEventExecutor;
 import io.netty.util.concurrent.Promise;
 import org.cloudburstmc.netty.channel.nethernet.NetherNetChannelFactory;
+import org.cloudburstmc.netty.channel.nethernet.config.NetherChannelOption;
 import org.cloudburstmc.netty.channel.nethernet.signaling.NetherNetHTTPServerSignaling;
 import org.cloudburstmc.netty.channel.nethernet.signaling.PongData;
 import org.cloudburstmc.netty.channel.raknet.RakChannelFactory;
@@ -22,28 +24,41 @@ import org.cloudburstmc.protocol.bedrock.util.EncryptionUtils;
 import org.jose4j.lang.JoseException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import tel.schich.libdatachannel.IceUdpMuxListener;
 
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 
 /**
- * Accepts Bedrock clients over RakNet, and over NetherNet when asked, and logs them in. Clients on a protocol that {@link ac.oomph.boarium.protocol.BedrockVersions} lacks are turned away.
+ * Accepts Bedrock clients over RakNet, NetherNet or both, and logs them in. Clients on a protocol that {@link ac.oomph.boarium.protocol.BedrockVersions} lacks are turned away.
  */
 public final class ClientListener {
     private static final String VALIDATE_ENCRYPTION = "cloudburst.validateEncryption";
     private static final Logger LOG = LoggerFactory.getLogger(ClientListener.class);
 
-    private final Channel channel;
+    // Null when RakNet is off.
+    private final Channel rakNet;
     // Null when NetherNet is off or could not start.
     private final NetherNet netherNet;
     private final boolean requireXbox;
 
-    private record NetherNet(Channel channel, NetherNetHTTPServerSignaling signaling) {
+    private record NetherNet(Channel channel, NetherNetHTTPServerSignaling signaling, InetSocketAddress address, IceUdpMuxListener udpPort) {
     }
 
-    private ClientListener(Channel channel, NetherNet netherNet, boolean requireXbox) {
-        this.channel = channel;
+    /**
+     * Where NetherNet listens: signaling on TCP at {@code signaling}, and connections on UDP {@code port} of the same host.
+     *
+     * @param tls what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
+     */
+    public record NetherNetSettings(InetSocketAddress signaling, int port, SslContext tls) {
+    }
+
+    private ClientListener(Channel rakNet, NetherNet netherNet, boolean requireXbox) {
+        this.rakNet = rakNet;
         this.netherNet = netherNet;
         this.requireXbox = requireXbox;
     }
@@ -51,25 +66,34 @@ public final class ClientListener {
     /**
      * Binds the listener for RakNet only.
      *
-     * @see #bind(EventLoopGroup, InetSocketAddress, BedrockPong, boolean, boolean, SslContext, Duration, Consumer)
+     * @see #bind(EventLoopGroup, InetSocketAddress, NetherNetSettings, BedrockPong, boolean, Duration, Consumer)
      */
     public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
-        return bind(group, address, pong, requireXbox, false, null, loginTimeout, onLogin);
+        return bind(group, address, null, pong, requireXbox, loginTimeout, onLogin);
     }
 
     /**
-     * Binds the listener and advertises {@code pong}, with its ports set to the port that was bound.
+     * Binds the listener and advertises {@code pong}, with its ports set to RakNet's.
      * Fails if Mojang's login settings cannot be fetched, since no client could log in then.
+     * If NetherNet cannot start, such as when its native library does not load or a port is taken, the listener logs why and takes RakNet clients only, or fails when RakNet is off.
      *
+     * @param rakNet       where RakNet listens; null for no RakNet
+     * @param netherNet    where NetherNet listens; null for no NetherNet. Its signaling port must not be 0.
      * @param requireXbox  whether clients must have an identity signed by Xbox Live
-     * @param netherNet    whether clients may also join over NetherNet, through signaling on the TCP side of the bound port; if that cannot start, the listener logs why and takes RakNet clients only
-     * @param netherNetTls what the signaling serves HTTPS with, refusing plain HTTP; null for plain HTTP
      * @param loginTimeout how long a client may take to log in before it is disconnected
      * @param onLogin      runs on the client's event loop once a client has logged in
      */
-    public static ClientListener bind(EventLoopGroup group, InetSocketAddress address, BedrockPong pong, boolean requireXbox, boolean netherNet, SslContext netherNetTls, Duration loginTimeout, Consumer<ClientLogin> onLogin) throws InterruptedException {
+    public static ClientListener bind(EventLoopGroup group, InetSocketAddress rakNet, NetherNetSettings netherNet, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin)
+            throws InterruptedException {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
+        }
+        if (rakNet == null && netherNet == null) {
+            throw new IllegalArgumentException("neither RakNet nor NetherNet is on");
+        }
+        // The signaling cannot tell which port it took for 0, so no client could be told where to join.
+        if (netherNet != null && netherNet.signaling().getPort() == 0) {
+            throw new IllegalArgumentException("NetherNet's signaling port must not be 0");
         }
         // Turns on Cloudburst's check of the checksum at the end of each encrypted batch unless it is set already, as gophertunnel always checks it.
         // Cloudburst reads it once, when the first encrypted session starts in this JVM.
@@ -83,63 +107,118 @@ public final class ClientListener {
             throw new IllegalStateException("could not load Mojang's login settings", e);
         }
 
-        ChannelFuture bind = new ServerBootstrap()
-                .group(group)
-                .channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
-                .childHandler(new ClientInitializer(requireXbox, loginTimeout, onLogin))
-                .bind(address)
-                .sync();
-
-        InetSocketAddress bound = (InetSocketAddress) bind.channel().localAddress();
-        NetherNet listening = netherNet ? bindNetherNet(group, bound, requireXbox, netherNetTls, new NetherNetInitializer(requireXbox, loginTimeout, onLogin)) : null;
-        ClientListener listener = new ClientListener(bind.channel(), listening, requireXbox);
+        Channel rakNetChannel = null;
+        if (rakNet != null) {
+            rakNetChannel = new ServerBootstrap()
+                    .group(group)
+                    .channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
+                    .childHandler(new ClientInitializer(requireXbox, loginTimeout, onLogin))
+                    .bind(rakNet)
+                    .sync()
+                    .channel();
+            LOG.info("RakNet on UDP {}", text((InetSocketAddress) rakNetChannel.localAddress()));
+        }
+        NetherNet netherNetListening = null;
+        if (netherNet != null) {
+            try {
+                netherNetListening = bindNetherNet(group, netherNet, requireXbox, new NetherNetInitializer(requireXbox, loginTimeout, onLogin));
+            } catch (NetherNetFailure e) {
+                if (rakNetChannel == null) {
+                    throw new IllegalStateException(e.getMessage() + "; RakNet is off, so no player could join", e.getCause());
+                }
+                LOG.error("{}, so players can only join over RakNet", e.getMessage());
+            }
+        }
+        ClientListener listener = new ClientListener(rakNetChannel, netherNetListening, requireXbox);
         listener.pong(pong);
         return listener;
     }
 
-    // Returns null when NetherNet cannot start, such as when its native library does not load on this platform or the TCP port is taken.
-    private static NetherNet bindNetherNet(EventLoopGroup group, InetSocketAddress address, boolean requireXbox, SslContext tls, NetherNetInitializer initializer) throws InterruptedException {
+    // Why NetherNet could not start, with the message ready to log.
+    private static final class NetherNetFailure extends Exception {
+        NetherNetFailure(String message, Throwable cause) {
+            super(message, cause);
+        }
+    }
+
+    private static NetherNet bindNetherNet(EventLoopGroup group, NetherNetSettings settings, boolean requireXbox, NetherNetInitializer initializer) throws InterruptedException, NetherNetFailure {
+        InetSocketAddress signalingAddress = settings.signaling();
+        InetSocketAddress udp = new InetSocketAddress(signalingAddress.getAddress(), settings.port());
+        // On the signaling's port number, ICE takes the UDP side of the signaling's own address; on another, it is told where to bind.
+        boolean sharedPort = settings.port() == signalingAddress.getPort();
         Throwable failure;
+        IceUdpMuxListener udpPort = null;
         try {
+            udpPort = holdUdpPort(udp);
             NetherNetHTTPServerSignaling signaling = new NetherNetHTTPServerSignaling.Builder()
                     .setIdentity(OperatorIdentity.generate("boarium"))
                     // ANY skips the token's signature, as xbox_auth off does for logins.
                     .setTokenTrust(requireXbox ? TokenTrust.MINECRAFT_AUTH : TokenTrust.ANY)
-                    // RakNet holds the UDP side of the port, so each NetherNet connection takes a UDP port of its own.
-                    .setIceOnLocalPort(false)
-                    .setSslContext(tls)
+                    .setIceOnLocalPort(sharedPort)
+                    .setSslContext(settings.tls())
                     .build();
-            ChannelFuture bind = new ServerBootstrap()
+            ServerBootstrap bootstrap = new ServerBootstrap()
                     .group(group)
                     .channelFactory(NetherNetChannelFactory.server(signaling))
-                    .childHandler(initializer)
-                    .bind(address)
-                    .await();
+                    .childHandler(initializer);
+            if (!sharedPort) {
+                bootstrap.option(NetherChannelOption.NETHER_SERVER_ICE_ADDRESS, udp);
+            }
+            ChannelFuture bind = bootstrap.bind(signalingAddress).await();
             if (bind.isSuccess()) {
-                LOG.info("players can also join over NetherNet, through {} signaling on TCP port {}", tls == null ? "HTTP" : "HTTPS", address.getPort());
-                return new NetherNet(bind.channel(), signaling);
+                LOG.info("NetherNet signaling on TCP {} over {}, NetherNet on UDP {}", text(signalingAddress), settings.tls() == null ? "HTTP" : "HTTPS", text(udp));
+                return new NetherNet(bind.channel(), signaling, signalingAddress, udpPort);
             }
             bind.channel().close();
             failure = bind.cause();
-        } catch (JoseException | RuntimeException | LinkageError e) {
+        } catch (JoseException | IOException | RuntimeException | LinkageError e) {
             failure = e;
         }
+        if (udpPort != null) {
+            udpPort.close();
+        }
         // A native library that does not load comes as the cause of an IOException that does not say why.
-        LOG.error("NetherNet could not start on TCP port {}, so players can only join over RakNet: {}{}", address.getPort(), failure, failure.getCause() == null ? "" : " (" + failure.getCause() + ")");
-        return null;
+        String where = "signaling on TCP " + text(signalingAddress) + " and connections on UDP " + text(udp);
+        throw new NetherNetFailure("NetherNet could not start with " + where + ": " + failure + (failure.getCause() == null ? "" : " (" + failure.getCause() + ")"), failure);
+    }
+
+    // The ICE agent opens its UDP port only while a player is connected, so between players another program could take it, and every join would then fail.
+    // A listener on the port holds it while NetherNet runs.
+    private static IceUdpMuxListener holdUdpPort(InetSocketAddress udp) throws IOException {
+        IceUdpMuxListener listener;
+        try {
+            listener = new IceUdpMuxListener(udp.getAddress(), udp.getPort(), Runnable::run, request -> CompletableFuture.completedFuture(null));
+        } catch (IllegalStateException e) {
+            throw new IOException("cannot bind UDP " + text(udp) + ", which another program may hold: " + e.getMessage(), e);
+        }
+        try {
+            // With no keys, it drops every request that no connection on the port answers, before any reaches the handler.
+            listener.setAdmission(new byte[0], Map.of());
+        } catch (RuntimeException e) {
+            listener.close();
+            throw e;
+        }
+        return listener;
+    }
+
+    // host:port, with * for every address of this machine.
+    private static String text(InetSocketAddress address) {
+        return address.getAddress().isAnyLocalAddress() ? "*:" + address.getPort() : NetUtil.toSocketAddressString(address);
     }
 
     /**
-     * Sets what the listener answers server list pings with, with the ports set to the one it listens on.
+     * Sets what the listener answers server list pings with, with the ports set to RakNet's.
      */
     public void pong(BedrockPong pong) {
-        int port = this.address().getPort();
-        ByteBuf advertisement = pong.ipv4Port(port).ipv6Port(port).toByteBuf();
-        try {
-            // RakNet keeps a copy.
-            this.channel.config().setOption(RakChannelOption.RAK_ADVERTISEMENT, advertisement);
-        } finally {
-            advertisement.release();
+        if (this.rakNet != null) {
+            int port = this.rakNetAddress().getPort();
+            ByteBuf advertisement = pong.ipv4Port(port).ipv6Port(port).toByteBuf();
+            try {
+                // RakNet keeps a copy.
+                this.rakNet.config().setOption(RakChannelOption.RAK_ADVERTISEMENT, advertisement);
+            } finally {
+                advertisement.release();
+            }
         }
         if (this.netherNet != null) {
             this.netherNet.signaling().setAdvertisementData(new PongData.Builder()
@@ -155,20 +234,32 @@ public final class ClientListener {
         }
     }
 
-    public InetSocketAddress address() {
-        return (InetSocketAddress) this.channel.localAddress();
+    /**
+     * Where RakNet listens, or null when it is off.
+     */
+    public InetSocketAddress rakNetAddress() {
+        return this.rakNet == null ? null : (InetSocketAddress) this.rakNet.localAddress();
     }
 
-    // Completes once both listeners have closed, so that their ports are free again.
+    /**
+     * Where NetherNet's signaling listens, or null when NetherNet is off or could not start.
+     */
+    public InetSocketAddress netherNetAddress() {
+        return this.netherNet == null ? null : this.netherNet.address();
+    }
+
+    // Completes once both listeners have closed, so that their TCP ports are free again; the UDP port frees soon after.
     public Future<Void> close() {
-        ChannelFuture rakNet = this.channel.close();
-        if (this.netherNet == null) {
-            return rakNet;
-        }
-        ChannelFuture netherNet = this.netherNet.channel().close();
+        Future<?> rakNet = this.rakNet == null ? ImmediateEventExecutor.INSTANCE.newSucceededFuture(null) : this.rakNet.close();
+        Future<?> netherNet = this.netherNet == null ? ImmediateEventExecutor.INSTANCE.newSucceededFuture(null) : this.netherNet.channel().close();
         Promise<Void> done = ImmediateEventExecutor.INSTANCE.newPromise();
         // PromiseCombiner is not thread-safe, and the two channels close on different event loops, so this waits for one close, then the other.
-        rakNet.addListener(closedRakNet -> netherNet.addListener(closedNetherNet -> done.trySuccess(null)));
+        rakNet.addListener(closedRakNet -> netherNet.addListener(closedNetherNet -> {
+            if (this.netherNet != null) {
+                this.netherNet.udpPort().close();
+            }
+            done.trySuccess(null);
+        }));
         return done;
     }
 }

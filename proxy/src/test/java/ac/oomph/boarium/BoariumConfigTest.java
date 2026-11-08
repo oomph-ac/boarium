@@ -7,6 +7,7 @@ import java.io.StringReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,7 +23,8 @@ class BoariumConfigTest {
         BoariumConfig config = BoariumConfig.load(path);
 
         assertTrue(Files.exists(path));
-        assertEquals(new BoariumConfig(":19132", true, null, "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3), "boarium closed.", true, false), config);
+        assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132), new BoariumConfig.NetherNet(true, 19132, 19132, null), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
+                "boarium closed.", true, false), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -31,7 +33,13 @@ class BoariumConfigTest {
     void readsEachKey() {
         BoariumConfig config = BoariumConfig.parse(new StringReader("""
                 listen: 127.0.0.1:19000
-                nethernet: false
+                raknet:
+                  enabled: true
+                  port: 19001
+                nethernet:
+                  enabled: false
+                  port: 19002
+                  signaling_port: 19003
                 server: lobby:19133
                 fallback_server: hub:19133
                 xbox_auth: false
@@ -44,31 +52,100 @@ class BoariumConfigTest {
                 boar_mitigations: true
                 """));
 
-        assertEquals(new BoariumConfig("127.0.0.1:19000", false, null, "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye", false, true), config);
+        assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001), new BoariumConfig.NetherNet(false, 19002, 19003, null), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
+                false, true), config);
+    }
+
+    @Test
+    void readsAPortOfZeroAsTheListenPort() {
+        BoariumConfig config = BoariumConfig.parse(new StringReader("""
+                listen: 127.0.0.1:19000
+                raknet:
+                  enabled: true
+                  port: 0
+                nethernet:
+                  port: 19500
+                """));
+        assertEquals(new BoariumConfig.RakNet(true, 19000), config.rakNet());
+        assertEquals(new BoariumConfig.NetherNet(true, 19500, 19000, null), config.netherNet());
+        // An empty section takes the defaults.
+        assertEquals(new BoariumConfig.NetherNet(true, 19000, 19000, null), BoariumConfig.parse(new StringReader("listen: :19000\nnethernet:\n")).netherNet());
+        // A listen port of 0 leaves them 0, for boarium to pick one port at start.
+        assertEquals(new BoariumConfig.NetherNet(true, 0, 0, null), BoariumConfig.parse(new StringReader("listen: 127.0.0.1:0")).netherNet());
     }
 
     @Test
     void readsTheNetherNetHttpsFilesRelativeToTheConfigFolder(@TempDir Path dir) throws Exception {
         Path path = Files.writeString(dir.resolve("config.yml"), """
-                nethernet_certificate: tls/chain.pem
-                nethernet_private_key: /etc/boarium/key.pem
-                nethernet_password: secret
+                nethernet:
+                  https:
+                    certificate: tls/chain.pem
+                    private_key: /etc/boarium/key.pem
+                    password: secret
                 """);
-        assertEquals(new NetherNetHttps(dir.resolve("tls/chain.pem"), Path.of("/etc/boarium/key.pem"), "secret"), BoariumConfig.load(path).netherNetHttps());
+        assertEquals(new NetherNetHttps(dir.resolve("tls/chain.pem"), Path.of("/etc/boarium/key.pem"), "secret"), BoariumConfig.load(path).netherNet().https());
         // A PKCS12 file takes no private key.
-        assertEquals(new NetherNetHttps(Path.of("cert.p12"), null, null), BoariumConfig.parse(new StringReader("nethernet_certificate: cert.p12")).netherNetHttps());
+        assertEquals(new NetherNetHttps(Path.of("cert.p12"), null, null), https("certificate: cert.p12").netherNet().https());
     }
 
     // YAML reads an unquoted 123456 as a number and yes as true; the error must not print them.
     @Test
     void keepsTheNetherNetPasswordOutOfErrorsAndToString() {
         for (String password : new String[]{"123456", "yes"}) {
-            String error = assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_certificate: a.p12\nnethernet_password: " + password))).getMessage();
-            assertEquals("nethernet_password must be a string; put it in quotes", error);
+            String error = assertThrows(IllegalArgumentException.class, () -> https("certificate: a.p12", "password: " + password)).getMessage();
+            assertEquals("nethernet.https.password must be a string; put it in quotes", error);
         }
-        BoariumConfig config = BoariumConfig.parse(new StringReader("nethernet_certificate: a.p12\nnethernet_password: hunter2"));
-        assertEquals("hunter2", config.netherNetHttps().password());
+        BoariumConfig config = https("certificate: a.p12", "password: hunter2");
+        assertEquals("hunter2", config.netherNet().https().password());
         assertFalse(config.toString().contains("hunter2"), config.toString());
+    }
+
+    // The keys before the raknet and nethernet sections, each turned away with the key to use instead.
+    @Test
+    void namesTheNewKeyForAnOldOne() {
+        assertEquals("nethernet is now a section; set nethernet.enabled instead", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet: true"))).getMessage());
+        assertEquals("nethernet is now a section; set nethernet.enabled instead", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet: false"))).getMessage());
+        assertEquals("nethernet_certificate is now nethernet.https.certificate", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_certificate: a.pem"))).getMessage());
+        assertEquals("nethernet_private_key is now nethernet.https.private_key", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_private_key: key.pem"))).getMessage());
+        assertEquals("nethernet_password is now nethernet.https.password", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_password: 123456"))).getMessage());
+        // An old key that was left empty is still named.
+        assertEquals("nethernet_password is now nethernet.https.password", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_password: \"\""))).getMessage());
+        // All of them at once.
+        String error = assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_password: a\nnethernet: true\nnethernet_certificate: a.pem"))).getMessage();
+        assertEquals("nethernet is now a section; set nethernet.enabled instead; nethernet_certificate is now nethernet.https.certificate; nethernet_password is now nethernet.https.password", error);
+    }
+
+    // A misspelt key would otherwise be left at its default without a word.
+    @Test
+    void turnsAwayUnknownKeysInTheSections() {
+        assertEquals("raknet.enable is not a key; did you mean raknet.enabled?", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  enable: true"))).getMessage());
+        assertEquals("nethernet.signalling_port is not a key; did you mean nethernet.signaling_port?",
+                assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  signalling_port: 19000"))).getMessage());
+        assertEquals("nethernet.https.cert is not a key; it takes certificate, private_key, password", assertThrows(IllegalArgumentException.class, () -> https("cert: a.pem")).getMessage());
+        assertEquals("nethernet.5 is not a key; it takes enabled, port, signaling_port, https", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  5: x"))).getMessage());
+        // Keys outside the sections are not checked.
+        assertEquals(":19132", BoariumConfig.parse(new StringReader("lisen: :19000")).listen());
+    }
+
+    @Test
+    void turnsAwayRakNetAndNetherNetOnOneUdpPort() {
+        String error = assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  enabled: true"))).getMessage();
+        assertEquals("raknet.port and nethernet.port are both UDP port 19132, but RakNet and NetherNet each need their own; set nethernet.port to another port", error);
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("listen: :19000\nraknet:\n  enabled: true\n  port: 19500\nnethernet:\n  port: 19500")));
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("listen: :19000\nraknet:\n  enabled: true\nnethernet:\n  port: 19000")));
+        String zero = assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("listen: 127.0.0.1:0\nraknet:\n  enabled: true"))).getMessage();
+        assertEquals("raknet.port and nethernet.port both take the listen port of 0, but RakNet and NetherNet each need their own UDP port; set raknet.port or nethernet.port", zero);
+        // NetherNet's signaling is on TCP, so it may share RakNet's port number.
+        BoariumConfig config = BoariumConfig.parse(new StringReader("listen: :19000\nraknet:\n  enabled: true\nnethernet:\n  port: 19500\n  signaling_port: 19000"));
+        assertEquals(19000, config.rakNet().port());
+        // With NetherNet off, RakNet may take any port.
+        assertEquals(19132, BoariumConfig.parse(new StringReader("raknet:\n  enabled: true\nnethernet:\n  enabled: false")).rakNet().port());
+    }
+
+    @Test
+    void turnsAwayRakNetAndNetherNetBothOff() {
+        String error = assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  enabled: false"))).getMessage();
+        assertEquals("raknet.enabled and nethernet.enabled are both false, so no player could join; turn one on", error);
     }
 
     @Test
@@ -92,9 +169,21 @@ class BoariumConfigTest {
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: 1")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\"")));
         assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_mitigations: sometimes")));
-        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_private_key: key.pem")));
-        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_password: secret")));
-        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet_certificate: 5")));
+        assertEquals("nethernet.https.private_key and nethernet.https.password need nethernet.https.certificate", assertThrows(IllegalArgumentException.class, () -> https("private_key: key.pem")).getMessage());
+        assertThrows(IllegalArgumentException.class, () -> https("password: secret"));
+        assertEquals("nethernet.https.certificate must be a string, got 5", assertThrows(IllegalArgumentException.class, () -> https("certificate: 5")).getMessage());
+        assertEquals("raknet must be a section of keys, got true", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet: true"))).getMessage());
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  https: a.pem")));
+        assertEquals("raknet.enabled must be a boolean, got 1", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  enabled: 1"))).getMessage());
+        assertEquals("nethernet.port must be a whole number from 0 to 65535, got 65536", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  port: 65536"))).getMessage());
+        assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("nethernet:\n  signaling_port: -1")));
+        assertEquals("raknet.port must be a whole number from 0 to 65535, got the text \"19264\"", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("raknet:\n  port: \"19264\""))).getMessage());
+        assertEquals("boar_enabled must be a boolean, got the text \"true\"", assertThrows(IllegalArgumentException.class, () -> BoariumConfig.parse(new StringReader("boar_enabled: \"true\""))).getMessage());
         assertNull(BoariumConfig.parse(new StringReader("fallback_server: \"\"")).fallbackServer());
+    }
+
+    // A config with the given lines in its nethernet.https section.
+    private static BoariumConfig https(String... lines) {
+        return BoariumConfig.parse(new StringReader("nethernet:\n  https:\n" + String.join("\n", Arrays.stream(lines).map(line -> "    " + line).toList())));
     }
 }

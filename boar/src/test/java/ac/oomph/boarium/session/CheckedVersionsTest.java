@@ -386,7 +386,7 @@ class CheckedVersionsTest {
         SessionSettings settings = new SessionSettings(null, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), processors);
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1), login -> joined.complete(Session.login(login, transport, this.server.address(), settings)));
         this.client = new TestClient("Tester", codec, codec.getProtocolVersion());
-        this.client.connect(this.group, this.listener.address());
+        this.client.connect(this.group, this.listener.rakNetAddress());
         this.client.loginDone.get(10, TimeUnit.SECONDS);
 
         StartGamePacket startGame = this.client.await(StartGamePacket.class);

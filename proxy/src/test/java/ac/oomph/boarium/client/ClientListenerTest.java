@@ -75,7 +75,7 @@ class ClientListenerTest {
     void logsInAnOfflineClient() throws Exception {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         ClientLogin login = this.login.get(10, TimeUnit.SECONDS);
         assertEquals("Tester", login.identity().displayName());
@@ -103,7 +103,7 @@ class ClientListenerTest {
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         // The client never sends its first packet, so the login cannot finish.
         client.sendNetworkSettingsRequest = false;
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals("disconnectionScreen.timeout", client.await(DisconnectPacket.class).getKickMessage());
     }
@@ -112,7 +112,7 @@ class ClientListenerTest {
     void leavesAFinishedLoginConnectedPastTheTimeout() throws Exception {
         this.listen(false, Duration.ofMillis(500));
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
         this.login.get(10, TimeUnit.SECONDS);
 
         Thread.sleep(1000);
@@ -125,7 +125,7 @@ class ClientListenerTest {
         this.listen(false, Duration.ofSeconds(2));
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.sendSubClientPacket = true;
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
         client.loginDone.get(10, TimeUnit.SECONDS);
@@ -144,7 +144,7 @@ class ClientListenerTest {
         this.listen(false, Duration.ofMillis(300));
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.sendBrokenLogin = true;
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals("disconnectionScreen.internalError.cantConnect", client.await(DisconnectPacket.class).getKickMessage());
         // Wait past the login timeout, which must not send a second Disconnect.
@@ -162,7 +162,7 @@ class ClientListenerTest {
         ByteBuffer ping = ByteBuffer.allocate(33).put((byte) 0x01).putLong(1234).put(magic).putLong(42);
         try (DatagramSocket socket = new DatagramSocket()) {
             socket.setSoTimeout(5000);
-            socket.send(new DatagramPacket(ping.array(), ping.capacity(), this.listener.address()));
+            socket.send(new DatagramPacket(ping.array(), ping.capacity(), this.listener.rakNetAddress()));
             DatagramPacket pong = new DatagramPacket(new byte[1500], 1500);
             socket.receive(pong);
 
@@ -176,7 +176,7 @@ class ClientListenerTest {
             String[] fields = new String(advertisement, StandardCharsets.UTF_8).split(";");
             assertEquals("boarium", fields[1]);
             assertEquals(String.valueOf(CODEC.getProtocolVersion()), fields[2]);
-            assertEquals(String.valueOf(this.listener.address().getPort()), fields[10]);
+            assertEquals(String.valueOf(this.listener.rakNetAddress().getPort()), fields[10]);
         }
     }
 
@@ -184,7 +184,7 @@ class ClientListenerTest {
     void sendsGophertunnelsNetworkSettingsAndPackStack() throws Exception {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
         client.loginDone.get(10, TimeUnit.SECONDS);
 
         NetworkSettingsPacket settings = this.first(client, NetworkSettingsPacket.class);
@@ -201,7 +201,7 @@ class ClientListenerTest {
     }
 
     private void assertTurnedAway(TestClient client) throws Exception {
-        this.turnedAway.add(client.connect(this.group, this.listener.address()));
+        this.turnedAway.add(client.connect(this.group, this.listener.rakNetAddress()));
         // RakNet gives up connecting after 10 seconds, so a client that never connected fails with its own error, and was not turned away by the proxy.
         String error = assertThrows(ExecutionException.class, () -> client.loginDone.get(15, TimeUnit.SECONDS)).getCause().getMessage();
         assertTrue(error.startsWith("disconnected"), error);
@@ -278,7 +278,7 @@ class ClientListenerTest {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.chainClaims.put("exp", System.currentTimeMillis() / 1000 - 30);
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
     }
@@ -288,7 +288,7 @@ class ClientListenerTest {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.sendToken = true;
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         ClientLogin login = this.login.get(10, TimeUnit.SECONDS);
         assertEquals("Tester", login.identity().displayName());
@@ -305,7 +305,7 @@ class ClientListenerTest {
         client.tokenClaims.remove("leguuid");
         client.tokenClaims.remove("aud");
         client.tokenClaims.put("identity", client.identity.toString());
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals(client.identity, this.login.get(10, TimeUnit.SECONDS).identity().uuid());
     }
@@ -315,7 +315,7 @@ class ClientListenerTest {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.packetsBeforeLogin = ClientBatchDecoder.MAX_PACKETS;
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
     }
@@ -325,7 +325,7 @@ class ClientListenerTest {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
         client.compression = PacketCompressionAlgorithm.NONE;
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals("Tester", this.login.get(10, TimeUnit.SECONDS).identity().displayName());
     }
@@ -352,7 +352,7 @@ class ClientListenerTest {
         this.listen(false);
         TestClient client = this.tokenClient();
         client.tokenClaims.put("identity", UUID.randomUUID().toString());
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertEquals(client.identity, this.login.get(10, TimeUnit.SECONDS).identity().uuid());
     }
@@ -421,7 +421,7 @@ class ClientListenerTest {
     void tellsANewerClientThatTheServerIsOld() throws Exception {
         this.listen(false);
         TestClient client = new TestClient("Tester", BedrockVersions.LATEST, BedrockVersions.LATEST.getProtocolVersion() + 1);
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertThrows(ExecutionException.class, () -> client.loginDone.get(10, TimeUnit.SECONDS));
         assertEquals(PlayStatusPacket.Status.LOGIN_FAILED_SERVER_OLD, assertInstanceOf(PlayStatusPacket.class, client.received.poll(10, TimeUnit.SECONDS)).getStatus());
@@ -431,7 +431,7 @@ class ClientListenerTest {
     void turnsAwayAnotherProtocol() throws Exception {
         this.listen(false);
         TestClient client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion() - 1);
-        client.connect(this.group, this.listener.address());
+        client.connect(this.group, this.listener.rakNetAddress());
 
         assertThrows(ExecutionException.class, () -> client.loginDone.get(10, TimeUnit.SECONDS));
         PlayStatusPacket status = assertInstanceOf(PlayStatusPacket.class, client.received.poll(10, TimeUnit.SECONDS));

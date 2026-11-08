@@ -99,7 +99,7 @@ class UncheckedVersionsTest {
             SessionSettings settings = new SessionSettings(null, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), processors);
             this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1), login -> joined.complete(Session.login(login, transport, server.address(), settings)));
             TestClient client = new TestClient("Tester", codec, codec.getProtocolVersion());
-            client.connect(this.group, this.listener.address());
+            client.connect(this.group, this.listener.rakNetAddress());
             client.loginDone.get(10, TimeUnit.SECONDS);
 
             StartGamePacket startGame = client.await(StartGamePacket.class);

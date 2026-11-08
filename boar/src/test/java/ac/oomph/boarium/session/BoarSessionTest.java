@@ -2512,7 +2512,7 @@ class BoarSessionTest {
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1), login -> this.session.complete(Session.login(login, transport, addr, settings)));
         this.client = new TestClient("Tester", this.codec(), this.codec().getProtocolVersion());
         this.client.deviceOs = deviceOs;
-        this.client.connect(this.group, this.listener.address());
+        this.client.connect(this.group, this.listener.rakNetAddress());
         this.client.loginDone.get(10, TimeUnit.SECONDS);
 
         StartGamePacket startGame = this.client.await(StartGamePacket.class);

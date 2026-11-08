@@ -96,7 +96,7 @@ class SessionTest {
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1),
                 (ClientLogin login) -> this.session.complete(Session.login(login, transport, addr, new SessionSettings(null, timeout, SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        this.client.connect(this.group, this.listener.address());
+        this.client.connect(this.group, this.listener.rakNetAddress());
     }
 
     private void requestChunkRadius(int radius) throws Exception {
@@ -389,7 +389,7 @@ class SessionTest {
         this.listener = ClientListener.bind(this.group, new InetSocketAddress("127.0.0.1", 0), pong, false, Duration.ofMinutes(1),
                 login -> this.session.complete(Session.login(login, transport, this.server.address(), new SessionSettings(fallback, Duration.ofMinutes(1), SessionSettings.DEFAULT.latencyInterval(), joining -> this.processor))));
         this.client = new TestClient("Tester", CODEC, CODEC.getProtocolVersion());
-        this.client.connect(this.group, this.listener.address());
+        this.client.connect(this.group, this.listener.rakNetAddress());
         this.client.loginDone.get(10, TimeUnit.SECONDS);
     }
 

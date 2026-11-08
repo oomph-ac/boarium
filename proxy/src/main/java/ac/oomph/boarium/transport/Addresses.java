@@ -1,7 +1,12 @@
 package ac.oomph.boarium.transport;
 
+import java.io.IOException;
+import java.net.BindException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.channels.DatagramChannel;
+import java.nio.channels.ServerSocketChannel;
+import java.util.Set;
 
 public final class Addresses {
 
@@ -38,5 +43,28 @@ public final class Addresses {
             return new InetSocketAddress(InetAddress.getLoopbackAddress(), port);
         }
         return InetSocketAddress.createUnresolved(host, port);
+    }
+
+    /**
+     * A port free on both TCP and UDP at {@code host}, for a listen port of 0. Another program can still take it before it is bound.
+     *
+     * @param skip ports not to pick, such as ones the config sets for something else
+     */
+    public static int freePort(InetAddress host, Set<Integer> skip) throws IOException {
+        for (int tries = 0; ; tries++) {
+            try (ServerSocketChannel tcp = ServerSocketChannel.open().bind(new InetSocketAddress(host, 0))) {
+                int port = ((InetSocketAddress) tcp.getLocalAddress()).getPort();
+                if (skip.contains(port)) {
+                    continue;
+                }
+                try (DatagramChannel udp = DatagramChannel.open().bind(new InetSocketAddress(host, port))) {
+                    return port;
+                } catch (BindException e) {
+                    if (tries == 20) {
+                        throw e;
+                    }
+                }
+            }
+        }
     }
 }

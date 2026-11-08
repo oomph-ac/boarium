@@ -102,10 +102,10 @@ public record NetherNetHttps(Path certificate, Path privateKey, String password)
             return "";
         }
         if (this.password != null) {
-            return " (check nethernet_password, and leave it empty when the private key is not encrypted)";
+            return " (check nethernet.https.password, and leave it empty when the private key is not encrypted)";
         }
         try {
-            return Files.readString(this.privateKey, StandardCharsets.ISO_8859_1).contains("ENCRYPTED") ? " (the private key is encrypted, so set nethernet_password)" : "";
+            return Files.readString(this.privateKey, StandardCharsets.ISO_8859_1).contains("ENCRYPTED") ? " (the private key is encrypted, so set nethernet.https.password)" : "";
         } catch (Exception ignored) {
             return "";
         }

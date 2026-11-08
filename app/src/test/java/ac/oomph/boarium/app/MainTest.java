@@ -2,6 +2,7 @@ package ac.oomph.boarium.app;
 
 import ac.oomph.boarium.client.TestClient;
 import ac.oomph.boarium.session.FakeSpectrumServer;
+import ac.oomph.boarium.transport.Addresses;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import org.cloudburstmc.protocol.bedrock.codec.v1001.Bedrock_v1001;
@@ -19,16 +20,19 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.net.ConnectException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -39,7 +43,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 // The tests run the installed start script, which is a shell script.
 @DisabledOnOs(OS.WINDOWS)
 class MainTest {
-    private static final Pattern LISTENING = Pattern.compile("listening on \\S*:(\\d+),");
+    private static final Pattern RAKNET = Pattern.compile("RakNet on UDP 127\\.0\\.0\\.1:(\\d+)$");
+    private static final Pattern NETHERNET = Pattern.compile("NetherNet signaling on TCP 127\\.0\\.0\\.1:(\\d+) over HTTP, NetherNet on UDP 127\\.0\\.0\\.1:(\\d+)$");
+    // The QA network and live tests hold these, so a test must never bind them.
+    private static final Set<Integer> TAKEN_PORTS = Set.of(19132, 19133, 19142, 19143);
+    private static final String RAKNET_ON = "raknet:\n  enabled: true\n";
+    // libdatachannel loads its native library from the file this property names, when it is set.
+    private static final String MISSING_NATIVE = "-Dlibdatachannel.native.datachannel-java.path=/nonexistent/missing.dylib";
 
     private final BlockingQueue<String> lines = new LinkedBlockingQueue<>();
     private final List<String> output = new CopyOnWriteArrayList<>();
@@ -50,16 +60,19 @@ class MainTest {
     void runsBoarAndShutsDown(@TempDir Path dir) throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
         FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
-        Process process = this.start(dir, server.address());
+        int netherNetPort = freePort();
+        Process process = this.start(dir, server.address(), "", RAKNET_ON + "nethernet:\n  port: " + netherNetPort + "\n");
         try {
             this.awaitLine("Boar started with its config in " + dir.resolve("boar") + ", mitigations off");
-            this.awaitLine("players can also join over NetherNet");
-            Matcher listening = LISTENING.matcher(this.awaitLine("listening on "));
-            assertTrue(listening.find());
+            Matcher rakNet = this.awaitMatch(RAKNET);
+            Matcher netherNet = this.awaitMatch(NETHERNET);
+            assertEquals(rakNet.group(1), netherNet.group(1));
+            assertEquals(netherNetPort, Integer.parseInt(netherNet.group(2)));
+            this.awaitLine("started, sending players to " + server.address());
             assertTrue(Files.exists(dir.resolve("boar").resolve("config.yml")));
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
-            client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(listening.group(1))));
+            client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
             client.loginDone.get(10, TimeUnit.SECONDS);
             StartGamePacket startGame = client.await(StartGamePacket.class);
             RequestChunkRadiusPacket radius = new RequestChunkRadiusPacket();
@@ -103,19 +116,18 @@ class MainTest {
         }
     }
 
-    // A NetherNet native library that cannot load leaves boarium taking players over RakNet alone.
+    // With RakNet on, a NetherNet native library that cannot load leaves boarium taking players over RakNet alone.
     @Test
     void takesRakNetPlayersWhenNetherNetCannotLoad(@TempDir Path dir) throws Exception {
         EventLoopGroup group = new NioEventLoopGroup(2);
         FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
-        // libdatachannel loads its native library from the file this property names, when it is set.
-        Process process = this.start(dir, server.address(), "-Dlibdatachannel.native.datachannel-java.path=" + dir.resolve("missing.dylib"));
+        Process process = this.start(dir, server.address(), MISSING_NATIVE, RAKNET_ON + "nethernet:\n  port: " + freePort() + "\n");
         try {
+            Matcher rakNet = this.awaitMatch(RAKNET);
             String error = this.awaitLine("NetherNet could not start");
-            assertTrue(error.contains(" ERROR ") && error.contains("UnsatisfiedLinkError"), error);
-            Matcher listening = LISTENING.matcher(this.awaitLine("listening on "));
-            assertTrue(listening.find());
-            InetSocketAddress address = new InetSocketAddress("127.0.0.1", Integer.parseInt(listening.group(1)));
+            assertTrue(error.contains(" ERROR ") && error.contains("UnsatisfiedLinkError") && error.endsWith(", so players can only join over RakNet"), error);
+            this.awaitLine("started, sending players to ");
+            InetSocketAddress address = new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1)));
             try (Socket socket = new Socket()) {
                 assertThrows(ConnectException.class, () -> socket.connect(address, 5000));
             }
@@ -131,9 +143,61 @@ class MainTest {
         }
     }
 
+    // NetherNet alone, as the default config has it, takes players by address on one port.
+    @Test
+    void takesNetherNetPlayersAloneByDefault(@TempDir Path dir) throws Exception {
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer server = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        Process process = this.start(dir, server.address());
+        try {
+            Matcher netherNet = this.awaitMatch(NETHERNET);
+            assertEquals(netherNet.group(1), netherNet.group(2));
+            this.awaitLine("started, sending players to ");
+            assertTrue(this.output.stream().noneMatch(line -> line.contains("RakNet on UDP")), String.join("\n", this.output));
+
+            TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
+            client.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(netherNet.group(1))));
+            client.loginDone.get(30, TimeUnit.SECONDS);
+            // From the server, through boarium.
+            client.await(StartGamePacket.class);
+        } finally {
+            process.destroyForcibly();
+            server.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
+    // With RakNet off, as by default, no player could join without NetherNet.
+    @Test
+    void stopsWhenNetherNetCannotLoadAndRakNetIsOff(@TempDir Path dir) throws Exception {
+        Process process = this.start(dir, "127.0.0.1:1", MISSING_NATIVE, "");
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            String error = this.awaitLine("could not start: java.lang.IllegalStateException: NetherNet could not start with signaling on TCP 127.0.0.1:");
+            assertTrue(error.contains("UnsatisfiedLinkError") && error.endsWith("; RakNet is off, so no player could join"), error);
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    @Test
+    void stopsOnAKeyOfTheOldLayout(@TempDir Path dir) throws Exception {
+        Process process = this.start(dir, "127.0.0.1:1", "", "nethernet: false\n");
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            this.awaitLine("could not start: java.lang.IllegalArgumentException: nethernet is now a section; set nethernet.enabled instead");
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
     @Test
     void stopsWhenTheNetherNetCertificateCannotBeRead(@TempDir Path dir) throws Exception {
-        Process process = this.start(dir, "127.0.0.1:1", "", "nethernet_certificate: missing.pem\nnethernet_private_key: key.pem\n");
+        Process process = this.start(dir, "127.0.0.1:1", "", "nethernet:\n  https:\n    certificate: missing.pem\n    private_key: key.pem\n");
         try {
             assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
             this.reader.join(5000);
@@ -146,21 +210,22 @@ class MainTest {
 
     @Test
     void warnsThatTheNetherNetCertificateIsUnusedWithNetherNetOff(@TempDir Path dir) throws Exception {
-        Process process = this.start(dir, "127.0.0.1:1", "", "nethernet: false\nnethernet_certificate: missing.pem\n");
+        Process process = this.start(dir, "127.0.0.1:1", "", RAKNET_ON + "nethernet:\n  enabled: false\n  https:\n    certificate: missing.pem\n");
         try {
-            assertTrue(this.awaitLine("nethernet is off, so nethernet_certificate is not used").contains(" WARN "));
-            this.awaitLine("listening on ");
+            assertTrue(this.awaitLine("nethernet.enabled is false, so nethernet.https.certificate is not used").contains(" WARN "));
+            this.awaitLine("started, sending players to ");
         } finally {
             process.destroyForcibly();
         }
     }
 
     private Process start(Path dir, String server) throws Exception {
-        return this.start(dir, server, "");
+        return this.start(dir, server, "", "");
     }
 
-    private Process start(Path dir, String server, String javaOpts) throws Exception {
-        return this.start(dir, server, javaOpts, "");
+    // A loopback port free on TCP and UDP, for a NetherNet port next to RakNet on the listen port.
+    private static int freePort() throws Exception {
+        return Addresses.freePort(InetAddress.getLoopbackAddress(), TAKEN_PORTS);
     }
 
     // Starts the installed boarium in dir, on a free loopback port, with Boar on, javaOpts given to its JVM, and extraConfig added to its config.
@@ -188,14 +253,24 @@ class MainTest {
         return process;
     }
 
+    private Matcher awaitMatch(Pattern pattern) throws InterruptedException {
+        Matcher matcher = pattern.matcher(this.await(line -> pattern.matcher(line).find(), pattern.pattern()));
+        assertTrue(matcher.find());
+        return matcher;
+    }
+
     private String awaitLine(String part) throws InterruptedException {
+        return this.await(line -> line.contains(part), part);
+    }
+
+    private String await(Predicate<String> wanted, String what) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (true) {
             String line = this.lines.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
             if (line == null) {
-                throw new IllegalStateException("boarium did not log \"" + part + "\" within 30 seconds:\n" + String.join("\n", this.output));
+                throw new IllegalStateException("boarium did not log \"" + what + "\" within 30 seconds:\n" + String.join("\n", this.output));
             }
-            if (line.contains(part)) {
+            if (wanted.test(line)) {
                 return line;
             }
         }

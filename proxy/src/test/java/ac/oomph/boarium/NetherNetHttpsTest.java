@@ -55,9 +55,9 @@ class NetherNetHttpsTest {
         assertNotNull(new NetherNetHttps(certificate.certificate(), encrypted, "key-password").load());
 
         String error = assertThrows(IllegalArgumentException.class, () -> new NetherNetHttps(certificate.certificate(), encrypted, null).load()).getMessage();
-        assertTrue(error.endsWith("(the private key is encrypted, so set nethernet_password)"), error);
+        assertTrue(error.endsWith("(the private key is encrypted, so set nethernet.https.password)"), error);
         error = assertThrows(IllegalArgumentException.class, () -> new NetherNetHttps(certificate.certificate(), encrypted, "wrong").load()).getMessage();
-        assertTrue(error.endsWith("(check nethernet_password, and leave it empty when the private key is not encrypted)"), error);
+        assertTrue(error.endsWith("(check nethernet.https.password, and leave it empty when the private key is not encrypted)"), error);
         assertFalse(error.contains("wrong"), error);
     }
 
@@ -65,7 +65,7 @@ class NetherNetHttpsTest {
     void hintsAtThePasswordWhenOneIsSetForAKeyThatIsNotEncrypted(@TempDir Path dir) throws Exception {
         TestCertificate certificate = TestCertificate.create(dir);
         String error = assertThrows(IllegalArgumentException.class, () -> new NetherNetHttps(certificate.certificate(), certificate.privateKey(), "secret").load()).getMessage();
-        assertTrue(error.endsWith("(check nethernet_password, and leave it empty when the private key is not encrypted)"), error);
+        assertTrue(error.endsWith("(check nethernet.https.password, and leave it empty when the private key is not encrypted)"), error);
     }
 
     // Out of its dates, a certificate still loads; boarium only warns.
