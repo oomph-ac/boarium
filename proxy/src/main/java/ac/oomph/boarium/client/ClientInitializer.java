@@ -11,6 +11,7 @@ import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 
 import java.time.Duration;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Builds a client's pipeline over RakNet, and the parts of it that every transport shares: boarium's batch checks, the error handler, and the login.
@@ -19,7 +20,7 @@ class ClientInitializer extends BedrockServerInitializer {
     static final AttributeKey<BedrockServerSession> SESSION = AttributeKey.valueOf(ClientInitializer.class.getName() + ".session");
 
     private final boolean requireXbox;
-    private final ResourcePacks packs;
+    private final Supplier<ResourcePacks> packs;
     private final Duration loginTimeout;
     private final Consumer<ClientLogin> onLogin;
 
@@ -27,8 +28,12 @@ class ClientInitializer extends BedrockServerInitializer {
         this(requireXbox, loginTimeout, ResourcePacks.EMPTY, onLogin);
     }
 
-    // Pass the same startup snapshot to each login, without file I/O on the event loop.
+    // Pin one immutable snapshot for each login, without file I/O on the event loop.
     ClientInitializer(boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
+        this(requireXbox, loginTimeout, () -> packs, onLogin);
+    }
+
+    ClientInitializer(boolean requireXbox, Duration loginTimeout, Supplier<ResourcePacks> packs, Consumer<ClientLogin> onLogin) {
         this.requireXbox = requireXbox;
         this.packs = packs;
         this.loginTimeout = loginTimeout;
@@ -64,6 +69,6 @@ class ClientInitializer extends BedrockServerInitializer {
             return;
         }
         session.getPeer().getChannel().attr(SESSION).set(session);
-        session.setPacketHandler(new LoginHandler(session, this.requireXbox, this.loginTimeout, this.packs, this.onLogin));
+        session.setPacketHandler(new LoginHandler(session, this.requireXbox, this.loginTimeout, this.packs.get(), this.onLogin));
     }
 }

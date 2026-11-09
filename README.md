@@ -76,6 +76,27 @@ resource_packs:
   include_exempted: true
 ```
 
-The default directory is empty, which offers no custom packs. `required` defaults to false. `include_exempted` defaults to true for the existing vanilla Education/Chemistry stack; turn it off when these packs override player textures. Packs load before listeners start, in filename order. Duplicate UUIDs, invalid manifests and unsupported module types fail startup. The catalogue is limited to 64 packs and 256 MiB of combined compressed data, kept in memory. Manifest JSON is limited to 1 MiB. A five-minute download deadline starts on the first nonempty SEND_PACKS request; cached-pack clients retain the ordinary login deadline. Duplicate chunk requests are ignored. Restart boarium to load changed archives; use new manifest versions when changing pack content.
+The default directory is empty, which offers no custom packs. `required` defaults to false. `include_exempted` defaults to true for the existing vanilla Education/Chemistry stack; turn it off when these packs override player textures. Packs load in filename order. Duplicate UUIDs, invalid manifests and unsupported module types reject that generation. The catalogue is limited to 64 packs and 256 MiB of combined compressed data, kept in memory. Manifest JSON is limited to 1 MiB. A five-minute download deadline starts on the first nonempty SEND_PACKS request; cached-pack clients retain the ordinary login deadline. Duplicate chunk requests are ignored. Use new manifest versions when changing pack content. A directory symlink can atomically publish a complete immutable generation: boarium checks its resolved target every second and loads changed targets off packet threads for new logins. Active downloads keep their snapshot. Missing or invalid packs, including at startup, reject new logins on that route until repaired; other routes stay available. Do not change files inside a published generation. Changes inside an ordinary directory require a restart.
 
 Optional packs may be declined. Required packs must be accepted to join. Cached packs need no download. Unknown pack IDs, wrong versions and invalid chunk indices disconnect the client. Encrypted packs, behavior packs, scripts and CDN delivery are not supported. boarium does not fetch packs from Spectrum backends: export each backend's complete pack set, including generated custom-item assets, and deploy matching archives before starting the proxy. Servers reached by a transfer must be compatible with the same login pack stack.
+
+## Multiple routes in one process
+
+Pass multiple config paths to run several routes in one JVM:
+
+```
+boarium practice/config.yml hcf/config.yml
+```
+
+Each config uses the settings above and has its own listener ports, backend,
+MOTD, resource-pack catalogue and acceptance policy. Give routes distinct bind
+ports. A TLS edge can route public hostnames to these listener ports, preserving
+pack selection before login. Each config keeps its NetherNet identity in its
+own sibling `nethernet` directory. Backend transfers still require compatible
+login packs; routes do not renegotiate packs during an in-session transfer.
+
+Boar starts once using the first config's sibling `boar` directory. All route
+configs must agree on `boar_enabled`, `boar_mitigations` and `boar_alert_limit`;
+conflicting settings fail before binding. A listener/config startup failure closes routes
+already started and exits. Shutdown closes all routes. Atomic pack publication
+updates only that route's new logins and does not restart any listener.

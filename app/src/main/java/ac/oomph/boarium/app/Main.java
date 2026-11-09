@@ -13,10 +13,13 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
 /**
- * Runs boarium with the config at the path in its first argument, or config.yml, and with Boar when the config turns it on.
+ * Runs one proxy process with one or more route configs, or config.yml, sharing Boar across routes.
  */
 public final class Main {
     private static final Logger LOG = LoggerFactory.getLogger(Main.class);
@@ -25,42 +28,49 @@ public final class Main {
     }
 
     public static void main(String[] args) {
-        Path path = Path.of(args.length > 0 ? args[0] : "config.yml");
-        BoariumConfig config;
-        SslContext netherNetTls;
-        Function<ClientLogin, Processor> processors;
+        List<Path> paths = args.length == 0 ? List.of(Path.of("config.yml"))
+                : java.util.Arrays.stream(args).map(Path::of).toList();
+        List<Boarium> routes = new CopyOnWriteArrayList<>();
         try {
-            config = BoariumConfig.load(path);
-            netherNetTls = netherNetTls(config);
-            processors = processors(config, path);
+            List<BoariumConfig> configs = new ArrayList<>();
+            List<SslContext> tls = new ArrayList<>();
+            for (Path path : paths) {
+                BoariumConfig config = BoariumConfig.load(path);
+                configs.add(config);
+                tls.add(netherNetTls(config));
+            }
+            BoariumConfig first = configs.getFirst();
+            for (int i = 1; i < configs.size(); i++) {
+                BoariumConfig config = configs.get(i);
+                if (config.boarEnabled() != first.boarEnabled() || config.boarMitigations() != first.boarMitigations()
+                        || config.boarAlertLimit() != first.boarAlertLimit()) {
+                    throw new IllegalArgumentException(paths.get(i) + ": routes in one JVM must agree on boar_enabled, boar_mitigations and boar_alert_limit");
+                }
+            }
+            // Boar is a JVM singleton. All routes use the first config's data folder and processors.
+            Function<ClientLogin, Processor> processors = processors(first, paths.getFirst());
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                LOG.info("shutting down");
+                routes.forEach(Boarium::close);
+            }));
+            for (int i = 0; i < configs.size(); i++) {
+                Path path = paths.get(i).toAbsolutePath();
+                BoariumConfig config = configs.get(i);
+                // Each route keeps its original identity, independently of the shared Boar settings.
+                routes.add(Boarium.start(config, tls.get(i), path.resolveSibling("nethernet").resolve("identity.pem"), processors));
+                LOG.info("started, sending players to {}, for Bedrock {}", config.server(), BedrockVersions.names());
+                LOG.info("route config: {}", path);
+            }
         } catch (Exception | Error e) {
-            // A block table that cannot load comes as an ExceptionInInitializerError, with the reason as its cause.
+            routes.forEach(Boarium::close);
             Throwable reason = e instanceof ExceptionInInitializerError && e.getCause() != null ? e.getCause() : e;
-            // An Error is a bug rather than a bad setting, so its stack trace is kept.
             if (e instanceof Error) {
                 LOG.error("could not start: {}", reason.toString(), reason);
             } else {
                 LOG.error("could not start: {}", reason.toString());
             }
             System.exit(1);
-            return;
         }
-        Boarium boarium;
-        try {
-            // The game pins the key the identity holds, so a new one at each start would make every player confirm the server again.
-            boarium = Boarium.start(config, netherNetTls, path.toAbsolutePath().resolveSibling("nethernet").resolve("identity.pem"), processors);
-        } catch (Exception e) {
-            // Netty also throws checked exceptions it does not declare, such as a BindException.
-            LOG.error("could not start: {}", e.toString());
-            System.exit(1);
-            return;
-        }
-        LOG.info("started, sending players to {}, for Bedrock {}", config.server(), BedrockVersions.names());
-        // The event loops keep the JVM running until the shutdown hook below closes them.
-        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            LOG.info("shutting down");
-            boarium.close();
-        }));
     }
 
     // Null for plain HTTP. Never falls back to HTTP: a certificate that cannot be read stops boarium.

@@ -38,6 +38,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Accepts Bedrock clients over RakNet, NetherNet or both, and logs them in. Clients on a protocol that {@link ac.oomph.boarium.protocol.BedrockVersions} lacks are turned away.
@@ -130,6 +131,13 @@ public final class ClientListener {
     /** Binds both transports using an immutable pack catalogue loaded before accepting clients. */
     public static ClientListener bind(EventLoopGroup group, RakNetSettings rakNet, NetherNetSettings netherNet, BedrockPong pong,
                                       boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin)
+            throws InterruptedException {
+        return bind(group, rakNet, netherNet, pong, requireXbox, loginTimeout, () -> packs, onLogin);
+    }
+
+    /** Pins the current catalogue when a new client session is created; existing logins retain their snapshot. */
+    public static ClientListener bind(EventLoopGroup group, RakNetSettings rakNet, NetherNetSettings netherNet, BedrockPong pong,
+                                      boolean requireXbox, Duration loginTimeout, Supplier<ResourcePacks> packs, Consumer<ClientLogin> onLogin)
             throws InterruptedException {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
