@@ -139,11 +139,11 @@ class BoariumConfigTest {
 
     @Test
     void turnsAwayUnknownKeysAtTheTop() {
-        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("rakent:\n  enabled: true"));
-        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("boar_mitigation: true"));
-        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("lisen: :19000\ncolour: red"));
+        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("rakent:\n  enabled: true"));
+        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("boar_mitigation: true"));
+        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("lisen: :19000\ncolour: red"));
         // A short key is not close to another just because both are short.
-        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("mtu: 1400"));
+        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("mtu: 1400"));
     }
 
     // Every bad key in one error, from every section, with the keys of the old layout first; a bad value next to them is not read.
@@ -161,7 +161,7 @@ class BoariumConfigTest {
                 """);
         assertEquals(String.join("\n",
                 "nethernet_password is now nethernet.https.password",
-                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit",
+                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs",
                 "unknown key in raknet: prot (did you mean port?); raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting",
                 "unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password"), error);
     }
