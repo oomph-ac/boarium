@@ -96,6 +96,12 @@ class BoariumConfigTest {
         assertEquals(new NetherNetHttps(Path.of("cert.p12"), null, null), https("certificate: cert.p12").netherNet().https());
     }
 
+    @Test
+    void resolvesResourcePackDirectoryRelativeToConfig(@TempDir Path dir) throws Exception {
+        Path path = Files.writeString(dir.resolve("config.yml"), "resource_packs:\n  directory: packs\n  required: true\n  include_exempted: false\n");
+        assertEquals(new BoariumConfig.ResourcePacks(dir.resolve("packs"), true, false), BoariumConfig.load(path).resourcePacks());
+    }
+
     // YAML reads an unquoted 123456 as a number and yes as true; the error must not print them.
     @Test
     void keepsTheNetherNetPasswordOutOfErrorsAndToString() {

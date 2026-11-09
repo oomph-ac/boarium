@@ -31,6 +31,7 @@ import java.security.KeyPair;
 import java.security.PublicKey;
 import java.time.Duration;
 import java.util.List;
+import java.util.BitSet;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -69,6 +70,8 @@ final class LoginHandler implements BedrockPacketHandler {
     private final ResourcePacks packs;
     private final Map<UUID, ResourcePacks.Pack> requestedPacks = new HashMap<>();
     private final Consumer<ClientLogin> onLogin;
+    private final Duration downloadTimeout;
+    private final Map<UUID, BitSet> sentChunks = new HashMap<>();
 
     private Step step = Step.NETWORK_SETTINGS;
     private Identity identity;
@@ -83,6 +86,15 @@ final class LoginHandler implements BedrockPacketHandler {
 
     // The catalogue was validated at startup and is shared without per-login archive copies.
     LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
+        this(session, requireXbox, timeout, Duration.ofMinutes(5), packs, onLogin);
+    }
+
+    // Start this separate deadline only when a client requests archive bytes.
+    LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, Duration downloadTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
+        if (downloadTimeout.toMillis() < 1) {
+            throw new IllegalArgumentException("download timeout must be at least 1 ms");
+        }
+        this.downloadTimeout = downloadTimeout;
         this.session = session;
         this.netherNet = session.getPeer() instanceof NetherNetPeer;
         this.requireXbox = requireXbox;
@@ -266,11 +278,6 @@ final class LoginHandler implements BedrockPacketHandler {
         status.setStatus(PlayStatusPacket.Status.LOGIN_SUCCESS);
         this.session.sendPacket(status);
 
-        if (!this.packs.packs.isEmpty()) {
-            this.timeout.cancel(false);
-            this.timeout = this.session.getPeer().getChannel().eventLoop().schedule(
-                    () -> this.fail("disconnectionScreen.timeout"), 5, TimeUnit.MINUTES);
-        }
         ResourcePacksInfoPacket info = new ResourcePacksInfoPacket();
         info.setForcedToAccept(this.packs.required);
         for (ResourcePacks.Pack pack : this.packs.packs) {
@@ -295,8 +302,10 @@ final class LoginHandler implements BedrockPacketHandler {
     public PacketSignal handle(ResourcePackClientResponsePacket packet) {
         switch (packet.getStatus()) {
             case SEND_PACKS -> {
-                if (this.step != Step.RESOURCE_PACKS || packet.getPackIds().isEmpty()
-                        || packet.getPackIds().size() > this.packs.packs.size()) {
+                if (packet.getPackIds().isEmpty() && (this.step == Step.RESOURCE_PACKS || this.step == Step.PACK_DOWNLOAD)) {
+                    return PacketSignal.HANDLED;
+                }
+                if (this.step != Step.RESOURCE_PACKS || packet.getPackIds().size() > this.packs.packs.size()) {
                     return this.outOfOrder();
                 }
                 var seen = new HashSet<String>();
@@ -307,13 +316,17 @@ final class LoginHandler implements BedrockPacketHandler {
                     }
                     this.requestedPacks.put(pack.id, pack);
                 }
+                this.timeout.cancel(false);
+                this.timeout = this.session.getPeer().getChannel().eventLoop().schedule(
+                        () -> this.fail("disconnectionScreen.timeout"), this.downloadTimeout.toMillis(), TimeUnit.MILLISECONDS);
                 this.step = Step.PACK_DOWNLOAD;
                 for (ResourcePacks.Pack pack : this.requestedPacks.values()) {
                     this.session.sendPacket(pack.dataInfo());
                 }
             }
             case HAVE_ALL_PACKS -> {
-                if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD) {
+                if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD
+                        && !(this.packs.packs.isEmpty() && this.step == Step.PACK_STACK)) {
                     return this.outOfOrder();
                 }
                 this.sendPackStack(true);
@@ -322,20 +335,21 @@ final class LoginHandler implements BedrockPacketHandler {
                 if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD) {
                     return this.outOfOrder();
                 }
-                if (this.packs.required) {
+                if (this.packs.required || this.packs.packs.isEmpty()) {
                     return this.fail("disconnectionScreen.resourcePack");
                 }
                 this.sendPackStack(false);
             }
             case COMPLETED -> {
-                if (this.step != Step.PACK_STACK) {
+                if (this.step != Step.PACK_STACK && !(this.packs.packs.isEmpty() && this.step == Step.RESOURCE_PACKS)) {
                     return this.outOfOrder();
                 }
                 this.step = Step.DONE;
                 this.timeout.cancel(false);
                 this.onLogin.accept(new ClientLogin(this.session, this.identity, this.clientData, this.xboxAuthenticated, this.clientCacheSupported));
             }
-            default -> { return this.outOfOrder(); }
+            default -> { return this.step == Step.RESOURCE_PACKS || this.step == Step.PACK_DOWNLOAD || this.step == Step.PACK_STACK
+                    ? this.fail("disconnectionScreen.resourcePack") : this.outOfOrder(); }
         }
         return PacketSignal.HANDLED;
     }
@@ -356,6 +370,7 @@ final class LoginHandler implements BedrockPacketHandler {
         }
         this.step = Step.PACK_STACK;
         this.requestedPacks.clear();
+        this.sentChunks.clear();
         this.session.sendPacket(stack);
     }
 
@@ -369,7 +384,15 @@ final class LoginHandler implements BedrockPacketHandler {
             return this.fail("disconnectionScreen.resourcePack");
         }
         try {
-            this.session.sendPacket(pack.chunk(packet.getChunkIndex()));
+            int index = packet.getChunkIndex();
+            if (index < 0 || index >= pack.chunkCount()) {
+                return this.fail("disconnectionScreen.resourcePack");
+            }
+            BitSet sent = this.sentChunks.computeIfAbsent(pack.id, ignored -> new BitSet());
+            if (!sent.get(index)) {
+                sent.set(index);
+                this.session.sendPacket(pack.chunk(index));
+            }
         } catch (IllegalArgumentException e) {
             return this.fail("disconnectionScreen.resourcePack");
         }

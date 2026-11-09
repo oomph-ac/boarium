@@ -56,7 +56,7 @@ public final class ResourcePacks {
                     }
                     Pack pack = read(path, remaining);
                     if (!ids.add(pack.id)) {
-                        throw new IOException("duplicate resource pack UUID: " + pack.id);
+                        throw new IOException("duplicate resource pack UUID in " + path + ": " + pack.id);
                     }
                     packs.add(pack);
                     remaining -= pack.bytes.length;
@@ -79,8 +79,8 @@ public final class ResourcePacks {
             JsonObject manifest;
             try (var zip = new ZipFile(path.toFile())) {
                 var entry = zip.getEntry("manifest.json");
-                if (entry == null || zip.getEntry("contents.json") != null) {
-                    throw new IOException("expected an unencrypted pack with manifest.json at the archive root");
+                if (entry == null) {
+                    throw new IOException("expected manifest.json at the archive root");
                 }
                 try (var input = zip.getInputStream(entry)) {
                     byte[] json = input.readNBytes(MAX_MANIFEST + 1);
@@ -92,17 +92,24 @@ public final class ResourcePacks {
             }
             JsonObject header = manifest.getAsJsonObject("header");
             UUID id = UUID.fromString(header.get("uuid").getAsString());
-            JsonArray version = header.getAsJsonArray("version");
-            if (version.size() != 3) {
+            JsonElement version = header.get("version");
+            List<String> parts = new ArrayList<>();
+            if (version.isJsonArray()) {
+                for (JsonElement part : version.getAsJsonArray()) {
+                    parts.add(part.getAsString());
+                }
+            } else if (version.isJsonPrimitive() && version.getAsJsonPrimitive().isString()) {
+                parts.addAll(List.of(version.getAsString().split("\\.", -1)));
+            } else {
+                throw new IllegalArgumentException("header.version must be an array or dotted string");
+            }
+            if (parts.size() != 3) {
                 throw new IllegalArgumentException("header.version must have three integers");
             }
-            List<String> parts = new ArrayList<>();
-            for (JsonElement part : version) {
-                String value = part.getAsString();
+            for (String value : parts) {
                 if (!value.matches("0|[1-9][0-9]*") || Long.parseLong(value) > Integer.MAX_VALUE) {
                     throw new IllegalArgumentException("invalid version component");
                 }
-                parts.add(value);
             }
             JsonArray modules = manifest.getAsJsonArray("modules");
             if (modules.size() == 0) {
@@ -120,7 +127,7 @@ public final class ResourcePacks {
                 }
             }
             return new Pack(id, String.join(".", parts), bytes, MessageDigest.getInstance("SHA-256").digest(bytes), raytracing);
-        } catch (RuntimeException | NoSuchAlgorithmException e) {
+        } catch (IOException | RuntimeException | NoSuchAlgorithmException e) {
             throw new IOException("invalid resource pack " + path + ": " + e.getMessage(), e);
         }
     }
@@ -150,12 +157,17 @@ public final class ResourcePacks {
             return new ResourcePacksInfoPacket.Entry(this.id, this.version, this.bytes.length, "", "", "", false, this.raytracing, false, "");
         }
 
+        // The count is bounded by the startup archive limit.
+        int chunkCount() {
+            return (this.bytes.length + CHUNK_SIZE - 1) / CHUNK_SIZE;
+        }
+
         ResourcePackDataInfoPacket dataInfo() {
             ResourcePackDataInfoPacket packet = new ResourcePackDataInfoPacket();
             packet.setPackId(this.id);
             packet.setPackVersion(this.version);
             packet.setMaxChunkSize(CHUNK_SIZE);
-            packet.setChunkCount((this.bytes.length + CHUNK_SIZE - 1) / CHUNK_SIZE);
+            packet.setChunkCount(this.chunkCount());
             packet.setCompressedPackSize(this.bytes.length);
             packet.setHash(this.hash.clone());
             packet.setType(ResourcePackType.RESOURCES);
@@ -164,7 +176,7 @@ public final class ResourcePacks {
 
         // Validate before multiplication, including negative and overflowing client indices.
         ResourcePackChunkDataPacket chunk(int index) {
-            if (index < 0 || index >= (this.bytes.length + CHUNK_SIZE - 1) / CHUNK_SIZE) {
+            if (index < 0 || index >= this.chunkCount()) {
                 throw new IllegalArgumentException("resource pack chunk index out of range");
             }
             int offset = index * CHUNK_SIZE;
@@ -173,7 +185,7 @@ public final class ResourcePacks {
             packet.setPackVersion(this.version);
             packet.setChunkIndex(index);
             packet.setProgress(offset);
-            packet.setData(Unpooled.copiedBuffer(this.bytes, offset, Math.min(CHUNK_SIZE, this.bytes.length - offset)));
+            packet.setData(Unpooled.wrappedBuffer(this.bytes, offset, Math.min(CHUNK_SIZE, this.bytes.length - offset)).asReadOnly());
             return packet;
         }
     }

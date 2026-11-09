@@ -63,6 +63,17 @@ class NetherNetLoginTest {
     }
 
     @Test
+    void emptyCatalogueKeepsNoneRefusalReason() throws Exception {
+        this.openChild(this.client.key);
+        this.logIn();
+        // Client libraries may suppress NONE; exercise its server-side handling directly.
+        this.channel.eventLoop().submit(() -> this.channel.attr(ClientInitializer.SESSION).get()
+                .getPacketHandler().handle(response(ResourcePackClientResponsePacket.Status.NONE))).get(5, TimeUnit.SECONDS);
+        DisconnectPacket packet = assertInstanceOf(DisconnectPacket.class, this.receive().getFirst());
+        assertEquals("disconnectionScreen.resourcePack", packet.getKickMessage());
+    }
+
+    @Test
     void logsInAClientWhoseLoginKeyIsItsSignalingKeyWithoutTheHandshake() throws Exception {
         this.openChild(this.client.key);
         List<BedrockPacket> answer = this.logIn();

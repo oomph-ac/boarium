@@ -92,6 +92,8 @@ public final class TestClient {
     boolean loginInOneUnencryptedBatch;
     boolean sendNetworkSettingsRequest = true;
     boolean sendBrokenLogin;
+    boolean manualPacks;
+    java.util.function.Consumer<org.cloudburstmc.protocol.bedrock.packet.ResourcePackChunkDataPacket> onPackChunk = packet -> {};
     boolean sendSubClientPacket;
     // When set, the client logs in with a self-signed token holding tokenClaims, as the game does, instead of a one-entry chain.
     boolean sendToken;
@@ -362,6 +364,7 @@ public final class TestClient {
 
         @Override
         public PacketSignal handle(ResourcePacksInfoPacket packet) {
+            if (TestClient.this.manualPacks) return PacketSignal.HANDLED;
             ClientCacheStatusPacket cache = new ClientCacheStatusPacket();
             cache.setSupported(true);
             this.session.sendPacket(cache);
@@ -372,7 +375,14 @@ public final class TestClient {
         }
 
         @Override
+        public PacketSignal handle(org.cloudburstmc.protocol.bedrock.packet.ResourcePackChunkDataPacket packet) {
+            TestClient.this.onPackChunk.accept(packet);
+            return PacketSignal.HANDLED;
+        }
+
+        @Override
         public PacketSignal handle(ResourcePackStackPacket packet) {
+            if (TestClient.this.manualPacks) return PacketSignal.HANDLED;
             ResourcePackClientResponsePacket response = new ResourcePackClientResponsePacket();
             response.setStatus(ResourcePackClientResponsePacket.Status.COMPLETED);
             this.session.sendPacket(response);
