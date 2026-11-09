@@ -26,6 +26,7 @@ dependencies {
         version { strictly(libs.versions.libdatachannel.get()) }
     }
     implementation(libs.aircompressor)
+    implementation(libs.gson)
     implementation(libs.snakeyaml)
     implementation(libs.slf4j.api)
     runtimeOnly(libs.slf4j.simple)

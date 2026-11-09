@@ -61,3 +61,33 @@ While NetherNet is on, boarium keeps the key that the game trusts the server by 
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.
 
 boarium logs Boar's flags to its console, up to `boar_alert_limit`, in one line each: Boar's alert, with the `prefix` from Boar's config, and whether `boar_mitigations` lets Boar act on the player. A movement trace that Boar adds with `debug-mode` on goes to the DEBUG level, which boarium shows when started with `JAVA_OPTS=-Dorg.slf4j.simpleLogger.log.Boar=debug`.
+
+## Resource packs
+
+Boarium can serve unencrypted resource-only `.mcpack` or `.zip` archives during
+login. The archive must contain `manifest.json` at its root. Configure a directory
+relative to `config.yml` (or an absolute path):
+
+```yaml
+resource_packs:
+  directory: packs
+  required: false
+  include_exempted: false
+```
+
+The default directory is empty, which offers no custom packs. `required` defaults
+to false. `include_exempted` defaults to true for the existing vanilla
+Education/Chemistry stack; turn it off when these packs override player textures.
+Packs load before listeners start, in filename order. Duplicate UUIDs, invalid
+manifests and unsupported module types fail startup. The catalogue is limited to
+64 packs and 256 MiB of combined compressed data, kept in memory. Manifest JSON
+is limited to 1 MiB. Pack downloads have a five-minute deadline. Restart Boarium
+to load changed archives; use new manifest versions when changing pack content.
+
+Optional packs may be declined. Required packs must be accepted to join. Cached
+packs need no download. Unknown pack IDs, wrong versions and invalid chunk
+indices disconnect the client. Encrypted packs, behavior packs, scripts and CDN
+delivery are not supported. Boarium does not fetch packs from Spectrum backends:
+export each backend's complete pack set, including generated custom-item assets,
+and deploy matching archives before starting the proxy. Servers reached by a
+transfer must be compatible with the same login pack stack.

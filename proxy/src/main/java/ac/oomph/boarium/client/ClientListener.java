@@ -124,6 +124,13 @@ public final class ClientListener {
      */
     public static ClientListener bind(EventLoopGroup group, RakNetSettings rakNet, NetherNetSettings netherNet, BedrockPong pong, boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin)
             throws InterruptedException {
+        return bind(group, rakNet, netherNet, pong, requireXbox, loginTimeout, ResourcePacks.EMPTY, onLogin);
+    }
+
+    /** Binds both transports using an immutable pack catalogue loaded before accepting clients. */
+    public static ClientListener bind(EventLoopGroup group, RakNetSettings rakNet, NetherNetSettings netherNet, BedrockPong pong,
+                                      boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin)
+            throws InterruptedException {
         if (loginTimeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + loginTimeout);
         }
@@ -151,7 +158,7 @@ public final class ClientListener {
             ServerBootstrap bootstrap = new ServerBootstrap()
                     .group(group)
                     .channelFactory(RakChannelFactory.server(NioDatagramChannel.class))
-                    .childHandler(new ClientInitializer(requireXbox, loginTimeout, onLogin));
+                    .childHandler(new ClientInitializer(requireXbox, loginTimeout, packs, onLogin));
             // The limits as Geyser sets them.
             if (rakNet.rateLimiting()) {
                 bootstrap.option(RakChannelOption.RAK_THROTTLE, new RakNetThrottle(rakNet.maxConnectionsPerAddress()))
@@ -166,7 +173,7 @@ public final class ClientListener {
         NetherNet netherNetListening = null;
         if (netherNet != null) {
             try {
-                netherNetListening = bindNetherNet(group, netherNet, requireXbox, new NetherNetInitializer(requireXbox, loginTimeout, onLogin));
+                netherNetListening = bindNetherNet(group, netherNet, requireXbox, new NetherNetInitializer(requireXbox, loginTimeout, packs, onLogin));
             } catch (NetherNetFailure e) {
                 if (rakNetChannel == null) {
                     throw new IllegalStateException(e.explain("; RakNet is off, so no player could join"), e.getCause());
