@@ -50,10 +50,10 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `shutdown_message` | `boarium closed.` | What players see when boarium shuts down. |
 | `boar_enabled` | `true` | Whether the Boar anticheat checks players. |
 | `boar_mitigations` | `true` | Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them. When it is off, Boar only logs what it finds. |
-| `resource_packs.directory` | `""` | Resource-only pack directory, relative to config.yml. Empty offers no custom packs. |
+| `boar_alert_limit` | `1` | How many of Boar's flags a second, for each player and check, boarium logs to its console. The next line after some were held back ends with `(+N more)`. 0 logs every flag. Boar still counts and acts on every flag. |
+| `resource_packs.directory` | empty | Resource-only pack directory, relative to config.yml. Empty offers no custom packs. |
 | `resource_packs.required` | `false` | Require players to accept custom packs. |
 | `resource_packs.include_exempted` | `true` | Include the vanilla Education/Chemistry stack. |
-| `boar_alert_limit` | `1` | How many of Boar's flags a second, for each player and check, boarium logs to its console. The next line after some were held back ends with `(+N more)`. 0 logs every flag. Boar still counts and acts on every flag. |
 
 boarium does not start when its config has a key it does not take, such as a misspelt one, and names that key.
 
