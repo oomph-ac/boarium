@@ -221,6 +221,15 @@ In Minecraft 26.60, add a server with your machine's address and port 19132, and
 
 boarium logs each of Boar's flags as one line, such as `Boar > Steve failed Bad Packet (B) x1 … [mitigations on]`. It logs at most one a second for each player and check (`boar_alert_limit`).
 
+To also post flags, kicks, starts and stops to a Discord channel, make a webhook in the channel's settings (Integrations, Webhooks, New Webhook, Copy Webhook URL) and put it in the `discord` section of `config.yml`:
+
+```yaml
+discord:
+  webhook_url: "https://discord.com/api/webhooks/…"
+```
+
+Each event's message, and whether joins and leaves are posted too, is set under `discord`; see [Discord logs](README.md#discord-logs) in the README.
+
 ## Troubleshooting
 
 | What you see | Why, and what to do |

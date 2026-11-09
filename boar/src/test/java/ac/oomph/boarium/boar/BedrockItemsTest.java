@@ -15,6 +15,7 @@ import ac.oomph.boarium.boar.blocks.BedrockBlockUnion;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.boar.blocks.BedrockState;
 import ac.oomph.boarium.boar.blocks.GeyserFixtures;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.nbt.NbtMap;
@@ -323,7 +324,7 @@ class BedrockItemsTest {
     // A session of a client on this protocol
     private static BoariumPlayerManager.BoariumNetworkSession session(int protocol, List<ItemDefinition> items, StartGamePacket startGame) {
         BedrockItems.SessionItems sessionItems = new BedrockItems.SessionItems(BedrockItems.forProtocol(protocol), Definitions.items(items), BedrockPalette.mappingInfo(BedrockBlockTable.forProtocol(protocol), startGame));
-        return new BoariumPlayerManager.BoariumNetworkSession(null, 0, sessionItems);
+        return new BoariumPlayerManager.BoariumNetworkSession(null, 0, sessionItems, DiscordLog.NONE);
     }
 
     private static StartGamePacket startGame(BlockPropertyData... blocks) {

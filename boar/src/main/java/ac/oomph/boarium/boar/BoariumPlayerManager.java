@@ -1,5 +1,6 @@
 package ac.oomph.boarium.boar;
 
+import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.ack.BatchAcknowledgmentTransport;
 import ac.boar.anticheat.ack.BoarAcknowledgmentTransport;
 import ac.boar.anticheat.data.block.BoarBlockState;
@@ -18,8 +19,11 @@ import ac.boar.protocol.BoarConnection;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockPalette;
 import ac.oomph.boarium.client.ClientDisconnect;
+import ac.oomph.boarium.discord.DiscordEvent;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.session.Session;
 import io.netty.channel.Channel;
+import io.netty.util.AttributeKey;
 import io.netty.util.ReferenceCountUtil;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.data.BuildPlatform;
@@ -55,10 +59,14 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
     // Not final, since the tests share one Boar and change it.
     volatile boolean mitigations;
     final ConsoleAlerts alerts;
+    final DiscordAlerts discordAlerts;
+    private final DiscordLog discord;
 
-    BoariumPlayerManager(boolean mitigations, int alertLimit) {
+    BoariumPlayerManager(boolean mitigations, int alertLimit, DiscordLog discord) {
         this.mitigations = mitigations;
         this.alerts = new ConsoleAlerts(alertLimit);
+        this.discordAlerts = new DiscordAlerts(discord);
+        this.discord = discord;
     }
 
     // Adds the player of a session whose client was sent this StartGame, which sets the client's block runtime IDs, or returns null when Boar does not know them.
@@ -101,7 +109,8 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
 
     @Override
     protected NetworkSession createNetworkSession(Session session) {
-        return new BoariumNetworkSession(session, deviceOs(session.client().clientData()), new BedrockItems.SessionItems(BedrockItems.forProtocol(session.codec().getProtocolVersion()), session.itemDefinitions(), this.getMappingInfo(session)));
+        return new BoariumNetworkSession(session, deviceOs(session.client().clientData()), new BedrockItems.SessionItems(BedrockItems.forProtocol(session.codec().getProtocolVersion()), session.itemDefinitions(), this.getMappingInfo(session)),
+                this.discord);
     }
 
     @Override
@@ -186,11 +195,18 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
         }
     }
 
+    // The player's Xbox user ID, empty when Xbox Live did not sign it in.
+    static String xuid(BoarPlayer player) {
+        return ((BoariumNetworkSession) player.getSession()).session().client().identity().xuid();
+    }
+
+    private static final AttributeKey<Boolean> KICKED = AttributeKey.valueOf(BoariumPlayerManager.class.getName() + ".kicked");
+
     private static Channel channel(Session session) {
         return session.client().session().getPeer().getChannel();
     }
 
-    record BoariumNetworkSession(Session session, int deviceOs, BedrockItems.SessionItems items) implements NetworkSession {
+    record BoariumNetworkSession(Session session, int deviceOs, BedrockItems.SessionItems items, DiscordLog discord) implements NetworkSession {
         @Override
         public String name() {
             return this.session.client().identity().displayName();
@@ -223,8 +239,14 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
             return ClientDisconnect.ended(this.session.client().session()).isDone();
         }
 
+        // Boar disconnects a player only to kick it, and may do so again before the connection closes.
         @Override
         public void disconnect(String reason) {
+            if (!this.isClosed() && this.discord.posts(DiscordEvent.KICK) && channel(this.session).attr(KICKED).setIfAbsent(Boolean.TRUE) == null) {
+                String prefix = Boar.getInstance().getAlertManager().getPrefix();
+                String text = ConsoleAlerts.plain(reason.startsWith(prefix) ? reason.substring(prefix.length()) : reason).strip();
+                this.discord.post(DiscordEvent.KICK, Map.of("player", this.name(), "xuid", this.session.client().identity().xuid(), "reason", text));
+            }
             ClientDisconnect.disconnect(this.session.client().session(), reason);
         }
 

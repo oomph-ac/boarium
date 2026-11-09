@@ -1,5 +1,6 @@
 package ac.oomph.boarium.boar;
 
+import ac.oomph.boarium.discord.DiscordLog;
 import org.junit.jupiter.api.Test;
 
 import java.nio.charset.StandardCharsets;
@@ -12,8 +13,8 @@ class BoariumPlayerManagerTest {
 
     @Test
     void disablesMitigationsUnlessTheyAreOn() {
-        assertTrue(new BoariumPlayerManager(false, 1).shouldDisableMitigations(null));
-        assertFalse(new BoariumPlayerManager(true, 1).shouldDisableMitigations(null));
+        assertTrue(new BoariumPlayerManager(false, 1, DiscordLog.NONE).shouldDisableMitigations(null));
+        assertFalse(new BoariumPlayerManager(true, 1, DiscordLog.NONE).shouldDisableMitigations(null));
     }
 
     // UWP (7), WIN32 (8) and XBOX (13), as in Geyser's BedrockPlatform. 0 is what a client data without a DeviceOS reads as, and -1 and 16 are outside Geyser's platforms.
@@ -21,7 +22,7 @@ class BoariumPlayerManagerTest {
     void onlyWindowsAndXboxSeedRandomOffsetsFromWideX() {
         for (int deviceOs = -1; deviceOs <= 16; deviceOs++) {
             boolean wide = deviceOs == 7 || deviceOs == 8 || deviceOs == 13;
-            assertEquals(wide, new BoariumPlayerManager.BoariumNetworkSession(null, deviceOs, null).wideRandomOffsetSeed(), "DeviceOS " + deviceOs);
+            assertEquals(wide, new BoariumPlayerManager.BoariumNetworkSession(null, deviceOs, null, DiscordLog.NONE).wideRandomOffsetSeed(), "DeviceOS " + deviceOs);
         }
     }
 

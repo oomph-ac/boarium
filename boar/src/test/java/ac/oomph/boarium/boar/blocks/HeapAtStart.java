@@ -1,6 +1,7 @@
 package ac.oomph.boarium.boar.blocks;
 
 import ac.oomph.boarium.boar.BoariumBoar;
+import ac.oomph.boarium.discord.DiscordLog;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 
 import java.lang.reflect.Field;
@@ -14,7 +15,7 @@ public final class HeapAtStart {
         long before = usedHeap();
         BedrockBlockUnion.get().projection(BedrockBlockTable.get().protocol());
         System.out.println("tables " + (usedHeap() - before) + " " + loadedTables());
-        BoariumBoar.start(Files.createTempDirectory(Path.of(args[0]), "boar"), false, 1);
+        BoariumBoar.start(Files.createTempDirectory(Path.of(args[0]), "boar"), false, 1, DiscordLog.NONE);
         BedrockPalette.mappingInfo(new StartGamePacket());
         System.out.println("start " + (usedHeap() - before) + " " + loadedTables());
         BedrockBlockUnion.build();

@@ -7,6 +7,7 @@ import ac.boar.mappings.item.Item;
 import ac.boar.mappings.item.Items;
 import ac.oomph.boarium.boar.blocks.BedrockBlock;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.protocol.Definitions;
 import org.cloudburstmc.protocol.bedrock.data.definitions.SimpleItemDefinition;
@@ -123,7 +124,7 @@ class BedrockItemVersionsTest {
     @Test
     void version1_26_30IsBoarsItems() {
         BedrockItems.Version items = BedrockItems.forProtocol(1001);
-        BoariumPlayerManager.BoariumNetworkSession session = new BoariumPlayerManager.BoariumNetworkSession(null, 0, new BedrockItems.SessionItems(items, Definitions.items(List.of()), null));
+        BoariumPlayerManager.BoariumNetworkSession session = new BoariumPlayerManager.BoariumNetworkSession(null, 0, new BedrockItems.SessionItems(items, Definitions.items(List.of()), null), DiscordLog.NONE);
         for (String name : items.names) {
             assertSame(BoarItemStack.of(session, ItemData.builder().definition(new SimpleItemDefinition(name, 0, false)).count(1).build()).item(), items.items.get(name), name);
         }

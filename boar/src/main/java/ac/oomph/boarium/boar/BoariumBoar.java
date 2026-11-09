@@ -8,6 +8,8 @@ import ac.boar.protocol.BoarDefaultPacketListeners;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockBlockUnion;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.discord.DiscordEvent;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -48,12 +50,13 @@ public final class BoariumBoar {
      *
      * @param mitigations whether Boar may change what players do, such as setting them back
      * @param alertLimit  how many of Boar's flags a second for each player and check go to the console, or 0 for all
+     * @param discord     where Boar's flags and kicks are posted
      * @return the processors for {@link ac.oomph.boarium.session.SessionSettings}, which give each player to Boar
      * @throws IllegalArgumentException if alertLimit is negative
      * @throws IllegalStateException if Boar has started already
      * @throws IOException if Boar's config cannot be read, or its default cannot be written
      */
-    public static synchronized Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations, int alertLimit) throws IOException {
+    public static synchronized Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations, int alertLimit, DiscordLog discord) throws IOException {
         if (alertLimit < 0) {
             throw new IllegalArgumentException("alertLimit must be 0 or more, got " + alertLimit);
         }
@@ -70,10 +73,13 @@ public final class BoariumBoar {
             BedrockItems.forProtocol(protocol);
         }
         started = true;
-        BoariumPlayerManager players = new BoariumPlayerManager(mitigations, alertLimit);
+        BoariumPlayerManager players = new BoariumPlayerManager(mitigations, alertLimit, discord);
         Boar.getInstance().init(new BoariumPlatform(dataFolder, players));
         // Boar's own alerts reach only those who turn them on with a command, and boarium has no commands.
         Boar.getInstance().getViolationRegistry().register(players.alerts);
+        if (discord.posts(DiscordEvent.FLAG)) {
+            Boar.getInstance().getViolationRegistry().register(players.discordAlerts);
+        }
         BoarDefaultChecks.registerAll(Boar.getInstance().getCheckRegistry());
         BoarDefaultAcknowledgments.registerAll(Boar.getInstance().getAcknowledgmentRegistry());
         BoarDefaultPacketListeners.registerAll();

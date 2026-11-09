@@ -3,6 +3,7 @@ package ac.oomph.boarium.boar;
 import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.session.Processor;
 
 import java.io.IOException;
@@ -42,7 +43,7 @@ public final class TestBoar {
 
     public static synchronized Function<ClientLogin, Processor> start() throws IOException {
         if (processors == null) {
-            processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false, 1);
+            processors = BoariumBoar.start(Files.createTempDirectory(Files.createDirectories(Path.of("build")), "boar"), false, 1, DiscordLog.NONE);
             Boar.getConfig().setStaticSeatIdentifiers(List.of(STATIC_SEAT));
         }
         return processors;

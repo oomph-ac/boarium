@@ -1,5 +1,7 @@
 package ac.oomph.boarium;
 
+import ac.oomph.boarium.discord.DiscordEvent;
+import ac.oomph.boarium.discord.MessageTemplate;
 import ac.oomph.boarium.transport.Addresses;
 import org.cloudburstmc.netty.channel.nethernet.signaling.AdvertisedAddresses;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -9,14 +11,18 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.EnumMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -25,7 +31,7 @@ import java.util.Set;
  * A port of 0 in the file means the listen port, and is read as that port here, so a port is 0 only when the listen port is.
  */
 public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
-                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit) {
+                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit, Discord discord) {
 
     /**
      * @param port                     the UDP port
@@ -44,6 +50,21 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
      * @param stunDiscovery      whether to find this machine's public address through public STUN servers while advertiseAddresses is empty
      */
     public record NetherNet(boolean enabled, int port, int signalingPort, NetherNetHttps https, List<String> advertiseAddresses, boolean stunDiscovery) {
+    }
+
+    /**
+     * @param username  the name that posts show, or null for the webhook's own
+     * @param posts     the events that are posted; an event that is off or has no webhook is not in it
+     * @param flagLimit how many of Boar's flags a minute, for each player and check, are posted, or 0 for all
+     */
+    public record Discord(String username, Map<DiscordEvent, Post> posts, int flagLimit) {
+        public record Post(URI webhook, MessageTemplate message) {
+            // Without the URL's path, which holds the webhook's token.
+            @Override
+            public String toString() {
+                return "Post[webhook=" + this.webhook.getHost() + ", message=" + this.message + "]";
+            }
+        }
     }
 
     static final String DEFAULT_FILE = """
@@ -106,14 +127,65 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             boar_mitigations: true
             # How many of Boar's flags a second, for each player and check, boarium logs to its console. 0 logs every flag.
             boar_alert_limit: 1
+            # Discord webhooks that boarium posts its logs to. Nothing is posted while every webhook_url is empty.
+            discord:
+              # The webhook to post to. In Discord, open the channel's settings, then Integrations, Webhooks, New Webhook, and Copy Webhook URL.
+              # Keep it secret: anyone who has it can post to the channel.
+              webhook_url: ""
+              # The name that posts show. Empty keeps the webhook's own name.
+              username: boarium
+              # Each event posts its message while enabled is true, to its own webhook_url, or to the one above when that is empty.
+              # A message may use Discord's formatting, such as **bold**, and the placeholders listed above it, which are filled in as written, without formatting. Keep a message in quotes.
+              start:
+                enabled: true
+                webhook_url: ""
+                # {server}: the Spectrum server players join first.
+                message: "boarium started, sending players to {server}"
+              stop:
+                enabled: true
+                webhook_url: ""
+                message: "boarium stopped"
+              join:
+                enabled: false
+                webhook_url: ""
+                # {player}, {xuid}: the player's name and Xbox user ID, which is empty when Xbox Live did not sign the player in. {server}: the server the player joined.
+                message: "{player} joined {server}"
+              leave:
+                enabled: false
+                webhook_url: ""
+                # {player}, {xuid}
+                message: "{player} left"
+              # Boar's flags.
+              flag:
+                enabled: true
+                webhook_url: ""
+                # {player}, {xuid}, {check}: the check's name and type, {vl}: the player's violation level, {details}: what Boar found, {mitigations}: on or off, as boar_mitigations is,
+                # {more}: (+N more) when flags of this player and check were held back by the limit below since the last post, and empty otherwise.
+                message: "**{player}** failed {check} x{vl} {details} {more}"
+                # How many flags a minute, for each player and check, are posted. 0 posts every flag.
+                limit: 2
+              # Players that Boar kicks, which it does only while boar_mitigations is true.
+              kick:
+                enabled: true
+                webhook_url: ""
+                # {player}, {xuid}, {reason}: the reason Boar gave.
+                message: "**{player}** was kicked by Boar: {reason}"
             """;
 
     // The keys each section of the file takes, by the section's name; "" is the top of the file.
-    private static final Map<String, List<String>> SECTIONS = Map.of(
-            "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit"),
-            "raknet", List.of("enabled", "port", "max_connections_per_address", "packet_limit", "rate_limiting"),
-            "nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery"),
-            "nethernet.https", List.of("certificate", "private_key", "password"));
+    private static final Map<String, List<String>> SECTIONS = Map.ofEntries(
+            Map.entry("", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations",
+                    "boar_alert_limit", "discord")),
+            Map.entry("raknet", List.of("enabled", "port", "max_connections_per_address", "packet_limit", "rate_limiting")),
+            Map.entry("nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery")),
+            Map.entry("nethernet.https", List.of("certificate", "private_key", "password")),
+            Map.entry("discord", List.of("webhook_url", "username", "start", "stop", "join", "leave", "flag", "kick")),
+            Map.entry("discord.start", List.of("enabled", "webhook_url", "message")),
+            Map.entry("discord.stop", List.of("enabled", "webhook_url", "message")),
+            Map.entry("discord.join", List.of("enabled", "webhook_url", "message")),
+            Map.entry("discord.leave", List.of("enabled", "webhook_url", "message")),
+            Map.entry("discord.flag", List.of("enabled", "webhook_url", "message", "limit")),
+            Map.entry("discord.kick", List.of("enabled", "webhook_url", "message")));
 
     // Keys of an older layout, each with the key that took its place.
     private static final List<Map.Entry<String, String>> MOVED_KEYS = List.of(
@@ -206,7 +278,8 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 values.get("shutdown_message", String.class, "boarium closed."),
                 values.get("boar_enabled", Boolean.class, true),
                 values.get("boar_mitigations", Boolean.class, true),
-                values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE));
+                values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE),
+                discord(values.section("discord")));
     }
 
     // Adds a line to errors naming each key of section that it does not take, as a misspelt key would otherwise be left at its default without a word, then does the same for the sections inside it.
@@ -218,7 +291,11 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             boolean moved = section.isEmpty() && MOVED_KEYS.stream().anyMatch(entry -> entry.getKey().equals(name));
             if (!keys.contains(name) && !moved) {
                 String closest = keys.stream().min(Comparator.comparingInt(k -> distance(k, name))).orElseThrow();
-                unknown.add(distance(closest, name) <= Math.min(2, name.length() / 2) ? name + " (did you mean " + closest + "?)" : name);
+                if (Section.isUrl(name)) {
+                    unknown.add("a URL");
+                } else {
+                    unknown.add(distance(closest, name) <= Math.min(2, name.length() / 2) ? name + " (did you mean " + closest + "?)" : name);
+                }
             }
         }
         if (!unknown.isEmpty()) {
@@ -307,6 +384,57 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         return List.copyOf(addresses);
     }
 
+    private static Discord discord(Section values) {
+        URI webhook = webhookUrl(values);
+        String username = values.get("username", String.class, "boarium").strip();
+        // Discord turns away a webhook post whose name is too long or has these words in it.
+        String lower = username.toLowerCase(Locale.ROOT);
+        if (username.length() > 80 || lower.contains("discord") || lower.contains("clyde")) {
+            throw new IllegalArgumentException(values.name("username") + " must be at most 80 characters, without the words discord and clyde, which Discord does not allow");
+        }
+        Map<DiscordEvent, Discord.Post> posts = new EnumMap<>(DiscordEvent.class);
+        for (DiscordEvent event : DiscordEvent.values()) {
+            Section section = values.section(event.key());
+            URI own = webhookUrl(section);
+            String text = section.get("message", String.class, event.defaultMessage());
+            if (text.isBlank()) {
+                throw new IllegalArgumentException(section.name("message") + " is empty; write the message to post, as an event that is off may be turned on later");
+            }
+            MessageTemplate message;
+            try {
+                message = MessageTemplate.parse(text, event.placeholders());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException(section.name("message") + ": " + e.getMessage(), e);
+            }
+            if (section.get("enabled", Boolean.class, event.enabledByDefault()) && (own != null || webhook != null)) {
+                posts.put(event, new Discord.Post(own != null ? own : webhook, message));
+            }
+        }
+        return new Discord(username.isEmpty() ? null : username, posts, values.section("flag").integer("limit", 2, 0, Integer.MAX_VALUE));
+    }
+
+    // The webhook_url of a section, or null when it is empty.
+    private static URI webhookUrl(Section values) {
+        Object value = values.value("webhook_url");
+        if (value == null || "".equals(value)) {
+            return null;
+        }
+        String problem = values.name("webhook_url") + " must be an https:// webhook URL, as Discord's Copy Webhook URL gives";
+        if (!(value instanceof String text)) {
+            throw new IllegalArgumentException(problem);
+        }
+        try {
+            URI uri = new URI(text.strip());
+            // Not http, which would send the webhook's token in the clear.
+            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null || uri.getPort() == 0 || uri.getPort() > 65535) {
+                throw new IllegalArgumentException(problem);
+            }
+            return uri;
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException(problem);
+        }
+    }
+
     private static NetherNetHttps netherNetHttps(Section values, Path folder) {
         String certificate = values.get("certificate", String.class, "");
         String privateKey = values.get("private_key", String.class, "");
@@ -345,7 +473,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         Section section(String key) {
             Object value = this.value(key);
             if (value != null && !(value instanceof Map<?, ?>)) {
-                throw new IllegalArgumentException(this.name(key) + " must be a section of keys, got " + value);
+                throw new IllegalArgumentException(this.name(key) + " must be a section of keys, got " + describe(value));
             }
             return new Section(value == null ? Map.of() : (Map<?, ?>) value, this.name(key));
         }
@@ -392,7 +520,16 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
 
         // A value as it reads in an error, where text in quotes shows it is not the number or boolean it looks like.
         static String describe(Object value) {
-            return value instanceof String text ? "the text \"" + text + "\"" : String.valueOf(value);
+            String text = String.valueOf(value);
+            if (isUrl(text)) {
+                return "a URL";
+            }
+            return value instanceof String ? "the text \"" + text + "\"" : text;
+        }
+
+        // Errors leave URLs out, since a Discord webhook's URL lets anyone who has it post to its channel.
+        static boolean isUrl(String text) {
+            return text.contains("://") || text.contains("/webhooks/");
         }
     }
 }

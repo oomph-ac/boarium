@@ -201,6 +201,7 @@ final class BoarProcessor implements Processor {
         BoarPlayer player = this.players.remove(session);
         if (player != null) {
             this.players.alerts.forget(player);
+            this.players.discordAlerts.forget(player);
             if (player.future != null) {
                 player.future.cancel(false);
             }

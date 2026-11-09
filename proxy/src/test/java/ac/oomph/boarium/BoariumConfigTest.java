@@ -1,16 +1,20 @@
 package ac.oomph.boarium;
 
+import ac.oomph.boarium.discord.DiscordEvent;
+import ac.oomph.boarium.discord.MessageTemplate;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.StringReader;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.IntStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -28,7 +32,7 @@ class BoariumConfigTest {
 
         assertTrue(Files.exists(path));
         assertEquals(new BoariumConfig(":19132", new BoariumConfig.RakNet(false, 19132, 10, 120, true), new BoariumConfig.NetherNet(true, 19132, 19132, null, List.of(), true), "127.0.0.1:19133", null, true, "boarium", "boarium", 100, Duration.ofSeconds(3),
-                "boarium closed.", true, true, 1), config);
+                "boarium closed.", true, true, 1, new BoariumConfig.Discord("boarium", Map.of(), 2)), config);
         // The written file says the same as the defaults for missing keys.
         assertEquals(config, BoariumConfig.parse(new StringReader("")));
     }
@@ -61,7 +65,7 @@ class BoariumConfigTest {
                 """));
 
         assertEquals(new BoariumConfig("127.0.0.1:19000", new BoariumConfig.RakNet(true, 19001, 2, 500, true), new BoariumConfig.NetherNet(false, 19002, 19003, null, List.of(), true), "lobby:19133", "hub:19133", false, "a", "b", 5, Duration.ofSeconds(1), "bye",
-                false, false, 0), config);
+                false, false, 0, new BoariumConfig.Discord("boarium", Map.of(), 2)), config);
     }
 
     @Test
@@ -139,11 +143,11 @@ class BoariumConfigTest {
 
     @Test
     void turnsAwayUnknownKeysAtTheTop() {
-        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("rakent:\n  enabled: true"));
-        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("boar_mitigation: true"));
-        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("lisen: :19000\ncolour: red"));
+        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, discord", error("rakent:\n  enabled: true"));
+        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, discord", error("boar_mitigation: true"));
+        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, discord", error("lisen: :19000\ncolour: red"));
         // A short key is not close to another just because both are short.
-        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit", error("mtu: 1400"));
+        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, discord", error("mtu: 1400"));
     }
 
     // Every bad key in one error, from every section, with the keys of the old layout first; a bad value next to them is not read.
@@ -161,7 +165,7 @@ class BoariumConfigTest {
                 """);
         assertEquals(String.join("\n",
                 "nethernet_password is now nethernet.https.password",
-                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit",
+                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, discord",
                 "unknown key in raknet: prot (did you mean port?); raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting",
                 "unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password"), error);
     }
@@ -318,6 +322,75 @@ class BoariumConfigTest {
         assertEquals("raknet.packet_limit must be a whole number from 1 to 2147483647, got 3000000000", error("raknet:\n  packet_limit: 3000000000"));
         assertEquals(new BoariumConfig.RakNet(false, 19132, 10, 120, false), BoariumConfig.parse(new StringReader("raknet:\n  rate_limiting: false\n  max_connections_per_address: 0\n  packet_limit: many")).rakNet());
         assertEquals("raknet.rate_limiting must be a boolean, got the text \"off\"", error("raknet:\n  rate_limiting: \"off\""));
+    }
+
+    @Test
+    void readsTheDiscordWebhooks() {
+        BoariumConfig.Discord discord = BoariumConfig.parse(new StringReader("""
+                discord:
+                  webhook_url: https://discord.com/api/webhooks/1/a
+                  username: ""
+                  join:
+                    enabled: true
+                    message: "{player} ({xuid}) is on {server}"
+                  flag:
+                    webhook_url: " https://discord.com/api/webhooks/2/b "
+                    limit: 0
+                  kick:
+                    enabled: false
+                """)).discord();
+        URI main = URI.create("https://discord.com/api/webhooks/1/a");
+        assertNull(discord.username());
+        assertEquals(0, discord.flagLimit());
+        assertEquals(List.of(DiscordEvent.START, DiscordEvent.STOP, DiscordEvent.JOIN, DiscordEvent.FLAG), List.copyOf(discord.posts().keySet()));
+        assertEquals(new BoariumConfig.Discord.Post(main, new MessageTemplate("{player} ({xuid}) is on {server}")), discord.posts().get(DiscordEvent.JOIN));
+        assertEquals(new BoariumConfig.Discord.Post(URI.create("https://discord.com/api/webhooks/2/b"), new MessageTemplate(DiscordEvent.FLAG.defaultMessage())), discord.posts().get(DiscordEvent.FLAG));
+        assertEquals(new BoariumConfig.Discord.Post(main, new MessageTemplate(DiscordEvent.START.defaultMessage())), discord.posts().get(DiscordEvent.START));
+        assertFalse(discord.toString().contains("/api/webhooks"), discord.toString());
+        // An event with a webhook of its own posts without the main one.
+        assertEquals(List.of(DiscordEvent.KICK), List.copyOf(BoariumConfig.parse(new StringReader("discord:\n  kick:\n    webhook_url: https://example.com/hook")).discord().posts().keySet()));
+    }
+
+    @Test
+    void writesTheDefaultMessagesOfEachEvent(@TempDir Path dir) throws Exception {
+        Path path = dir.resolve("config.yml");
+        BoariumConfig.load(path);
+        // Only the webhook_url of the discord section, which the events' indent further.
+        Files.writeString(path, Files.readString(path).replaceFirst("(?m)^  webhook_url: \"\"$", "  webhook_url: https://discord.com/api/webhooks/1/a"));
+        BoariumConfig.Discord discord = BoariumConfig.load(path).discord();
+        assertEquals(List.of(DiscordEvent.START, DiscordEvent.STOP, DiscordEvent.FLAG, DiscordEvent.KICK), List.copyOf(discord.posts().keySet()));
+        discord.posts().forEach((event, post) -> assertEquals(event.defaultMessage(), post.message().text()));
+        assertEquals(2, discord.flagLimit());
+    }
+
+    @Test
+    void turnsAwayBadDiscordSettingsWithoutPrintingTheWebhook() {
+        String secret = "discord.com/api/webhooks/1/secret";
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: ftp://" + secret));
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: \"https://" + secret + " x\""));
+        assertEquals("discord.flag.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  flag:\n    webhook_url: " + secret));
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: 5"));
+        assertEquals("discord.join.message: {reason} is not a placeholder of this message; it takes {player}, {xuid}, {server}", error("discord:\n  join:\n    message: \"{player} joined: {reason}\""));
+        assertEquals("discord.stop.message: {server}, {why} are not placeholders of this message; it takes none", error("discord:\n  stop:\n    message: \"{server} {why} {server}\""));
+        assertEquals("discord.kick.message is empty; write the message to post, as an event that is off may be turned on later", error("discord:\n  kick:\n    message: \" \""));
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: http://" + secret));
+        assertEquals("discord.username must be at most 80 characters, without the words discord and clyde, which Discord does not allow", error("discord:\n  username: My Discord Bot"));
+        assertEquals("discord.flag.limit must be a whole number from 0 to 2147483647, got -1", error("discord:\n  flag:\n    limit: -1"));
+        assertEquals("unknown key in discord.flag: limt (did you mean limit?); discord.flag takes: enabled, webhook_url, message, limit", error("discord:\n  flag:\n    limt: 1"));
+        assertEquals("unknown key in discord: webhook_ur (did you mean webhook_url?); discord takes: webhook_url, username, start, stop, join, leave, flag, kick", error("discord:\n  webhook_ur: x"));
+        assertEquals("discord must be a section of keys, got a URL", error("discord: https://" + secret));
+        assertEquals("discord.flag must be a section of keys, got a URL", error("discord:\n  flag: https://" + secret));
+        assertEquals("discord.flag.enabled must be a boolean, got a URL", error("discord:\n  flag:\n    enabled: https://" + secret));
+        assertEquals("discord must be a section of keys, got a URL", error("discord: [https://" + secret + "]"));
+        assertEquals("discord.flag.enabled must be a boolean, got a URL", error("discord:\n  flag:\n    enabled: {a: \"https://" + secret + "\"}"));
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: https://discord.com:99999/api/webhooks/1/secret"));
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: https://discord.com:0/api/webhooks/1/secret"));
+        assertEquals("discord.webhook_url must be an https:// webhook URL, as Discord's Copy Webhook URL gives", error("discord:\n  webhook_url: \"https:secret\""));
+        assertEquals("discord.username must be at most 80 characters, without the words discord and clyde, which Discord does not allow", error("discord:\n  username: " + "x".repeat(81)));
+        assertFalse(error("discord:\n  \"https://" + secret + "\": 1").contains("secret"));
+        assertEquals("discord.flag.limit must be a whole number from 0 to 2147483647, got a URL", error("discord:\n  flag:\n    limit: " + secret));
+        // A message that is off is still checked, so that turning it on later cannot stop boarium.
+        assertEquals("discord.leave.message: {reason} is not a placeholder of this message; it takes {player}, {xuid}", error("discord:\n  leave:\n    message: \"{reason}\""));
     }
 
     private static String error(String config) {

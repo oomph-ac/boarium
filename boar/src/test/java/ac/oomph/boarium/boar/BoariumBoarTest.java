@@ -1,5 +1,6 @@
 package ac.oomph.boarium.boar;
 
+import ac.oomph.boarium.discord.DiscordLog;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -49,6 +50,6 @@ class BoariumBoarTest {
     // Checked before Boar starts, which it can only do once in a JVM.
     @Test
     void turnsAwayANegativeAlertLimit(@TempDir Path dir) {
-        assertEquals("alertLimit must be 0 or more, got -1", assertThrows(IllegalArgumentException.class, () -> BoariumBoar.start(dir, false, -1)).getMessage());
+        assertEquals("alertLimit must be 0 or more, got -1", assertThrows(IllegalArgumentException.class, () -> BoariumBoar.start(dir, false, -1, DiscordLog.NONE)).getMessage());
     }
 }

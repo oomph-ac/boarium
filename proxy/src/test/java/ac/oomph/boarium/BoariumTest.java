@@ -1,6 +1,7 @@
 package ac.oomph.boarium;
 
 import ac.oomph.boarium.client.TestClient;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.session.FakeSpectrumServer;
 import ac.oomph.boarium.session.SessionSettings;
 import ac.oomph.boarium.transport.Addresses;
@@ -213,7 +214,7 @@ class BoariumTest {
     }
 
     private Boarium start(BoariumConfig config, SslContext netherNetTls) throws Exception {
-        return Boarium.start(config, netherNetTls, this.folder.resolve("nethernet").resolve("identity.pem"), SessionSettings.DEFAULT.processors());
+        return Boarium.start(config, netherNetTls, this.folder.resolve("nethernet").resolve("identity.pem"), SessionSettings.DEFAULT.processors(), DiscordLog.NONE);
     }
 
     // The test's config, with the keys in transports.

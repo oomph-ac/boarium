@@ -3,6 +3,8 @@ package ac.oomph.boarium;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.discord.DiscordEvent;
+import ac.oomph.boarium.discord.DiscordLog;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.Session;
@@ -28,6 +30,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,6 +51,7 @@ public final class Boarium implements AutoCloseable {
     private static final Logger LOG = LoggerFactory.getLogger(Boarium.class);
 
     private final BoariumConfig config;
+    private final DiscordLog discord;
     private final EventLoopGroup group;
     private final ClientListener listener;
     private final Set<Session> sessions = ConcurrentHashMap.newKeySet();
@@ -55,8 +59,9 @@ public final class Boarium implements AutoCloseable {
     private final ScheduledFuture<?> pongs;
     private final AtomicBoolean closed = new AtomicBoolean();
 
-    private Boarium(BoariumConfig config, SslContext netherNetTls, Path netherNetIdentity, Function<ClientLogin, Processor> processors, EventLoopGroup group) throws InterruptedException, IOException {
+    private Boarium(BoariumConfig config, SslContext netherNetTls, Path netherNetIdentity, Function<ClientLogin, Processor> processors, DiscordLog discord, EventLoopGroup group) throws InterruptedException, IOException {
         this.config = config;
+        this.discord = discord;
         this.group = group;
         TcpTransport transport = new TcpTransport(group, DIAL_TIMEOUT);
         SessionSettings settings = new SessionSettings(config.fallbackServer(), SessionSettings.DEFAULT.loginTimeout(), config.latencyInterval(), processors);
@@ -81,11 +86,12 @@ public final class Boarium implements AutoCloseable {
      * @param netherNetTls      what NetherNet signaling serves HTTPS with, from {@link NetherNetHttps#load()}; null for plain HTTP
      * @param netherNetIdentity the PEM file of NetherNet's identity key, created on first start and read only while NetherNet is on
      * @param processors        gives each player's session its processor
+     * @param discord           where players' joins and leaves are posted
      */
-    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Path netherNetIdentity, Function<ClientLogin, Processor> processors) throws InterruptedException, IOException {
+    public static Boarium start(BoariumConfig config, SslContext netherNetTls, Path netherNetIdentity, Function<ClientLogin, Processor> processors, DiscordLog discord) throws InterruptedException, IOException {
         EventLoopGroup group = new NioEventLoopGroup();
         try {
-            return new Boarium(config, netherNetTls, netherNetIdentity, processors, group);
+            return new Boarium(config, netherNetTls, netherNetIdentity, processors, discord, group);
         } catch (Throwable t) {
             // Netty also throws checked exceptions it does not declare, such as a BindException; the event loops would otherwise keep the JVM running.
             group.shutdownGracefully();
@@ -140,9 +146,12 @@ public final class Boarium implements AutoCloseable {
             }
             this.sessions.add(session);
             LOG.info("{} joined {}", name, this.config.server());
+            String xuid = login.identity().xuid();
+            this.discord.post(DiscordEvent.JOIN, Map.of("player", name, "xuid", xuid, "server", this.config.server()));
             ClientDisconnect.ended(login.session()).thenRun(() -> {
                 this.sessions.remove(session);
                 LOG.info("{} left", name);
+                this.discord.post(DiscordEvent.LEAVE, Map.of("player", name, "xuid", xuid));
             });
         });
     }

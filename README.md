@@ -61,3 +61,29 @@ While NetherNet is on, boarium keeps the key that the game trusts the server by 
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.
 
 boarium logs Boar's flags to its console, up to `boar_alert_limit`, in one line each: Boar's alert, with the `prefix` from Boar's config, and whether `boar_mitigations` lets Boar act on the player. A movement trace that Boar adds with `debug-mode` on goes to the DEBUG level, which boarium shows when started with `JAVA_OPTS=-Dorg.slf4j.simpleLogger.log.Boar=debug`.
+
+## Discord logs
+
+boarium can post what happens to a Discord channel through a webhook. In Discord, open the channel's settings, then Integrations, Webhooks, New Webhook, and Copy Webhook URL, and put the URL in `discord.webhook_url` in boarium's config. Keep the URL secret: anyone who has it can post to the channel. boarium leaves it out of its logs and of errors about the config, except that an error in the config's YAML syntax shows the lines around it.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `discord.webhook_url` | empty | The webhook that each event posts to, an `https://` URL. Nothing is posted while it and every event's own `webhook_url` are empty. |
+| `discord.username` | `boarium` | The name that the posts show. Empty keeps the webhook's own name. Discord does not take more than 80 characters or the words discord and clyde. |
+| `discord.<event>.enabled` | see below | Whether the event is posted. |
+| `discord.<event>.webhook_url` | empty | A webhook for this event alone, such as one for a staff channel. Empty posts to `discord.webhook_url`. |
+| `discord.<event>.message` | see below | What the post says. It may use Discord's formatting, such as `**bold**`, and the event's placeholders, which boarium fills in as written, with no formatting, so that a player's name cannot change the message. Inside code formatting, such as `` `{details}` ``, a filled-in placeholder shows a backslash before each punctuation mark, so leave placeholders outside it. Keep it in quotes. boarium does not start when a message is empty or has a placeholder that its event does not take. |
+| `discord.flag.limit` | `2` | How many of Boar's flags a minute, for each player and check, are posted. 0 posts every flag. |
+
+| Event | On by default | Placeholders | Default message |
+|---|---|---|---|
+| `start` | yes | `{server}`: the server players join first | `boarium started, sending players to {server}` |
+| `stop` | yes | none | `boarium stopped` |
+| `join` | no | `{player}`, `{xuid}`, `{server}` | `{player} joined {server}` |
+| `leave` | no | `{player}`, `{xuid}` | `{player} left` |
+| `flag` | yes | `{player}`, `{xuid}`, `{check}`, `{vl}`, `{details}`, `{mitigations}`, `{more}` | `**{player}** failed {check} x{vl} {details} {more}` |
+| `kick` | yes | `{player}`, `{xuid}`, `{reason}` | `**{player}** was kicked by Boar: {reason}` |
+
+`{player}` is the player's name and `{xuid}` the player's Xbox user ID, which is empty when Xbox Live did not sign the player in. In `flag`, `{check}` is the check's name with its type, as Boar's alerts show it, `{vl}` the player's violation level, `{details}` the first line of what Boar found, `{mitigations}` is `on` or `off` as `boar_mitigations` is, and `{more}` is `(+N more)` when flags of the same player and check were held back by `discord.flag.limit` since the last post, and empty otherwise. In `kick`, `{reason}` is the reason Boar gave. Boar kicks only while `boar_mitigations` is on.
+
+Each webhook posts from its own thread, so a slow or unreachable Discord never holds up a player. Lines that come while a post is on its way are sent together in the next one, as many as fit in a Discord message, and a line too long for one is cut. boarium waits as long as Discord's rate limit asks, up to a minute at a time. While Discord is slow, up to 1000 lines wait for each webhook; lines past that are dropped, and the next post says how many. A post that fails is tried 3 times when Discord cannot be reached or has a server error, and then dropped; any other post that Discord turns away is dropped at once. boarium logs a warning for a dropped post, at most once a minute for each webhook. When Discord says that a webhook does not exist or its URL is wrong, boarium logs it once and posts nothing more to that webhook until it restarts. At shutdown, boarium waits up to 5 seconds for the lines still waiting to be posted. boarium posts through the proxy that `JAVA_OPTS=-Dhttps.proxyHost=… -Dhttps.proxyPort=…` sets, if any.
