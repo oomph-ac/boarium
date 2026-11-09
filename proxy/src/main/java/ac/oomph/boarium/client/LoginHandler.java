@@ -302,6 +302,10 @@ final class LoginHandler implements BedrockPacketHandler {
     public PacketSignal handle(ResourcePackClientResponsePacket packet) {
         switch (packet.getStatus()) {
             case SEND_PACKS -> {
+                if (this.packs.packs.isEmpty() && (this.step == Step.PACK_STACK
+                        || (this.step == Step.RESOURCE_PACKS && !packet.getPackIds().isEmpty()))) {
+                    return this.fail("disconnectionScreen.resourcePack");
+                }
                 if (packet.getPackIds().isEmpty() && (this.step == Step.RESOURCE_PACKS || this.step == Step.PACK_DOWNLOAD)) {
                     return PacketSignal.HANDLED;
                 }
@@ -332,7 +336,8 @@ final class LoginHandler implements BedrockPacketHandler {
                 this.sendPackStack(true);
             }
             case REFUSED -> {
-                if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD) {
+                if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD
+                        && !(this.packs.packs.isEmpty() && this.step == Step.PACK_STACK)) {
                     return this.outOfOrder();
                 }
                 if (this.packs.required || this.packs.packs.isEmpty()) {

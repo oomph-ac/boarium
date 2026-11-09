@@ -132,4 +132,9 @@ class ResourcePackExchangeTest {
         response(ResourcePackClientResponsePacket.Status.SEND_PACKS);
         assertEquals("disconnectionScreen.timeout",client.await(DisconnectPacket.class).getKickMessage());
     }
+    @Test void emptyCatalogueRetainsRefusalAfterStack() throws Exception {
+        open(false,false); response(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS); client.await(ResourcePackStackPacket.class);
+        response(ResourcePackClientResponsePacket.Status.REFUSED);
+        assertEquals("disconnectionScreen.resourcePack",client.await(DisconnectPacket.class).getKickMessage());
+    }
 }
