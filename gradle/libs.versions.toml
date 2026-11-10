@@ -1,5 +1,5 @@
 [versions]
-# Keep in step with the protocol version Boar dev2 compiles against (Boar's gradle/libs.versions.toml).
+# Keep in step with the protocol version Boar master compiles against (Boar's gradle/libs.versions.toml).
 protocol = "3.0.0.Beta15-20261027.163553-3"
 # Cloudburst's RakNet and NetherNet transports, pinned to a published snapshot.
 network = "2.0.0.CR6-20261103.124955-24"
@@ -7,8 +7,8 @@ network = "2.0.0.CR6-20261103.124955-24"
 libdatachannel = "0.24.6.0-20261029.091642-10"
 # Same Snappy library the protocol library pulls in.
 aircompressor = "2.0.3"
-# The Boar anticheat's dev2 branch, pinned to a published snapshot (commit 030ac0d), with its api module at the same snapshot.
-boar = "dev2-20261104.180511-52"
+# The Boar anticheat's master branch, at its latest published snapshot.
+boar = "master-SNAPSHOT"
 # Boar compiles against these without bringing them, so they are Boar's versions; the NetherNet transport raises gson to 2.13.2 at runtime.
 guava = "33.6.0-jre"
 gson = "2.3.1"
