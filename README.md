@@ -51,6 +51,9 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `boar_enabled` | `true` | Whether the Boar anticheat checks players. |
 | `boar_mitigations` | `true` | Whether Boar may change what players do: set them back, cancel or undo their actions, make them let go of an item they are using, or kick them. When it is off, Boar only logs what it finds. |
 | `boar_alert_limit` | `1` | How many of Boar's flags a second, for each player and check, boarium logs to its console. The next line after some were held back ends with `(+N more)`. 0 logs every flag. Boar still counts and acts on every flag. |
+| `resource_packs.directory` | empty | Resource-only pack directory, relative to config.yml. Empty offers no custom packs. |
+| `resource_packs.required` | `false` | Require players to accept custom packs. |
+| `resource_packs.include_exempted` | `true` | Include the vanilla Education/Chemistry stack. |
 
 boarium does not start when its config has a key it does not take, such as a misspelt one, and names that key.
 
@@ -61,3 +64,18 @@ While NetherNet is on, boarium keeps the key that the game trusts the server by 
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.
 
 boarium logs Boar's flags to its console, up to `boar_alert_limit`, in one line each: Boar's alert, with the `prefix` from Boar's config, and whether `boar_mitigations` lets Boar act on the player. A movement trace that Boar adds with `debug-mode` on goes to the DEBUG level, which boarium shows when started with `JAVA_OPTS=-Dorg.slf4j.simpleLogger.log.Boar=debug`.
+
+## Resource packs
+
+boarium can serve unencrypted resource-only `.mcpack` or `.zip` archives during login. The archive must contain `manifest.json` at its root. Configure a directory relative to `config.yml` (or an absolute path):
+
+```yaml
+resource_packs:
+  directory: packs
+  required: false
+  include_exempted: true
+```
+
+The default directory is empty, which offers no custom packs. `required` defaults to false. `include_exempted` defaults to true for the existing vanilla Education/Chemistry stack; turn it off when these packs override player textures. Packs load before listeners start, in filename order. Duplicate UUIDs, invalid manifests, unsupported module types and marketplace-encrypted packs fail startup. The catalogue is limited to 64 packs and 256 MiB of combined compressed data, kept in memory. Manifest JSON is limited to 1 MiB. A five-minute download deadline replaces the login deadline from the first nonempty SEND_PACKS request until the client reports HAVE_ALL_PACKS or REFUSED, when a fresh login deadline starts; cached-pack clients keep the ordinary login deadline. Duplicate chunk requests are ignored. Restart boarium to load changed archives; use new manifest versions when changing pack content.
+
+Optional packs may be declined. Required packs must be accepted to join. Cached packs need no download. Unknown pack IDs, wrong versions and invalid chunk indices disconnect the client. Encrypted packs, behavior packs, scripts and CDN delivery are not supported. boarium does not fetch packs from Spectrum backends: export each backend's complete pack set, including generated custom-item assets, and deploy matching archives before starting the proxy. Servers reached by a transfer must be compatible with the same login pack stack.

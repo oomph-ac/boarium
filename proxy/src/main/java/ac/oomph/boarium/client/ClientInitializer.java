@@ -19,11 +19,18 @@ class ClientInitializer extends BedrockServerInitializer {
     static final AttributeKey<BedrockServerSession> SESSION = AttributeKey.valueOf(ClientInitializer.class.getName() + ".session");
 
     private final boolean requireXbox;
+    private final ResourcePacks packs;
     private final Duration loginTimeout;
     private final Consumer<ClientLogin> onLogin;
 
     ClientInitializer(boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) {
+        this(requireXbox, loginTimeout, ResourcePacks.EMPTY, onLogin);
+    }
+
+    // Pass the same startup snapshot to each login, without file I/O on the event loop.
+    ClientInitializer(boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
         this.requireXbox = requireXbox;
+        this.packs = packs;
         this.loginTimeout = loginTimeout;
         this.onLogin = onLogin;
     }
@@ -57,6 +64,6 @@ class ClientInitializer extends BedrockServerInitializer {
             return;
         }
         session.getPeer().getChannel().attr(SESSION).set(session);
-        session.setPacketHandler(new LoginHandler(session, this.requireXbox, this.loginTimeout, this.onLogin));
+        session.setPacketHandler(new LoginHandler(session, this.requireXbox, this.loginTimeout, this.packs, this.onLogin));
     }
 }

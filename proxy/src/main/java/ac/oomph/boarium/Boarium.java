@@ -71,7 +71,7 @@ public final class Boarium implements AutoCloseable {
                 ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls, netherNetIdentity,
                         config.netherNet().advertiseAddresses(), stunServers(config.netherNet(), listen.getAddress()))
                 : null;
-        this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, login -> this.join(login, transport, settings));
+        this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, ac.oomph.boarium.client.ResourcePacks.load(config.resourcePacks()), login -> this.join(login, transport, settings));
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
 

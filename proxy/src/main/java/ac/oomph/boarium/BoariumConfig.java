@@ -25,7 +25,20 @@ import java.util.Set;
  * A port of 0 in the file means the listen port, and is read as that port here, so a port is 0 only when the listen port is.
  */
 public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
-                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit) {
+                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit, ResourcePacks resourcePacks) {
+
+    /** Resource pack directory is resolved relative to config.yml; null disables custom packs. */
+    public record ResourcePacks(Path directory, boolean required, boolean includeExempted) {
+        public static final ResourcePacks DEFAULT = new ResourcePacks(null, false, true);
+    }
+
+    /** Preserves the default empty resource pack exchange for embedded callers. */
+    public BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, String server, String fallbackServer,
+                         boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
+                         String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit) {
+        this(listen, rakNet, netherNet, server, fallbackServer, xboxAuth, motd, subMotd, maxPlayers, latencyInterval,
+                shutdownMessage, boarEnabled, boarMitigations, boarAlertLimit, ResourcePacks.DEFAULT);
+    }
 
     /**
      * @param port                     the UDP port
@@ -106,11 +119,18 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             boar_mitigations: true
             # How many of Boar's flags a second, for each player and check, boarium logs to its console. 0 logs every flag.
             boar_alert_limit: 1
+            # Unencrypted resource-only .mcpack/.zip files, loaded in filename order before listening.
+            resource_packs:
+              directory: ""
+              required: false
+              # Append the vanilla Education/Chemistry packs to the stack.
+              include_exempted: true
             """;
 
     // The keys each section of the file takes, by the section's name; "" is the top of the file.
     private static final Map<String, List<String>> SECTIONS = Map.of(
-            "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit"),
+            "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit", "resource_packs"),
+            "resource_packs", List.of("directory", "required", "include_exempted"),
             "raknet", List.of("enabled", "port", "max_connections_per_address", "packet_limit", "rate_limiting"),
             "nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery"),
             "nethernet.https", List.of("certificate", "private_key", "password"));
@@ -206,7 +226,15 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 values.get("shutdown_message", String.class, "boarium closed."),
                 values.get("boar_enabled", Boolean.class, true),
                 values.get("boar_mitigations", Boolean.class, true),
-                values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE));
+                values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE),
+                resourcePacks(values.section("resource_packs"), folder));
+    }
+
+    // Resolve pack paths once so a working-directory change cannot select different assets.
+    private static ResourcePacks resourcePacks(Section values, Path folder) {
+        String directory = values.get("directory", String.class, "");
+        return new ResourcePacks(directory.isEmpty() ? null : folder.resolve(directory),
+                values.get("required", Boolean.class, false), values.get("include_exempted", Boolean.class, true));
     }
 
     // Adds a line to errors naming each key of section that it does not take, as a misspelt key would otherwise be left at its default without a word, then does the same for the sections inside it.

@@ -43,7 +43,12 @@ import java.util.function.Consumer;
  */
 final class NetherNetInitializer extends ClientInitializer {
     NetherNetInitializer(boolean requireXbox, Duration loginTimeout, Consumer<ClientLogin> onLogin) {
-        super(requireXbox, loginTimeout, onLogin);
+        this(requireXbox, loginTimeout, ResourcePacks.EMPTY, onLogin);
+    }
+
+    // Pass the same startup snapshot to each login, without file I/O on the event loop.
+    NetherNetInitializer(boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
+        super(requireXbox, loginTimeout, packs, onLogin);
     }
 
     // Replaces BedrockServerInitializer's, which sets the direction and then builds the RakNet framing, so the direction is set here.

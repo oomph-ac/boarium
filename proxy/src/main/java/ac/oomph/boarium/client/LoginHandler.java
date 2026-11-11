@@ -19,6 +19,7 @@ import org.cloudburstmc.protocol.bedrock.packet.NetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.PlayStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.RequestNetworkSettingsPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackClientResponsePacket;
+import org.cloudburstmc.protocol.bedrock.packet.ResourcePackChunkRequestPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ServerToClientHandshakePacket;
@@ -30,6 +31,10 @@ import java.security.KeyPair;
 import java.security.PublicKey;
 import java.time.Duration;
 import java.util.List;
+import java.util.BitSet;
+import java.util.Map;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Objects;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
@@ -40,7 +45,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 
 /**
- * Logs a client in the way gophertunnel's listener does, which Spectrum uses: network settings, login, encryption (on RakNet only), then an empty resource pack exchange.
+ * Logs a client in the way gophertunnel's listener does, which Spectrum uses: network settings, login, encryption (on RakNet only), then the configured resource pack exchange.
  * Login packets that arrive out of that order disconnect the client.
  */
 final class LoginHandler implements BedrockPacketHandler {
@@ -55,35 +60,56 @@ final class LoginHandler implements BedrockPacketHandler {
             new ResourcePackStackPacket.Entry("0674721c-a0aa-41a1-9ba8-1ed33ea3e7ed", "1.20.50", ""),
             new ResourcePackStackPacket.Entry("0fba4063-dba1-4281-9b89-ff9390653530", "1.0.0", ""));
 
-    private enum Step { NETWORK_SETTINGS, LOGIN, VERIFYING, HANDSHAKE, RESOURCE_PACKS, DONE, FAILED }
+    private enum Step { NETWORK_SETTINGS, LOGIN, VERIFYING, HANDSHAKE, RESOURCE_PACKS, PACK_DOWNLOAD, PACK_STACK, DONE, FAILED }
 
     private static final Executor VERIFIER = Executors.newVirtualThreadPerTaskExecutor();
 
     private final BedrockServerSession session;
     private final boolean netherNet;
     private final boolean requireXbox;
+    private final ResourcePacks packs;
+    private final Map<UUID, ResourcePacks.Pack> requestedPacks = new HashMap<>();
     private final Consumer<ClientLogin> onLogin;
+    private final Duration loginTimeout;
+    private final Map<UUID, BitSet> sentChunks = new HashMap<>();
 
     private Step step = Step.NETWORK_SETTINGS;
     private Identity identity;
     private byte[] clientData;
     private boolean xboxAuthenticated;
     private boolean clientCacheSupported;
-    private final ScheduledFuture<?> timeout;
+    private ScheduledFuture<?> timeout;
 
     LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, Consumer<ClientLogin> onLogin) {
-        this.session = session;
-        this.netherNet = session.getPeer() instanceof NetherNetPeer;
-        this.requireXbox = requireXbox;
-        this.onLogin = onLogin;
+        this(session, requireXbox, timeout, ResourcePacks.EMPTY, onLogin);
+    }
+
+    // The catalogue was validated at startup and is shared without per-login archive copies.
+    LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
         if (timeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + timeout);
         }
-        this.timeout = session.getPeer().getChannel().eventLoop().schedule(() -> {
+        this.session = session;
+        this.netherNet = session.getPeer() instanceof NetherNetPeer;
+        this.requireXbox = requireXbox;
+        this.packs = packs;
+        this.onLogin = onLogin;
+        this.loginTimeout = timeout;
+        this.timeout = this.deadline(timeout);
+    }
+
+    private ScheduledFuture<?> deadline(Duration after) {
+        return this.session.getPeer().getChannel().eventLoop().schedule(() -> {
             if (this.step != Step.FAILED && this.session.isConnected()) {
                 this.fail("disconnectionScreen.timeout");
             }
-        }, timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }, after.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    // Swaps the login deadline for the pack download deadline and back. Only the time spent downloading gets the longer bound.
+    private void replaceDeadline(Duration after) {
+        this.timeout.cancel(false);
+        this.timeout = this.deadline(after);
     }
 
     @Override
@@ -255,6 +281,10 @@ final class LoginHandler implements BedrockPacketHandler {
         this.session.sendPacket(status);
 
         ResourcePacksInfoPacket info = new ResourcePacksInfoPacket();
+        info.setForcedToAccept(this.packs.required);
+        for (ResourcePacks.Pack pack : this.packs.packs) {
+            info.getResourcePackInfos().add(pack.info());
+        }
         info.setWorldTemplateId(new UUID(0, 0));
         info.setWorldTemplateVersion("");
         this.session.sendPacket(info);
@@ -272,24 +302,112 @@ final class LoginHandler implements BedrockPacketHandler {
 
     @Override
     public PacketSignal handle(ResourcePackClientResponsePacket packet) {
-        if (this.step != Step.RESOURCE_PACKS) {
-            return this.outOfOrder();
-        }
-
         switch (packet.getStatus()) {
+            case SEND_PACKS -> {
+                if (this.packs.packs.isEmpty() && (this.step == Step.PACK_STACK
+                        || (this.step == Step.RESOURCE_PACKS && !packet.getPackIds().isEmpty()))) {
+                    return this.fail("disconnectionScreen.resourcePack");
+                }
+                if (packet.getPackIds().isEmpty() && (this.step == Step.RESOURCE_PACKS || this.step == Step.PACK_DOWNLOAD)) {
+                    return PacketSignal.HANDLED;
+                }
+                if (this.step != Step.RESOURCE_PACKS || packet.getPackIds().size() > this.packs.packs.size()) {
+                    return this.outOfOrder();
+                }
+                var seen = new HashSet<String>();
+                for (String id : packet.getPackIds()) {
+                    ResourcePacks.Pack pack = this.packs.packs.stream().filter(p -> p.key().equals(id)).findFirst().orElse(null);
+                    if (pack == null || !seen.add(id)) {
+                        return this.fail("disconnectionScreen.resourcePack");
+                    }
+                    this.requestedPacks.put(pack.id, pack);
+                }
+                this.replaceDeadline(this.packs.downloadTimeout);
+                this.step = Step.PACK_DOWNLOAD;
+                for (ResourcePacks.Pack pack : this.requestedPacks.values()) {
+                    this.session.sendPacket(pack.dataInfo());
+                }
+            }
             case HAVE_ALL_PACKS -> {
-                ResourcePackStackPacket stack = new ResourcePackStackPacket();
-                stack.setGameVersion(this.session.getCodec().getMinecraftVersion());
-                stack.getExperiments().add(new ExperimentData("cameras", true));
-                stack.getResourcePacks().addAll(EXEMPTED_PACKS);
-                this.session.sendPacket(stack);
+                if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD
+                        && !(this.packs.packs.isEmpty() && this.step == Step.PACK_STACK)) {
+                    return this.outOfOrder();
+                }
+                this.sendPackStack(true);
+            }
+            case REFUSED -> {
+                if (this.step != Step.RESOURCE_PACKS && this.step != Step.PACK_DOWNLOAD
+                        && !(this.packs.packs.isEmpty() && this.step == Step.PACK_STACK)) {
+                    return this.outOfOrder();
+                }
+                if (this.packs.required || this.packs.packs.isEmpty()) {
+                    return this.fail("disconnectionScreen.resourcePack");
+                }
+                this.sendPackStack(false);
             }
             case COMPLETED -> {
+                if (this.step != Step.PACK_STACK && !(this.packs.packs.isEmpty() && this.step == Step.RESOURCE_PACKS)) {
+                    return this.outOfOrder();
+                }
                 this.step = Step.DONE;
                 this.timeout.cancel(false);
                 this.onLogin.accept(new ClientLogin(this.session, this.identity, this.clientData, this.xboxAuthenticated, this.clientCacheSupported));
             }
-            default -> this.fail("disconnectionScreen.resourcePack");
+            default -> { return this.step == Step.RESOURCE_PACKS || this.step == Step.PACK_DOWNLOAD || this.step == Step.PACK_STACK
+                    ? this.fail("disconnectionScreen.resourcePack") : this.outOfOrder(); }
+        }
+        return PacketSignal.HANDLED;
+    }
+
+    // A declined optional pack is omitted; exempted packs are independently configurable.
+    private void sendPackStack(boolean accepted) {
+        // Leaving the download, the client gets a fresh login deadline for the stack and COMPLETED. The original one may have run out while it downloaded.
+        if (this.step == Step.PACK_DOWNLOAD) {
+            this.replaceDeadline(this.loginTimeout);
+        }
+        ResourcePackStackPacket stack = new ResourcePackStackPacket();
+        stack.setGameVersion(this.session.getCodec().getMinecraftVersion());
+        stack.setForcedToAccept(this.packs.required);
+        stack.getExperiments().add(new ExperimentData("cameras", true));
+        if (accepted) {
+            for (ResourcePacks.Pack pack : this.packs.packs) {
+                stack.getResourcePacks().add(new ResourcePackStackPacket.Entry(pack.id.toString(), pack.version, ""));
+            }
+        }
+        if (this.packs.includeExempted) {
+            stack.getResourcePacks().addAll(EXEMPTED_PACKS);
+        }
+        this.step = Step.PACK_STACK;
+        this.requestedPacks.clear();
+        this.sentChunks.clear();
+        this.session.sendPacket(stack);
+    }
+
+    @Override
+    public PacketSignal handle(ResourcePackChunkRequestPacket packet) {
+        // With no packs configured there is nothing to download, so the request is ignored as it was before packs could be served.
+        if (this.packs.packs.isEmpty() && this.step != Step.FAILED) {
+            return PacketSignal.HANDLED;
+        }
+        if (this.step != Step.PACK_DOWNLOAD) {
+            return this.outOfOrder();
+        }
+        ResourcePacks.Pack pack = this.requestedPacks.get(packet.getPackId());
+        if (pack == null || !pack.version.equals(packet.getPackVersion())) {
+            return this.fail("disconnectionScreen.resourcePack");
+        }
+        try {
+            int index = packet.getChunkIndex();
+            if (index < 0 || index >= pack.chunkCount()) {
+                return this.fail("disconnectionScreen.resourcePack");
+            }
+            BitSet sent = this.sentChunks.computeIfAbsent(pack.id, ignored -> new BitSet());
+            if (!sent.get(index)) {
+                sent.set(index);
+                this.session.sendPacket(pack.chunk(index));
+            }
+        } catch (IllegalArgumentException e) {
+            return this.fail("disconnectionScreen.resourcePack");
         }
         return PacketSignal.HANDLED;
     }
