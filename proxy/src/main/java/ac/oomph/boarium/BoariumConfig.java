@@ -9,6 +9,8 @@ import org.yaml.snakeyaml.constructor.SafeConstructor;
 
 import java.io.IOException;
 import java.io.Reader;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,14 +20,16 @@ import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.function.Function;
 
 /**
  * boarium's settings, read from a YAML file. latency_interval and shutdown_message are spectrum-internal's keys.
  * A port of 0 in the file means the listen port, and is read as that port here, so a port is 0 only when the listen port is.
  */
 public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, String server, String fallbackServer, boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
-                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit, ResourcePacks resourcePacks) {
+                            String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit, ResourcePacks resourcePacks, FlagWebhook flagWebhook) {
 
     /** Resource pack directory is resolved relative to config.yml; null disables custom packs. */
     public record ResourcePacks(Path directory, boolean required, boolean includeExempted) {
@@ -37,7 +41,29 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                          boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
                          String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit) {
         this(listen, rakNet, netherNet, server, fallbackServer, xboxAuth, motd, subMotd, maxPlayers, latencyInterval,
-                shutdownMessage, boarEnabled, boarMitigations, boarAlertLimit, ResourcePacks.DEFAULT);
+                shutdownMessage, boarEnabled, boarMitigations, boarAlertLimit, ResourcePacks.DEFAULT, null);
+    }
+
+    /** Keeps flag_webhook off for embedded callers. */
+    public BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, String server, String fallbackServer,
+                         boolean xboxAuth, String motd, String subMotd, int maxPlayers, Duration latencyInterval,
+                         String shutdownMessage, boolean boarEnabled, boolean boarMitigations, int boarAlertLimit, ResourcePacks resourcePacks) {
+        this(listen, rakNet, netherNet, server, fallbackServer, xboxAuth, motd, subMotd, maxPlayers, latencyInterval,
+                shutdownMessage, boarEnabled, boarMitigations, boarAlertLimit, resourcePacks, null);
+    }
+
+    /**
+     * Where Boar's flags are posted as JSON; null in the config when flag_webhook has no URL.
+     *
+     * @param secret sent as {@code Authorization: Bearer <secret>}, or null for none
+     * @param limit  how many flags a minute, for each player and check, are posted, or 0 for all
+     */
+    public record FlagWebhook(URI url, String secret, int limit) {
+        // The URL and the secret may both hold a token.
+        @Override
+        public String toString() {
+            return "FlagWebhook[url=" + this.url.getScheme() + "://" + this.url.getHost() + "/…, secret=" + (this.secret == null ? "none" : "…") + ", limit=" + this.limit + "]";
+        }
     }
 
     /**
@@ -125,12 +151,23 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
               required: false
               # Append the vanilla Education/Chemistry packs to the stack.
               include_exempted: true
+            # Posts each of Boar's flags as JSON to an HTTP endpoint, such as your own API or a bot. Nothing is posted while url and url_env are both empty.
+            flag_webhook:
+              # The endpoint, an http:// or https:// URL.
+              url: ""
+              # Or the name of an environment variable that holds the URL, to keep it out of this file.
+              url_env: ""
+              # The name of an environment variable whose value is sent as "Authorization: Bearer <value>". Empty sends none.
+              secret_env: ""
+              # How many flags a minute, for each player and check, are posted. 0 posts every flag.
+              limit: 2
             """;
 
     // The keys each section of the file takes, by the section's name; "" is the top of the file.
     private static final Map<String, List<String>> SECTIONS = Map.of(
-            "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit", "resource_packs"),
+            "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit", "resource_packs", "flag_webhook"),
             "resource_packs", List.of("directory", "required", "include_exempted"),
+            "flag_webhook", List.of("url", "url_env", "secret_env", "limit"),
             "raknet", List.of("enabled", "port", "max_connections_per_address", "packet_limit", "rate_limiting"),
             "nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery"),
             "nethernet.https", List.of("certificate", "private_key", "password"));
@@ -159,8 +196,12 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         return parse(reader, Path.of(""));
     }
 
-    // folder is what relative paths in the config are relative to.
     static BoariumConfig parse(Reader reader, Path folder) {
+        return parse(reader, folder, System::getenv);
+    }
+
+    // folder is what relative paths in the config are relative to, and env gives the environment variables that flag_webhook names.
+    static BoariumConfig parse(Reader reader, Path folder, Function<String, String> env) {
         LoaderOptions options = new LoaderOptions();
         options.setAllowDuplicateKeys(false);
         Object root;
@@ -227,7 +268,49 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 values.get("boar_enabled", Boolean.class, true),
                 values.get("boar_mitigations", Boolean.class, true),
                 values.integer("boar_alert_limit", 1, 0, Integer.MAX_VALUE),
-                resourcePacks(values.section("resource_packs"), folder));
+                resourcePacks(values.section("resource_packs"), folder),
+                flagWebhook(values.section("flag_webhook"), env));
+    }
+
+    // The URL and the secret never go into an error, since either may hold a token.
+    private static FlagWebhook flagWebhook(Section values, Function<String, String> env) {
+        String url = values.get("url", String.class, "");
+        String urlEnv = values.get("url_env", String.class, "");
+        String secretEnv = values.get("secret_env", String.class, "");
+        int limit = values.integer("limit", 2, 0, Integer.MAX_VALUE);
+        if (!url.isEmpty() && !urlEnv.isEmpty()) {
+            throw new IllegalArgumentException(values.name("url") + " and " + values.name("url_env") + " are both set; set one");
+        }
+        if (!urlEnv.isEmpty()) {
+            url = Objects.requireNonNullElse(env.apply(urlEnv), "");
+            if (url.isEmpty()) {
+                throw new IllegalArgumentException(values.name("url_env") + " names the environment variable " + urlEnv + ", which is not set or is empty");
+            }
+        }
+        if (url.isEmpty()) {
+            if (!secretEnv.isEmpty()) {
+                throw new IllegalArgumentException(values.name("secret_env") + " needs " + values.name("url") + " or " + values.name("url_env"));
+            }
+            return null;
+        }
+        String source = urlEnv.isEmpty() ? values.name("url") : "the environment variable " + urlEnv;
+        URI uri;
+        try {
+            uri = new URI(url.trim());
+        } catch (URISyntaxException e) {
+            throw new IllegalArgumentException(source + " is not a URL");
+        }
+        if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme())) || uri.getHost() == null) {
+            throw new IllegalArgumentException(source + " must be an http:// or https:// URL with a host");
+        }
+        String secret = null;
+        if (!secretEnv.isEmpty()) {
+            secret = env.apply(secretEnv);
+            if (secret == null || secret.isEmpty()) {
+                throw new IllegalArgumentException(values.name("secret_env") + " names the environment variable " + secretEnv + ", which is not set or is empty");
+            }
+        }
+        return new FlagWebhook(uri, secret, limit);
     }
 
     // Resolve pack paths once so a working-directory change cannot select different assets.

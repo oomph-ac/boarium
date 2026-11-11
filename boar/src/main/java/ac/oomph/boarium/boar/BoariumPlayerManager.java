@@ -55,6 +55,7 @@ final class BoariumPlayerManager extends BoarPlayerManager<Session> {
     // Not final, since the tests share one Boar and change it.
     volatile boolean mitigations;
     final ConsoleAlerts alerts;
+    final FlagAlerts flags = new FlagAlerts();
 
     BoariumPlayerManager(boolean mitigations, int alertLimit) {
         this.mitigations = mitigations;

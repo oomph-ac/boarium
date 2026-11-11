@@ -8,6 +8,7 @@ import ac.boar.protocol.BoarDefaultPacketListeners;
 import ac.oomph.boarium.boar.blocks.BedrockBlockTable;
 import ac.oomph.boarium.boar.blocks.BedrockBlockUnion;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.flag.FlagSink;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import com.fasterxml.jackson.databind.DeserializationFeature;
@@ -24,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
@@ -44,16 +46,40 @@ public final class BoariumBoar {
     }
 
     /**
+     * A sink that gets Boar's flags.
+     *
+     * @param limit how many flags a minute, for each player and check, the sink gets, or 0 for all
+     */
+    public record FlagOutput(FlagSink sink, int limit) {
+        public FlagOutput {
+            Objects.requireNonNull(sink, "sink");
+            if (limit < 0) {
+                throw new IllegalArgumentException("limit must be 0 or more, got " + limit);
+            }
+        }
+    }
+
+    /**
+     * Starts Boar with no flag sinks.
+     *
+     * @see #start(Path, boolean, int, List)
+     */
+    public static Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations, int alertLimit) throws IOException {
+        return start(dataFolder, mitigations, alertLimit, List.of());
+    }
+
+    /**
      * Starts Boar, which can run once in a JVM, with its config in {@code dataFolder}.
      *
      * @param mitigations whether Boar may change what players do, such as setting them back
      * @param alertLimit  how many of Boar's flags a second for each player and check go to the console, or 0 for all
+     * @param flagSinks   the sinks that also get Boar's flags, each with its own limit
      * @return the processors for {@link ac.oomph.boarium.session.SessionSettings}, which give each player to Boar
      * @throws IllegalArgumentException if alertLimit is negative
      * @throws IllegalStateException if Boar has started already
      * @throws IOException if Boar's config cannot be read, or its default cannot be written
      */
-    public static synchronized Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations, int alertLimit) throws IOException {
+    public static synchronized Function<ClientLogin, Processor> start(Path dataFolder, boolean mitigations, int alertLimit, List<FlagOutput> flagSinks) throws IOException {
         if (alertLimit < 0) {
             throw new IllegalArgumentException("alertLimit must be 0 or more, got " + alertLimit);
         }
@@ -74,6 +100,10 @@ public final class BoariumBoar {
         Boar.getInstance().init(new BoariumPlatform(dataFolder, players));
         // Boar's own alerts reach only those who turn them on with a command, and boarium has no commands.
         Boar.getInstance().getViolationRegistry().register(players.alerts);
+        for (FlagOutput output : flagSinks) {
+            players.flags.add(output.sink(), output.limit());
+        }
+        Boar.getInstance().getViolationRegistry().register(players.flags);
         BoarDefaultChecks.registerAll(Boar.getInstance().getCheckRegistry());
         BoarDefaultAcknowledgments.registerAll(Boar.getInstance().getAcknowledgmentRegistry());
         BoarDefaultPacketListeners.registerAll();

@@ -214,6 +214,34 @@ class MainTest {
         } finally { process.destroyForcibly(); }
     }
 
+    // Boar and its flag webhook are shared by the routes, so they must agree on it, as on Boar's settings.
+    @Test
+    void rejectsConflictingFlagWebhooksBeforeBinding(@TempDir Path dir) throws Exception {
+        Path a = Files.writeString(dir.resolve("a.yml"), "flag_webhook:\n  url: https://a.example.com/flags\n");
+        Path b = Files.writeString(dir.resolve("b.yml"), "flag_webhook:\n  url: https://b.example.com/flags\n");
+        Process process = this.launch(dir, "", a, b);
+        try {
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            this.awaitLine("routes in one JVM must agree on boar_enabled, and while Boar is on, on boar_mitigations, boar_alert_limit and flag_webhook");
+            assertTrue(this.output.stream().noneMatch(line -> line.contains("example.com")), String.join("\n", this.output));
+        } finally { process.destroyForcibly(); }
+    }
+
+    @Test
+    void stopsWhenTheFlagWebhookVariableIsNotSet(@TempDir Path dir) throws Exception {
+        Process process = this.start(dir, "127.0.0.1:1", "", "flag_webhook:\n  url_env: BOARIUM_TEST_UNSET_FLAG_URL\n");
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            this.awaitLine("could not start: java.lang.IllegalArgumentException: flag_webhook.url_env names the environment variable BOARIUM_TEST_UNSET_FLAG_URL, which is not set or is empty");
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
     @Test
     void stopsWhenBoarCannotStart(@TempDir Path dir) throws Exception {
         Path folder = Files.writeString(dir.resolve("boar"), "");

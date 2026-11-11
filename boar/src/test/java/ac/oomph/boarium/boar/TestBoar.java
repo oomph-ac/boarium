@@ -35,6 +35,11 @@ public final class TestBoar {
         return ((BoariumPlayerManager) Boar.getInstance().getPlayerManager()).alerts.limiter.tracks(player);
     }
 
+    // Gives Boar's flags to sink, with limit a minute for each player and check, until the returned task runs.
+    public static Runnable addFlagSink(ac.oomph.boarium.flag.FlagSink sink, int limit) {
+        return ((BoariumPlayerManager) Boar.getInstance().getPlayerManager()).flags.add(sink, limit);
+    }
+
     // Lets Boar warn again about players on a protocol it does not check.
     public static void forgetWarnings() {
         BoariumBoar.WARNED_PROTOCOLS.clear();
