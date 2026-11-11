@@ -98,6 +98,8 @@ class MainTest {
             assertEquals(143, process.exitValue());
             this.awaitLine("shutting down");
             assertTrue(this.output.stream().noneMatch(line -> line.contains(" ERROR ") || line.contains("Exception")), String.join("\n", this.output));
+            // SLF4J reports a provider it cannot load, or a choice between two, on lines of its own.
+            assertTrue(this.output.stream().noneMatch(line -> line.startsWith("SLF4J")), String.join("\n", this.output));
         } finally {
             process.destroyForcibly();
             server.close();
@@ -114,6 +116,21 @@ class MainTest {
             this.reader.join(5000);
             assertEquals(1, process.exitValue());
             this.awaitLine("could not start: java.io.IOException: Boar's data folder " + folder + " is a file");
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    // Log sinks get events only through boarium's SLF4J provider, which SLF4J names at INFO verbosity when it loads it.
+    @Test
+    void logsThroughTheSinkProvider(@TempDir Path dir) throws Exception {
+        Files.writeString(dir.resolve("boar"), "");
+        Process process = this.start(dir, "127.0.0.1:1", "-Dslf4j.internal.verbosity=INFO", "");
+        try {
+            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(5000);
+            assertTrue(this.output.contains("SLF4J(I): Attempting to load provider \"ac.oomph.boarium.log.SinkServiceProvider\" specified via \"slf4j.provider\" system property"), String.join("\n", this.output));
+            assertTrue(this.output.stream().noneMatch(line -> line.startsWith("SLF4J(W)") || line.startsWith("SLF4J(E)")), String.join("\n", this.output));
         } finally {
             process.destroyForcibly();
         }

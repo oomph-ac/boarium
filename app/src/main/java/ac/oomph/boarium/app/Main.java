@@ -4,6 +4,7 @@ import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.BoariumConfig;
 import ac.oomph.boarium.boar.BoariumBoar;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.log.SinkServiceProvider;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.SessionSettings;
@@ -19,6 +20,11 @@ import java.util.function.Function;
  * Runs boarium with the config at the path in its first argument, or config.yml, and with Boar when the config turns it on.
  */
 public final class Main {
+    // Before the first logger, so that SLF4J starts with the provider that also feeds log sinks.
+    static {
+        SinkServiceProvider.select();
+    }
+
     private static final Logger LOG = LoggerFactory.getLogger(Main.class);
 
     private Main() {

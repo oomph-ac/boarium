@@ -28,7 +28,8 @@ dependencies {
     implementation(libs.aircompressor)
     implementation(libs.snakeyaml)
     implementation(libs.slf4j.api)
-    runtimeOnly(libs.slf4j.simple)
+    // boarium's logging provider wraps slf4j-simple's console logger.
+    implementation(libs.slf4j.simple)
 
     testImplementation(platform(libs.junit.bom))
     testImplementation(libs.junit.jupiter)

@@ -61,3 +61,15 @@ While NetherNet is on, boarium keeps the key that the game trusts the server by 
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.
 
 boarium logs Boar's flags to its console, up to `boar_alert_limit`, in one line each: Boar's alert, with the `prefix` from Boar's config, and whether `boar_mitigations` lets Boar act on the player. A movement trace that Boar adds with `debug-mode` on goes to the DEBUG level, which boarium shows when started with `JAVA_OPTS=-Dorg.slf4j.simpleLogger.log.Boar=debug`.
+
+### Log sinks
+
+Code running in boarium can receive every log line, for example to send it to a webhook, by registering an `ac.oomph.boarium.log.LogSink`:
+
+```java
+LogSinks.Registration registration = LogSinks.add(Level.WARN, event -> queue.offer(event));
+```
+
+A sink gets each line at its level and above as a `LogEvent`: the time, level, logger name, thread, message with its arguments filled in, and the throwable logged with it, if any. A sink can take levels the console hides, such as DEBUG. It runs on the thread that logged, which can be a network thread, so it must queue the line and send it from a thread of its own. What a sink logs goes only to the console. A sink that throws is removed, with a warning. Closing the registration removes the sink.
+
+Sinks get lines only through boarium's SLF4J provider, which wraps slf4j-simple's console, so the `org.slf4j.simpleLogger.*` settings above still apply. boarium selects the provider when it starts, unless the JVM is started with another `-Dslf4j.provider`.
