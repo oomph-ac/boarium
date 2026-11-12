@@ -660,6 +660,39 @@ class SessionTest {
         assertTrue(processor.calls.contains("flush"));
     }
 
+    private void sendCacheStatus(boolean supported) throws Exception {
+        ClientCacheStatusPacket status = new ClientCacheStatusPacket();
+        status.setSupported(supported);
+        this.client.session.get().sendPacketImmediately(status);
+    }
+
+    // The game sends ClientCacheStatus again after it spawns. Spectrum servers turn the blob cache on from it, which would hide the chunks from a processor that takes none.
+    @Test
+    void tellsTheServerTheClientHasNoCacheWhenTheProcessorTakesNone() throws Exception {
+        this.processor = new Processor() {
+            @Override
+            public boolean clientCache() {
+                return false;
+            }
+        };
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        this.sendCacheStatus(true);
+        assertFalse(assertInstanceOf(ClientCacheStatusPacket.class, this.server.await()).isSupported());
+    }
+
+    @Test
+    void passesTheClientsCacheStatusOnWhenTheProcessorTakesTheCache() throws Exception {
+        this.processor = new Processor() {
+        };
+        this.connect(Duration.ofMinutes(1));
+        this.spawnAndSettle();
+
+        this.sendCacheStatus(true);
+        assertTrue(assertInstanceOf(ClientCacheStatusPacket.class, this.server.await()).isSupported());
+    }
+
     @Test
     void sendsTheProcessorsOwnPacketsWithTheFlush() throws Exception {
         this.processor = new Processor() {
