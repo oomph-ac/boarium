@@ -18,13 +18,18 @@ class ResourcePacksTest {
 
     // Original generated fixtures: no game assets are included.
     static Path archive(Path path, UUID id, String version, boolean contents) throws IOException {
+        String manifest = "{\"format_version\":3,\"header\":{\"uuid\":\"" + id + "\",\"version\":" + version + "},\"modules\":[{\"type\":\"resources\"}]}";
+        return archive(path, manifest, contents ? "{\"content\":[]}".getBytes(StandardCharsets.UTF_8) : null);
+    }
+
+    static Path archive(Path path, String manifest, byte[] contents) throws IOException {
         try (var zip = new ZipOutputStream(Files.newOutputStream(path))) {
             zip.putNextEntry(new ZipEntry("manifest.json"));
-            zip.write(("{\"format_version\":3,\"header\":{\"uuid\":\"" + id + "\",\"version\":" + version + "},\"modules\":[{\"type\":\"resources\"}]}").getBytes(StandardCharsets.UTF_8));
+            zip.write(manifest.getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
-            if (contents) {
+            if (contents != null) {
                 zip.putNextEntry(new ZipEntry("contents.json"));
-                zip.write("{\"content\":[]}".getBytes(StandardCharsets.UTF_8));
+                zip.write(contents);
                 zip.closeEntry();
             }
             zip.putNextEntry(new ZipEntry("fixture.bin"));
@@ -75,5 +80,46 @@ class ResourcePacksTest {
         Files.delete(second); Files.delete(dir.resolve("a.zip"));
         archive(second, id, "\"1.no.0\"", false);
         assertTrue(assertThrows(IOException.class, () -> ResourcePacks.load(new BoariumConfig.ResourcePacks(dir,false,true))).getMessage().contains(second.toString()));
+    }
+
+    String load() {
+        return assertThrows(IOException.class, () -> ResourcePacks.load(new BoariumConfig.ResourcePacks(dir,false,true))).getMessage();
+    }
+
+    @Test void rejectsMarketplaceEncryptedContents() throws Exception {
+        UUID id = UUID.randomUUID();
+        String manifest = "{\"header\":{\"uuid\":\"" + id + "\",\"version\":[1,0,0]},\"modules\":[{\"type\":\"resources\"}]}";
+        // Version 0, then 0x9BCFB9FC as a little-endian uint32, then encrypted bytes.
+        byte[] encrypted = new byte[0x100];
+        encrypted[4] = (byte) 0xFC; encrypted[5] = (byte) 0xB9; encrypted[6] = (byte) 0xCF; encrypted[7] = (byte) 0x9B;
+        Path path = archive(dir.resolve("encrypted.zip"), manifest, encrypted);
+        String message = load();
+        assertTrue(message.contains(path.toString()), message);
+        assertTrue(message.contains("encrypted"), message);
+        // The same bytes in the wrong order, and a contents.json too short to hold the magic, are not the marker.
+        Files.delete(path);
+        encrypted[4] = (byte) 0x9B; encrypted[5] = (byte) 0xCF; encrypted[6] = (byte) 0xB9; encrypted[7] = (byte) 0xFC;
+        archive(path, manifest, encrypted);
+        assertEquals(1, ResourcePacks.load(new BoariumConfig.ResourcePacks(dir,false,true)).packs.size());
+        Files.delete(path);
+        archive(path, manifest, new byte[] {0, 0, 0, 0, (byte) 0xFC, (byte) 0xB9, (byte) 0xCF});
+        assertEquals(1, ResourcePacks.load(new BoariumConfig.ResourcePacks(dir,false,true)).packs.size());
+    }
+
+    @Test void namesMissingManifestFields() throws Exception {
+        UUID id = UUID.randomUUID();
+        var cases = java.util.Map.of(
+                "{\"modules\":[{\"type\":\"resources\"}]}", "missing header",
+                "{\"header\":{\"version\":[1,0,0]},\"modules\":[{\"type\":\"resources\"}]}", "missing header.uuid",
+                "{\"header\":{\"uuid\":\"" + id + "\"},\"modules\":[{\"type\":\"resources\"}]}", "missing header.version",
+                "{\"header\":{\"uuid\":\"" + id + "\",\"version\":[1,0,0]}}", "missing modules",
+                "{\"header\":{\"uuid\":\"" + id + "\",\"version\":[1,0,0]},\"modules\":[{}]}", "missing modules[].type");
+        Path path = dir.resolve("pack.zip");
+        for (var entry : cases.entrySet()) {
+            archive(path, entry.getKey(), null);
+            String message = load();
+            assertTrue(message.contains(path.toString()) && message.contains(entry.getValue()), message);
+            Files.delete(path);
+        }
     }
 }

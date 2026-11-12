@@ -12,11 +12,14 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackDataInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -28,15 +31,29 @@ public final class ResourcePacks {
     static final int CHUNK_SIZE = 128 * 1024;
     private static final int MAX_BYTES = 256 * 1024 * 1024;
     private static final int MAX_MANIFEST = 1024 * 1024;
-    public static final ResourcePacks EMPTY = new ResourcePacks(List.of(), false, true);
+    // Marketplace-encrypted packs replace contents.json with a binary header: a zero version, then this magic as a little-endian uint32 at bytes 4-8.
+    private static final int ENCRYPTED_MAGIC = 0x9BCFB9FC;
+    private static final Duration DOWNLOAD_TIMEOUT = Duration.ofMinutes(5);
+    public static final ResourcePacks EMPTY = new ResourcePacks(List.of(), false, true, DOWNLOAD_TIMEOUT);
     final List<Pack> packs;
     final boolean required;
     final boolean includeExempted;
+    // How long a client may take from its first nonempty SEND_PACKS to HAVE_ALL_PACKS or REFUSED.
+    final Duration downloadTimeout;
 
-    private ResourcePacks(List<Pack> packs, boolean required, boolean includeExempted) {
+    private ResourcePacks(List<Pack> packs, boolean required, boolean includeExempted, Duration downloadTimeout) {
+        if (downloadTimeout.toMillis() < 1) {
+            throw new IllegalArgumentException("download timeout must be at least 1 ms, got " + downloadTimeout);
+        }
         this.packs = List.copyOf(packs);
         this.required = required;
         this.includeExempted = includeExempted;
+        this.downloadTimeout = downloadTimeout;
+    }
+
+    // Tests shorten the download deadline; production always uses the five-minute default.
+    ResourcePacks withDownloadTimeout(Duration downloadTimeout) {
+        return new ResourcePacks(this.packs, this.required, this.includeExempted, downloadTimeout);
     }
 
     /** Loads resource-only ZIP archives in filename order, rejecting invalid or duplicate pack identities. */
@@ -63,7 +80,7 @@ public final class ResourcePacks {
                 }
             }
         }
-        return new ResourcePacks(packs, config.required(), config.includeExempted());
+        return new ResourcePacks(packs, config.required(), config.includeExempted(), DOWNLOAD_TIMEOUT);
     }
 
     // Bound both compressed data and the only ZIP entry we decompress. Never extract archive paths.
@@ -89,10 +106,19 @@ public final class ResourcePacks {
                     }
                     manifest = new JsonParser().parse(new String(json, StandardCharsets.UTF_8)).getAsJsonObject();
                 }
+                var contents = zip.getEntry("contents.json");
+                if (contents != null) {
+                    try (var input = zip.getInputStream(contents)) {
+                        byte[] head = input.readNBytes(8);
+                        if (head.length == 8 && ByteBuffer.wrap(head, 4, 4).order(ByteOrder.LITTLE_ENDIAN).getInt() == ENCRYPTED_MAGIC) {
+                            throw new IOException("encrypted resource packs are not supported");
+                        }
+                    }
+                }
             }
-            JsonObject header = manifest.getAsJsonObject("header");
-            UUID id = UUID.fromString(header.get("uuid").getAsString());
-            JsonElement version = header.get("version");
+            JsonObject header = object(manifest, "header", "header");
+            UUID id = UUID.fromString(string(header, "uuid", "header.uuid"));
+            JsonElement version = field(header, "version", "header.version");
             List<String> parts = new ArrayList<>();
             if (version.isJsonArray()) {
                 for (JsonElement part : version.getAsJsonArray()) {
@@ -111,12 +137,19 @@ public final class ResourcePacks {
                     throw new IllegalArgumentException("invalid version component");
                 }
             }
-            JsonArray modules = manifest.getAsJsonArray("modules");
+            JsonElement modulesField = field(manifest, "modules", "modules");
+            if (!modulesField.isJsonArray()) {
+                throw new IllegalArgumentException("modules must be an array");
+            }
+            JsonArray modules = modulesField.getAsJsonArray();
             if (modules.size() == 0) {
                 throw new IllegalArgumentException("pack has no modules");
             }
             for (JsonElement module : modules) {
-                if (!module.getAsJsonObject().get("type").getAsString().equals("resources")) {
+                if (!module.isJsonObject()) {
+                    throw new IllegalArgumentException("each module must be an object");
+                }
+                if (!string(module.getAsJsonObject(), "type", "modules[].type").equals("resources")) {
                     throw new IllegalArgumentException("only resource modules are supported");
                 }
             }
@@ -130,6 +163,31 @@ public final class ResourcePacks {
         } catch (IOException | RuntimeException | NoSuchAlgorithmException e) {
             throw new IOException("invalid resource pack " + path + ": " + e.getMessage(), e);
         }
+    }
+
+    // Manifest lookups that name the missing or mistyped field instead of failing with a NullPointerException.
+    private static JsonElement field(JsonObject object, String key, String path) {
+        JsonElement value = object.get(key);
+        if (value == null || value.isJsonNull()) {
+            throw new IllegalArgumentException("manifest.json is missing " + path);
+        }
+        return value;
+    }
+
+    private static JsonObject object(JsonObject object, String key, String path) {
+        JsonElement value = field(object, key, path);
+        if (!value.isJsonObject()) {
+            throw new IllegalArgumentException(path + " must be an object");
+        }
+        return value.getAsJsonObject();
+    }
+
+    private static String string(JsonObject object, String key, String path) {
+        JsonElement value = field(object, key, path);
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) {
+            throw new IllegalArgumentException(path + " must be a string");
+        }
+        return value.getAsString();
     }
 
     /** One immutable archive; replies use independent buffers so releasing them cannot affect another client. */

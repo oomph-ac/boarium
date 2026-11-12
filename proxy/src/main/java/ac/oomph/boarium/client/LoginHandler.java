@@ -70,7 +70,7 @@ final class LoginHandler implements BedrockPacketHandler {
     private final ResourcePacks packs;
     private final Map<UUID, ResourcePacks.Pack> requestedPacks = new HashMap<>();
     private final Consumer<ClientLogin> onLogin;
-    private final Duration downloadTimeout;
+    private final Duration loginTimeout;
     private final Map<UUID, BitSet> sentChunks = new HashMap<>();
 
     private Step step = Step.NETWORK_SETTINGS;
@@ -86,28 +86,30 @@ final class LoginHandler implements BedrockPacketHandler {
 
     // The catalogue was validated at startup and is shared without per-login archive copies.
     LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
-        this(session, requireXbox, timeout, Duration.ofMinutes(5), packs, onLogin);
-    }
-
-    // Start this separate deadline only when a client requests archive bytes.
-    LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, Duration downloadTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
-        if (downloadTimeout.toMillis() < 1) {
-            throw new IllegalArgumentException("download timeout must be at least 1 ms");
+        if (timeout.toMillis() < 1) {
+            throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + timeout);
         }
-        this.downloadTimeout = downloadTimeout;
         this.session = session;
         this.netherNet = session.getPeer() instanceof NetherNetPeer;
         this.requireXbox = requireXbox;
         this.packs = packs;
         this.onLogin = onLogin;
-        if (timeout.toMillis() < 1) {
-            throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + timeout);
-        }
-        this.timeout = session.getPeer().getChannel().eventLoop().schedule(() -> {
+        this.loginTimeout = timeout;
+        this.timeout = this.deadline(timeout);
+    }
+
+    private ScheduledFuture<?> deadline(Duration after) {
+        return this.session.getPeer().getChannel().eventLoop().schedule(() -> {
             if (this.step != Step.FAILED && this.session.isConnected()) {
                 this.fail("disconnectionScreen.timeout");
             }
-        }, timeout.toMillis(), TimeUnit.MILLISECONDS);
+        }, after.toMillis(), TimeUnit.MILLISECONDS);
+    }
+
+    // Swaps the login deadline for the pack download deadline and back. Only the time spent downloading gets the longer bound.
+    private void replaceDeadline(Duration after) {
+        this.timeout.cancel(false);
+        this.timeout = this.deadline(after);
     }
 
     @Override
@@ -320,9 +322,7 @@ final class LoginHandler implements BedrockPacketHandler {
                     }
                     this.requestedPacks.put(pack.id, pack);
                 }
-                this.timeout.cancel(false);
-                this.timeout = this.session.getPeer().getChannel().eventLoop().schedule(
-                        () -> this.fail("disconnectionScreen.timeout"), this.downloadTimeout.toMillis(), TimeUnit.MILLISECONDS);
+                this.replaceDeadline(this.packs.downloadTimeout);
                 this.step = Step.PACK_DOWNLOAD;
                 for (ResourcePacks.Pack pack : this.requestedPacks.values()) {
                     this.session.sendPacket(pack.dataInfo());
@@ -361,6 +361,10 @@ final class LoginHandler implements BedrockPacketHandler {
 
     // A declined optional pack is omitted; exempted packs are independently configurable.
     private void sendPackStack(boolean accepted) {
+        // Leaving the download, the client gets a fresh login deadline for the stack and COMPLETED. The original one may have run out while it downloaded.
+        if (this.step == Step.PACK_DOWNLOAD) {
+            this.replaceDeadline(this.loginTimeout);
+        }
         ResourcePackStackPacket stack = new ResourcePackStackPacket();
         stack.setGameVersion(this.session.getCodec().getMinecraftVersion());
         stack.setForcedToAccept(this.packs.required);
@@ -381,6 +385,10 @@ final class LoginHandler implements BedrockPacketHandler {
 
     @Override
     public PacketSignal handle(ResourcePackChunkRequestPacket packet) {
+        // With no packs configured there is nothing to download, so the request is ignored as it was before packs could be served.
+        if (this.packs.packs.isEmpty() && this.step != Step.FAILED) {
+            return PacketSignal.HANDLED;
+        }
         if (this.step != Step.PACK_DOWNLOAD) {
             return this.outOfOrder();
         }

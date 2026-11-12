@@ -4,10 +4,7 @@ evaluationDependsOn(":proxy")
 dependencies {
     api(project(":proxy"))
     implementation(libs.boar)
-    // Boar's common module asks for the api module's moving dev2-SNAPSHOT.
-    implementation(libs.boar.api) {
-        version { strictly(libs.versions.boar.get()) }
-    }
+    implementation(libs.boar.api)
     implementation(libs.slf4j.api)
     implementation(libs.jackson.yaml)
     runtimeOnly(libs.guava)

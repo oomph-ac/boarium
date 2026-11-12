@@ -31,8 +31,11 @@ class ResourcePackExchangeTest {
         open(packs, required, Duration.ofSeconds(10));
     }
     void open(boolean packs, boolean required, Duration timeout) throws Exception {
+        open(packs, required, timeout, Duration.ofMinutes(5));
+    }
+    void open(boolean packs, boolean required, Duration timeout, Duration downloadTimeout) throws Exception {
         if (packs) ResourcePacksTest.archive(dir.resolve("pack.zip"), id, "[1,0,0]", false);
-        var catalogue = ResourcePacks.load(new BoariumConfig.ResourcePacks(dir,required,false));
+        var catalogue = ResourcePacks.load(new BoariumConfig.ResourcePacks(dir,required,false)).withDownloadTimeout(downloadTimeout);
         listener = ClientListener.bind(group, new ClientListener.RakNetSettings(new InetSocketAddress("127.0.0.1",0)), null, new BedrockPong(), false, timeout, catalogue, login::complete);
         var codec = BedrockVersions.LATEST;
         client = new TestClient("PackTest",codec,codec.getProtocolVersion()); client.manualPacks = true;
@@ -136,5 +139,38 @@ class ResourcePackExchangeTest {
         open(false,false); response(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS); client.await(ResourcePackStackPacket.class);
         response(ResourcePackClientResponsePacket.Status.REFUSED);
         assertEquals("disconnectionScreen.resourcePack",client.await(DisconnectPacket.class).getKickMessage());
+    }
+
+    @Test void downloadDeadlineDisconnectsAStalledDownload() throws Exception {
+        // The login deadline is far off, so only the download deadline can fire.
+        open(true,true,Duration.ofMinutes(1),Duration.ofSeconds(1));
+        response(ResourcePackClientResponsePacket.Status.SEND_PACKS,id+"_1.0.0"); client.await(ResourcePackDataInfoPacket.class);
+        long start = System.nanoTime();
+        assertEquals("disconnectionScreen.timeout",client.await(DisconnectPacket.class).getKickMessage());
+        assertTrue(System.nanoTime()-start < TimeUnit.SECONDS.toNanos(5));
+        assertFalse(login.isDone());
+    }
+    @Test void haveAllPacksRestoresTheLoginDeadline() throws Exception {
+        stallsAtStackAfterDownload(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS);
+    }
+    @Test void optionalRefusalRestoresTheLoginDeadline() throws Exception {
+        stallsAtStackAfterDownload(ResourcePackClientResponsePacket.Status.REFUSED);
+    }
+    // A client that downloads and then sits at the stack is held for the login deadline, not the download deadline.
+    void stallsAtStackAfterDownload(ResourcePackClientResponsePacket.Status status) throws Exception {
+        open(true,false,Duration.ofSeconds(2),Duration.ofMinutes(5));
+        response(ResourcePackClientResponsePacket.Status.SEND_PACKS,id+"_1.0.0"); client.await(ResourcePackDataInfoPacket.class);
+        response(status); client.await(ResourcePackStackPacket.class);
+        long start = System.nanoTime();
+        assertEquals("disconnectionScreen.timeout",client.await(DisconnectPacket.class).getKickMessage());
+        assertTrue(System.nanoTime()-start < TimeUnit.SECONDS.toNanos(5));
+        assertFalse(login.isDone());
+    }
+    @Test void emptyCatalogueIgnoresChunkRequests() throws Exception {
+        open(false,false);
+        var request = new ResourcePackChunkRequestPacket(); request.setPackId(id); request.setPackVersion("1.0.0"); request.setChunkIndex(0);
+        client.session.get().sendPacketImmediately(request);
+        response(ResourcePackClientResponsePacket.Status.HAVE_ALL_PACKS); client.await(ResourcePackStackPacket.class);
+        response(ResourcePackClientResponsePacket.Status.COMPLETED); assertNotNull(login.get(5,TimeUnit.SECONDS));
     }
 }
