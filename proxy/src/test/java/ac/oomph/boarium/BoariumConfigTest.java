@@ -114,6 +114,48 @@ class BoariumConfigTest {
         assertFalse(config.toString().contains("hunter2"), config.toString());
     }
 
+    private static BoariumConfig flagWebhook(java.util.Map<String, String> env, String... lines) {
+        String config = "flag_webhook:\n" + Arrays.stream(lines).map(line -> "  " + line + "\n").reduce("", String::concat);
+        return BoariumConfig.parse(new StringReader(config), Path.of(""), env::get);
+    }
+
+    private static String flagWebhookError(java.util.Map<String, String> env, String... lines) {
+        return assertThrows(IllegalArgumentException.class, () -> flagWebhook(env, lines)).getMessage();
+    }
+
+    @Test
+    void readsTheFlagWebhookFromTheFileOrTheEnvironment() {
+        assertNull(BoariumConfig.parse(new StringReader("")).flagWebhook());
+        assertNull(flagWebhook(java.util.Map.of(), "url: \"\"", "limit: 5").flagWebhook());
+        assertEquals(new BoariumConfig.FlagWebhook(java.net.URI.create("https://api.example.com/flags"), null, 2, ac.oomph.boarium.flag.WebhookFlagSink.Format.JSON),
+                flagWebhook(java.util.Map.of(), "url: https://api.example.com/flags").flagWebhook());
+        assertEquals(new BoariumConfig.FlagWebhook(java.net.URI.create("http://api:8080/flags?token=abc"), "s3cret", 0, ac.oomph.boarium.flag.WebhookFlagSink.Format.JSON),
+                flagWebhook(java.util.Map.of("FLAG_URL", "http://api:8080/flags?token=abc", "FLAG_SECRET", "s3cret"), "url_env: FLAG_URL", "secret_env: FLAG_SECRET", "limit: 0").flagWebhook());
+    }
+
+    // The URL and the secret may hold tokens, so neither is in an error or in toString.
+    @Test
+    void turnsAwayBadFlagWebhooksWithoutShowingTheUrlOrSecret() {
+        var env = java.util.Map.of("FLAG_URL", "ftp://files.example.com/token-in-url", "EMPTY", "");
+        assertEquals("flag_webhook.url and flag_webhook.url_env are both set; set one", flagWebhookError(env, "url: https://a.example.com", "url_env: FLAG_URL"));
+        assertEquals("flag_webhook.url_env names the environment variable MISSING, which is not set or is empty", flagWebhookError(env, "url_env: MISSING"));
+        assertEquals("flag_webhook.url_env names the environment variable EMPTY, which is not set or is empty", flagWebhookError(env, "url_env: EMPTY"));
+        assertEquals("the environment variable FLAG_URL must be an http:// or https:// URL with a host", flagWebhookError(env, "url_env: FLAG_URL"));
+        assertEquals("flag_webhook.url must be an http:// or https:// URL with a host", flagWebhookError(env, "url: discord.com/api/webhooks/1/token"));
+        assertEquals("flag_webhook.url is not a URL", flagWebhookError(env, "url: \"https://a b.example.com/token\""));
+        assertEquals("flag_webhook.secret_env names the environment variable MISSING, which is not set or is empty", flagWebhookError(env, "url: https://a.example.com", "secret_env: MISSING"));
+        assertEquals("flag_webhook.secret_env needs flag_webhook.url or flag_webhook.url_env", flagWebhookError(env, "secret_env: FLAG_URL"));
+        assertEquals("flag_webhook.limit must be a whole number from 0 to 2147483647, got -1", flagWebhookError(env, "url: https://a.example.com", "limit: -1"));
+        assertEquals(ac.oomph.boarium.flag.WebhookFlagSink.Format.DISCORD, flagWebhook(env, "url: https://discord.com/api/webhooks/1/x", "format: discord").flagWebhook().format());
+        assertEquals("flag_webhook.format must be json or discord, got the text \"slack\"", flagWebhookError(env, "url: https://a.example.com", "format: slack"));
+        assertEquals("unknown key in flag_webhook: limt (did you mean limit?); flag_webhook takes: url, url_env, secret_env, limit, format", flagWebhookError(env, "limt: 1"));
+        assertEquals("unknown key in flag_webhook: secret; flag_webhook takes: url, url_env, secret_env, limit, format", flagWebhookError(env, "secret: x"));
+
+        BoariumConfig config = flagWebhook(java.util.Map.of("SECRET", "hunter2"), "url: https://hooks.example.com/token-abc", "secret_env: SECRET");
+        assertFalse(config.toString().contains("token-abc") || config.toString().contains("hunter2"), config.toString());
+        assertTrue(config.toString().contains("https://hooks.example.com/…"), config.toString());
+    }
+
     // The keys before the raknet and nethernet sections, each turned away with the key to use instead.
     @Test
     void namesTheNewKeyForAnOldOne() {
@@ -145,11 +187,11 @@ class BoariumConfigTest {
 
     @Test
     void turnsAwayUnknownKeysAtTheTop() {
-        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("rakent:\n  enabled: true"));
-        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("boar_mitigation: true"));
-        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("lisen: :19000\ncolour: red"));
+        assertEquals("unknown key: rakent (did you mean raknet?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs, flag_webhook", error("rakent:\n  enabled: true"));
+        assertEquals("unknown key: boar_mitigation (did you mean boar_mitigations?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs, flag_webhook", error("boar_mitigation: true"));
+        assertEquals("unknown keys: lisen (did you mean listen?), colour; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs, flag_webhook", error("lisen: :19000\ncolour: red"));
         // A short key is not close to another just because both are short.
-        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs", error("mtu: 1400"));
+        assertEquals("unknown key: mtu; boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs, flag_webhook", error("mtu: 1400"));
     }
 
     // Every bad key in one error, from every section, with the keys of the old layout first; a bad value next to them is not read.
@@ -167,7 +209,7 @@ class BoariumConfigTest {
                 """);
         assertEquals(String.join("\n",
                 "nethernet_password is now nethernet.https.password",
-                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs",
+                "unknown key: lisen (did you mean listen?); boarium takes: listen, raknet, nethernet, server, fallback_server, xbox_auth, motd, sub_motd, max_players, latency_interval, shutdown_message, boar_enabled, boar_mitigations, boar_alert_limit, resource_packs, flag_webhook",
                 "unknown key in raknet: prot (did you mean port?); raknet takes: enabled, port, max_connections_per_address, packet_limit, rate_limiting",
                 "unknown key in nethernet.https: cert; nethernet.https takes: certificate, private_key, password"), error);
     }
@@ -207,6 +249,13 @@ class BoariumConfigTest {
                     password: secret
                 fallback_server: hub:19133
                 """));
+        BoariumConfig.parse(new StringReader("""
+                flag_webhook:
+                  url_env: FLAG_URL
+                  secret_env: FLAG_SECRET
+                  limit: 3
+                """), Path.of(""), java.util.Map.of("FLAG_URL", "https://a.example.com", "FLAG_SECRET", "s")::get);
+        BoariumConfig.parse(new StringReader("flag_webhook:\n  url: https://a.example.com\n"));
     }
 
     @Test

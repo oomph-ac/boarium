@@ -79,16 +79,22 @@ final class ConsoleAlerts implements ViolationListener {
         return COLOUR.matcher(text).replaceAll("");
     }
 
-    // At most limit lines in each second for each player and check. Each player's flags come on its own client event loop, and a player leaves on another thread.
+    // At most limit lines in each window, a second for the console, for each player and check. Each player's flags come on its own client event loop, and a player leaves on another thread.
     static final class Limiter {
         private static final long SECOND = TimeUnit.SECONDS.toNanos(1);
 
         private final int limit;
+        private final long window;
         private final LongSupplier clock;
-        private final Map<Object, Map<Object, Second>> players = new ConcurrentHashMap<>();
+        private final Map<Object, Map<Object, Window>> players = new ConcurrentHashMap<>();
 
         Limiter(int limit, LongSupplier clock) {
+            this(limit, SECOND, clock);
+        }
+
+        Limiter(int limit, long window, LongSupplier clock) {
             this.limit = limit;
+            this.window = window;
             this.clock = clock;
         }
 
@@ -97,21 +103,21 @@ final class ConsoleAlerts implements ViolationListener {
             if (this.limit == 0) {
                 return 0;
             }
-            Map<Object, Second> checks = this.players.computeIfAbsent(player, key -> new ConcurrentHashMap<>());
+            Map<Object, Window> checks = this.players.computeIfAbsent(player, key -> new ConcurrentHashMap<>());
             // A player is forgotten after it has left, so one that left before its entry was made would keep it.
             if (left.getAsBoolean()) {
                 this.players.remove(player);
             }
-            return checks.computeIfAbsent(check, key -> new Second()).pass(this.limit, this.clock.getAsLong());
+            return checks.computeIfAbsent(check, key -> new Window()).pass(this.limit, this.window, this.clock.getAsLong());
         }
 
         // Drops the counts of a player, and returns how many lines of each check were held back since its last line, for the checks that had some.
         Map<Object, Integer> forget(Object player) {
-            Map<Object, Second> checks = this.players.remove(player);
+            Map<Object, Window> checks = this.players.remove(player);
             Map<Object, Integer> held = new LinkedHashMap<>();
             if (checks != null) {
-                checks.forEach((check, second) -> {
-                    int count = second.held();
+                checks.forEach((check, window) -> {
+                    int count = window.held();
                     if (count > 0) {
                         held.put(check, count);
                     }
@@ -124,15 +130,15 @@ final class ConsoleAlerts implements ViolationListener {
             return this.players.containsKey(player);
         }
 
-        // The lines of one player and check in the second that began with the first line sent in it.
-        private static final class Second {
+        // The lines of one player and check in the window that began with the first line sent in it.
+        private static final class Window {
             private boolean begun;
             private long start;
             private int sent;
             private int held;
 
-            synchronized int pass(int limit, long now) {
-                if (!this.begun || now - this.start >= SECOND) {
+            synchronized int pass(int limit, long window, long now) {
+                if (!this.begun || now - this.start >= window) {
                     this.begun = true;
                     this.start = now;
                     this.sent = 0;

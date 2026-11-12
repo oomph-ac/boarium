@@ -4,6 +4,7 @@ import ac.oomph.boarium.Boarium;
 import ac.oomph.boarium.BoariumConfig;
 import ac.oomph.boarium.boar.BoariumBoar;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.flag.WebhookFlagSink;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.SessionSettings;
@@ -15,6 +16,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
@@ -42,17 +44,23 @@ public final class Main {
             BoariumConfig first = configs.getFirst();
             for (int i = 1; i < configs.size(); i++) {
                 BoariumConfig config = configs.get(i);
-                // Boar's other settings mean nothing while it is off on every route.
+                // Boar's other settings, its flag webhook included, mean nothing while it is off on every route.
                 if (config.boarEnabled() != first.boarEnabled() || first.boarEnabled() && (config.boarMitigations() != first.boarMitigations()
-                        || config.boarAlertLimit() != first.boarAlertLimit())) {
-                    throw new IllegalArgumentException(paths.get(i) + ": routes in one JVM must agree on boar_enabled, and while Boar is on, on boar_mitigations and boar_alert_limit");
+                        || config.boarAlertLimit() != first.boarAlertLimit() || !Objects.equals(config.flagWebhook(), first.flagWebhook()))) {
+                    throw new IllegalArgumentException(paths.get(i) + ": routes in one JVM must agree on boar_enabled, and while Boar is on, on boar_mitigations, boar_alert_limit and flag_webhook");
                 }
             }
+            // Boar is a JVM singleton, and so is the webhook its flags go to; each flag names the server its player was on.
+            WebhookFlagSink webhook = flagWebhook(first);
             // Boar is a JVM singleton. All routes use the first config's data folder and processors.
-            Function<ClientLogin, Processor> processors = processors(first, paths.getFirst());
+            Function<ClientLogin, Processor> processors = processors(first, paths.getFirst(), webhook);
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 LOG.info("shutting down");
                 close(routes);
+                // After the routes, so that it posts the flags of players who were still on.
+                if (webhook != null) {
+                    webhook.close();
+                }
             }));
             for (int i = 0; i < configs.size(); i++) {
                 Path path = paths.get(i).toAbsolutePath();
@@ -108,13 +116,29 @@ public final class Main {
         return config.netherNet().https().load();
     }
 
-    private static Function<ClientLogin, Processor> processors(BoariumConfig config, Path configPath) throws IOException {
+    // Null when flag_webhook has no URL, or Boar is off.
+    private static WebhookFlagSink flagWebhook(BoariumConfig config) {
+        BoariumConfig.FlagWebhook settings = config.flagWebhook();
+        if (settings == null) {
+            return null;
+        }
+        if (!config.boarEnabled()) {
+            LOG.warn("flag_webhook is set, but boar_enabled is false, so there are no flags to post");
+            return null;
+        }
+        LOG.info("posting Boar's flags as {} to {}://{}, {}", settings.format().name().toLowerCase(java.util.Locale.ROOT), settings.url().getScheme(), settings.url().getHost(),
+                settings.limit() == 0 ? "every flag" : "at most " + settings.limit() + " a minute for each player and check");
+        return new WebhookFlagSink(settings.url(), settings.secret(), settings.format());
+    }
+
+    private static Function<ClientLogin, Processor> processors(BoariumConfig config, Path configPath, WebhookFlagSink webhook) throws IOException {
         if (!config.boarEnabled()) {
             LOG.info("Boar is off");
             return SessionSettings.DEFAULT.processors();
         }
         Path dataFolder = configPath.toAbsolutePath().resolveSibling("boar");
-        Function<ClientLogin, Processor> processors = BoariumBoar.start(dataFolder, config.boarMitigations(), config.boarAlertLimit());
+        List<BoariumBoar.FlagOutput> flagSinks = webhook == null ? List.of() : List.of(new BoariumBoar.FlagOutput(webhook, config.flagWebhook().limit()));
+        Function<ClientLogin, Processor> processors = BoariumBoar.start(dataFolder, config.boarMitigations(), config.boarAlertLimit(), flagSinks);
         LOG.info("Boar started with its config in {}, mitigations {}", dataFolder, config.boarMitigations() ? "on" : "off");
         return processors;
     }

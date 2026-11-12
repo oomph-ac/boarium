@@ -29,6 +29,7 @@ import org.cloudburstmc.protocol.bedrock.data.EncodingSettings;
 import org.cloudburstmc.protocol.bedrock.data.PacketRecipient;
 import org.cloudburstmc.protocol.bedrock.data.definitions.ItemDefinition;
 import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
+import org.cloudburstmc.protocol.bedrock.packet.ClientCacheStatusPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacket;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
@@ -44,6 +45,7 @@ import java.net.SocketAddress;
 import java.nio.channels.ClosedChannelException;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -103,7 +105,12 @@ public final class Session {
         this.codec = this.session.getCodec();
         this.settings = settings;
         this.processor = settings.processors().apply(client);
-        this.clientDecode = Set.copyOf(this.processor.clientDecode());
+        // A client sends ClientCacheStatus again after it spawns. The server would turn its blob cache on from that one, so it is decoded to be corrected while the processor takes no cache.
+        Set<Integer> clientDecode = new HashSet<>(this.processor.clientDecode());
+        if (!this.processor.clientCache()) {
+            clientDecode.add(this.codec.getPacketDefinition(ClientCacheStatusPacket.class).getId());
+        }
+        this.clientDecode = Set.copyOf(clientDecode);
         this.serverDecode = Set.copyOf(this.processor.serverDecode());
         this.serverHelper = this.codec.createHelper();
         this.serverHelper.setEncodingSettings(EncodingSettings.CLIENT);
@@ -384,7 +391,13 @@ public final class Session {
                     ClientDisconnect.disconnect(this.session, CANT_CONNECT);
                     return;
                 }
-                contexts.add(new PacketContext(payload, packet));
+                PacketContext context = new PacketContext(payload, packet);
+                // The processor reads chunks only when they come whole, as the ClientCacheStatus sent at the server's spawn says.
+                if (packet instanceof ClientCacheStatusPacket status && status.isSupported() && !this.processor.clientCache()) {
+                    status.setSupported(false);
+                    context.setModified();
+                }
+                contexts.add(context);
             }
             if (!this.hook(() -> this.processor.client(this, contexts))) {
                 return;

@@ -316,6 +316,33 @@ class BoarSessionTest {
         this.assertNothingFailed();
     }
 
+    // The same flag reaches boarium's flag sinks with the player's identity and the server it is on.
+    @Test
+    void givesAFlagToTheFlagSinks() throws Exception {
+        java.util.concurrent.BlockingQueue<ac.oomph.boarium.flag.Flag> flags = new java.util.concurrent.LinkedBlockingQueue<>();
+        Runnable remove = TestBoar.addFlagSink(flags::add, 0);
+        try {
+            Session session = this.spawn();
+            this.sendPitch(100);
+            ac.oomph.boarium.flag.Flag flag = flags.poll(10, TimeUnit.SECONDS);
+            assertNotNull(flag, "no flag within 10 seconds");
+            assertEquals("Tester", flag.player());
+            assertEquals(session.client().identity().uuid(), flag.uuid());
+            assertEquals(session.client().identity().xuid(), flag.xuid());
+            assertEquals(this.server.address(), flag.server());
+            assertEquals("Bad Packet", flag.check());
+            assertEquals("B", flag.type());
+            assertFalse(flag.experimental());
+            assertEquals(1, flag.vl());
+            assertEquals("claimedPitch=100.0, wrappedPitch=90.0", flag.details());
+            assertFalse(flag.mitigations());
+            assertEquals(0, flag.heldBack());
+            this.assertNothingFailed();
+        } finally {
+            remove.run();
+        }
+    }
+
     // TestBoar's boar_alert_limit is 1.
     @Test
     void holdsBackFlagsPastTheAlertLimitAndCountsThemWhenThePlayerLeaves() throws Exception {

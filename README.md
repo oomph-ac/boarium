@@ -54,6 +54,11 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `resource_packs.directory` | empty | Resource-only pack directory, relative to config.yml. Empty offers no custom packs. |
 | `resource_packs.required` | `false` | Require players to accept custom packs. |
 | `resource_packs.include_exempted` | `true` | Include the vanilla Education/Chemistry stack. |
+| `flag_webhook.url` | empty | An `http://` or `https://` endpoint that Boar's flags are posted to as JSON. See [Flag webhook](#flag-webhook). |
+| `flag_webhook.url_env` | empty | The name of an environment variable that holds the URL instead, to keep it out of the file. Set `url` or `url_env`, not both. |
+| `flag_webhook.secret_env` | empty | The name of an environment variable whose value is sent as `Authorization: Bearer <value>`. Empty sends none. |
+| `flag_webhook.limit` | `2` | How many flags a minute, for each player and check, are posted. 0 posts every flag. |
+| `flag_webhook.format` | `json` | `json` posts the JSON below to an endpoint of your own; `discord` posts readable messages to a Discord channel's webhook URL. |
 
 boarium does not start when its config has a key it does not take, such as a misspelt one, and names that key.
 
@@ -64,6 +69,49 @@ While NetherNet is on, boarium keeps the key that the game trusts the server by 
 Boar keeps its own config in a `boar` folder next to boarium's config, and writes the default `boar/config.yml` on its first start. boarium does not start if that file cannot be read. `boar_mitigations` takes the place of `disable-mitigations` in that file, and boarium warns at start when that file sets `disable-mitigations: true` while `boar_mitigations` is on.
 
 boarium logs Boar's flags to its console, up to `boar_alert_limit`, in one line each: Boar's alert, with the `prefix` from Boar's config, and whether `boar_mitigations` lets Boar act on the player. A movement trace that Boar adds with `debug-mode` on goes to the DEBUG level, which boarium shows when started with `JAVA_OPTS=-Dorg.slf4j.simpleLogger.log.Boar=debug`.
+
+## Flag webhook
+
+boarium can post each of Boar's flags to an HTTP endpoint of your own, such as an API, a bot or a log collector, which can then store them, alert staff or forward them to Discord. Set `flag_webhook.url`, or `flag_webhook.url_env` to read the URL from an environment variable, such as one a Kubernetes Secret fills in:
+
+```yaml
+flag_webhook:
+  url_env: FLAG_WEBHOOK_URL
+  secret_env: FLAG_WEBHOOK_SECRET
+  limit: 2
+```
+
+Each post is a JSON object holding the flags that came while the last post was on its way, up to 100:
+
+```json
+{
+  "flags": [
+    {
+      "time": "2026-11-11T12:00:00Z",
+      "server": "practice:19133",
+      "player": "Steve",
+      "xuid": "2535400000000001",
+      "uuid": "00000000-0000-0000-0000-000000000001",
+      "check": "Bad Packet",
+      "type": "B",
+      "experimental": false,
+      "vl": 1,
+      "details": "claimedPitch=100.0, wrappedPitch=90.0",
+      "mitigations": false,
+      "held_back": 0
+    }
+  ],
+  "dropped": 0
+}
+```
+
+`server` is the address, as the config names it, of the server the player was on, which tells routes apart. `xuid` is empty when Xbox Live did not sign the player in. `details` is the first line of what Boar found. `mitigations` says whether `boar_mitigations` lets Boar act on the player. `held_back` counts the flags of the same player and check that `limit` held back since the last one posted; those held back when a player leaves are not posted. `dropped` counts the flags lost since the last post because 1000 were already waiting.
+
+Posts go from a thread of their own, so a slow or unreachable endpoint never holds up a player. A post is tried 3 times, a second and then two seconds apart, when the endpoint cannot be reached or answers 429 or a server error; a 429's `Retry-After` is followed, up to a minute. Any other answer outside 2xx drops the post at once. boarium logs a warning for dropped posts at most once a minute, and never logs the URL or the secret. At shutdown, boarium waits up to 5 seconds for the flags still waiting. Redirects are not followed.
+
+With `format: discord`, `url` or `url_env` is a Discord channel's webhook URL (channel settings, Integrations, Webhooks, Copy Webhook URL), and each post is a message with one line a flag, such as `**Steve** failed Reach (A) x3 distance=4.5 on practice:19133 [mitigations off] (+2 more)`. Lines go out in as many messages as Discord's 2000-character limit needs. Filled-in values are escaped, so a player's name cannot change the formatting, and the message mentions no one. Discord's rate limits are waited out like any 429.
+
+Code running in boarium can also take Boar's flags by passing an `ac.oomph.boarium.flag.FlagSink` to `BoariumBoar.start`.
 
 ## Resource packs
 
@@ -101,11 +149,11 @@ in-session transfer. Each route's pack catalogue has its own 64-pack and 256 MiB
 limits, per generation, and a route holds two generations during a symlink swap.
 
 Boar starts once using the first config's sibling `boar` directory. All route
-configs must agree on `boar_enabled`, and while Boar is on, on `boar_mitigations`
-and `boar_alert_limit`; conflicting settings fail before binding. A config, pack
-or listener failure at startup closes the routes already started and exits.
-NetherNet is the exception while RakNet is on: a route whose NetherNet cannot
-start, such as one whose port another route holds, logs it and keeps taking
+configs must agree on `boar_enabled`, and while Boar is on, on `boar_mitigations`,
+`boar_alert_limit` and `flag_webhook`; conflicting settings fail before binding. A
+config, pack or listener failure at startup closes the routes already started and
+exits. NetherNet is the exception while RakNet is on: a route whose NetherNet
+cannot start, such as one whose port another route holds, logs it and keeps taking
 players over RakNet alone, as a single route does. Shutdown closes all routes at
 once. Atomic pack publication updates only that route's new logins and does not
 restart any listener.
