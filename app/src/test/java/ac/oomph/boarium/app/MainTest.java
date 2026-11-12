@@ -76,7 +76,7 @@ class MainTest {
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
-            client.loginDone.get(10, TimeUnit.SECONDS);
+            client.loginDone.get(scaled(10), TimeUnit.SECONDS);
             StartGamePacket startGame = client.await(StartGamePacket.class);
             RequestChunkRadiusPacket radius = new RequestChunkRadiusPacket();
             radius.setRadius(8);
@@ -92,8 +92,8 @@ class MainTest {
             // Process.destroy() would also close the output, which loses what the shutdown logs.
             process.toHandle().destroy();
             assertEquals("boarium closed.", client.await(DisconnectPacket.class).getKickMessage());
-            assertTrue(process.waitFor(15, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(15), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             // 128 + SIGTERM's 15
             assertEquals(143, process.exitValue());
             this.awaitLine("shutting down");
@@ -144,7 +144,7 @@ class MainTest {
                 // Before the HCF route has a generation, ResourcePackCatalog.get throws in ClientInitializer.initSession, which refuses the login.
                 TestClient early = new TestClient("Early", Bedrock_v1001.CODEC, 1001);
                 early.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(h.group(1))));
-                assertThrows(java.util.concurrent.ExecutionException.class, () -> early.loginDone.get(20, TimeUnit.SECONDS));
+                assertThrows(java.util.concurrent.ExecutionException.class, () -> early.loginDone.get(scaled(20), TimeUnit.SECONDS));
                 assertTrue(this.output.stream().noneMatch(line -> line.contains("Failed to initialize a channel")), String.join("\n", this.output));
                 Path next = Files.createSymbolicLink(second.resolveSibling("next"), Path.of("generation"));
                 Files.move(next, second.resolveSibling("packs"), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
@@ -163,7 +163,7 @@ class MainTest {
             assertTrue(Files.exists(first.resolveSibling("nethernet/identity.pem")));
             assertTrue(Files.exists(second.resolveSibling("nethernet/identity.pem")));
             process.toHandle().destroy();
-            assertTrue(process.waitFor(20, TimeUnit.SECONDS));
+            assertTrue(process.waitFor(scaled(20), TimeUnit.SECONDS));
         } finally {
             if (process != null) process.destroyForcibly();
             practice.close(); hcf.close();
@@ -206,8 +206,8 @@ class MainTest {
         Path b = Files.writeString(dir.resolve("b.yml"), "boar_mitigations: true\n");
         Process process = this.launch(dir, "", a, b);
         try {
-            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(10), TimeUnit.SECONDS));
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             this.awaitLine("routes in one JVM must agree");
             assertTrue(this.output.stream().noneMatch(line -> line.contains("NetherNet signaling on")));
@@ -221,8 +221,8 @@ class MainTest {
         Path b = Files.writeString(dir.resolve("b.yml"), "flag_webhook:\n  url: https://b.example.com/flags\n");
         Process process = this.launch(dir, "", a, b);
         try {
-            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(10), TimeUnit.SECONDS));
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             this.awaitLine("routes in one JVM must agree on boar_enabled, and while Boar is on, on boar_mitigations, boar_alert_limit and flag_webhook");
             assertTrue(this.output.stream().noneMatch(line -> line.contains("example.com")), String.join("\n", this.output));
@@ -233,8 +233,8 @@ class MainTest {
     void stopsWhenTheFlagWebhookVariableIsNotSet(@TempDir Path dir) throws Exception {
         Process process = this.start(dir, "127.0.0.1:1", "", "flag_webhook:\n  url_env: BOARIUM_TEST_UNSET_FLAG_URL\n");
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(30), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             this.awaitLine("could not start: java.lang.IllegalArgumentException: flag_webhook.url_env names the environment variable BOARIUM_TEST_UNSET_FLAG_URL, which is not set or is empty");
         } finally {
@@ -247,8 +247,8 @@ class MainTest {
         Path folder = Files.writeString(dir.resolve("boar"), "");
         Process process = this.start(dir, "127.0.0.1:1");
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(30), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             this.awaitLine("could not start: java.io.IOException: Boar's data folder " + folder + " is a file");
         } finally {
@@ -274,7 +274,7 @@ class MainTest {
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, address);
-            client.loginDone.get(10, TimeUnit.SECONDS);
+            client.loginDone.get(scaled(10), TimeUnit.SECONDS);
             assertEquals(1, this.output.stream().filter(line -> line.contains(" ERROR ")).count(), String.join("\n", this.output));
         } finally {
             process.destroyForcibly();
@@ -297,7 +297,7 @@ class MainTest {
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
-            client.loginDone.get(10, TimeUnit.SECONDS);
+            client.loginDone.get(scaled(10), TimeUnit.SECONDS);
             assertEquals(1, this.output.stream().filter(line -> line.contains(" ERROR ")).count(), String.join("\n", this.output));
         } finally {
             process.destroyForcibly();
@@ -323,7 +323,7 @@ class MainTest {
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(netherNet.group(1))));
-            client.loginDone.get(30, TimeUnit.SECONDS);
+            client.loginDone.get(scaled(30), TimeUnit.SECONDS);
             // From the server, through boarium.
             client.await(StartGamePacket.class);
         } finally {
@@ -338,8 +338,8 @@ class MainTest {
     void stopsWhenNetherNetCannotLoadAndRakNetIsOff(@TempDir Path dir) throws Exception {
         Process process = this.start(dir, "127.0.0.1:1", MISSING_NATIVE, "");
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(30), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             String error = this.awaitLine("could not start: java.lang.IllegalStateException: NetherNet could not start with signaling on TCP 127.0.0.1:");
             assertTrue(error.contains("UnsatisfiedLinkError") && error.endsWith("; RakNet is off, so no player could join"), error);
@@ -353,8 +353,8 @@ class MainTest {
         Path identity = brokenIdentity(dir);
         Process process = this.start(dir, "127.0.0.1:1");
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(30), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             String error = this.awaitLine("could not start: java.lang.IllegalStateException: NetherNet could not start: cannot read its identity file " + identity + " as a key: ");
             assertTrue(error.endsWith("; RakNet is off, so no player could join. Only delete that file if it cannot be recovered, as a new identity makes every player confirm the server again"), error);
@@ -378,7 +378,7 @@ class MainTest {
 
             TestClient client = new TestClient("Tester", Bedrock_v1001.CODEC, Bedrock_v1001.CODEC.getProtocolVersion());
             client.connect(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(rakNet.group(1))));
-            client.loginDone.get(10, TimeUnit.SECONDS);
+            client.loginDone.get(scaled(10), TimeUnit.SECONDS);
             assertEquals(1, this.output.stream().filter(line -> line.contains(" ERROR ")).count(), String.join("\n", this.output));
             assertEquals("not a key", Files.readString(identity));
         } finally {
@@ -413,8 +413,8 @@ class MainTest {
     void stopsOnAKeyOfTheOldLayout(@TempDir Path dir) throws Exception {
         Process process = this.start(dir, "127.0.0.1:1", "", "nethernet: false\n");
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(30), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             this.awaitLine("could not start: java.lang.IllegalArgumentException: nethernet is now a section; set nethernet.enabled instead");
         } finally {
@@ -426,8 +426,8 @@ class MainTest {
     void stopsWhenTheNetherNetCertificateCannotBeRead(@TempDir Path dir) throws Exception {
         Process process = this.start(dir, "127.0.0.1:1", "", "nethernet:\n  https:\n    certificate: missing.pem\n    private_key: key.pem\n");
         try {
-            assertTrue(process.waitFor(30, TimeUnit.SECONDS), "boarium did not stop");
-            this.reader.join(5000);
+            assertTrue(process.waitFor(scaled(30), TimeUnit.SECONDS), "boarium did not stop");
+            this.reader.join(scaled(5) * 1000L);
             assertEquals(1, process.exitValue());
             this.awaitLine("could not start: java.lang.IllegalArgumentException: cannot read the NetherNet HTTPS file " + dir.resolve("missing.pem"));
         } finally {
@@ -488,6 +488,13 @@ class MainTest {
         return process;
     }
 
+    // How much longer than usual to wait, for a slow machine such as a CI runner that also runs other work; boarium.testTimeScale, 1 by default.
+    private static final int TIME_SCALE = Math.max(1, Integer.getInteger("boarium.testTimeScale", 1));
+
+    static long scaled(long seconds) {
+        return seconds * TIME_SCALE;
+    }
+
     private Matcher awaitMatch(Pattern pattern) throws InterruptedException {
         Matcher matcher = pattern.matcher(this.await(line -> pattern.matcher(line).find(), pattern.pattern()));
         assertTrue(matcher.find());
@@ -499,11 +506,11 @@ class MainTest {
     }
 
     private String await(Predicate<String> wanted, String what) throws InterruptedException {
-        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(scaled(30));
         while (true) {
             String line = this.lines.poll(Math.max(0, deadline - System.nanoTime()), TimeUnit.NANOSECONDS);
             if (line == null) {
-                throw new IllegalStateException("boarium did not log \"" + what + "\" within 30 seconds:\n" + String.join("\n", this.output));
+                throw new IllegalStateException("boarium did not log \"" + what + "\" within " + scaled(30) + " seconds:\n" + String.join("\n", this.output));
             }
             if (wanted.test(line)) {
                 return line;
