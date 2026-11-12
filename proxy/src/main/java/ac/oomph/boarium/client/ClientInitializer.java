@@ -8,18 +8,22 @@ import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.netty.codec.batch.BedrockBatchDecoder;
 import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockServerInitializer;
 import org.cloudburstmc.protocol.bedrock.packet.BedrockPacketHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.time.Duration;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Builds a client's pipeline over RakNet, and the parts of it that every transport shares: boarium's batch checks, the error handler, and the login.
  */
 class ClientInitializer extends BedrockServerInitializer {
+    private static final Logger LOG = LoggerFactory.getLogger(ClientInitializer.class);
     static final AttributeKey<BedrockServerSession> SESSION = AttributeKey.valueOf(ClientInitializer.class.getName() + ".session");
 
     private final boolean requireXbox;
-    private final ResourcePacks packs;
+    private final Supplier<ResourcePacks> packs;
     private final Duration loginTimeout;
     private final Consumer<ClientLogin> onLogin;
 
@@ -27,8 +31,12 @@ class ClientInitializer extends BedrockServerInitializer {
         this(requireXbox, loginTimeout, ResourcePacks.EMPTY, onLogin);
     }
 
-    // Pass the same startup snapshot to each login, without file I/O on the event loop.
+    // Pin one immutable snapshot for each login, without file I/O on the event loop.
     ClientInitializer(boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
+        this(requireXbox, loginTimeout, () -> packs, onLogin);
+    }
+
+    ClientInitializer(boolean requireXbox, Duration loginTimeout, Supplier<ResourcePacks> packs, Consumer<ClientLogin> onLogin) {
         this.requireXbox = requireXbox;
         this.packs = packs;
         this.loginTimeout = loginTimeout;
@@ -63,7 +71,16 @@ class ClientInitializer extends BedrockServerInitializer {
             });
             return;
         }
+        ResourcePacks packs;
+        try {
+            packs = this.packs.get();
+        } catch (IllegalStateException e) {
+            // The route's pack symlink has no valid generation. The catalogue logs why once, so each refused login is only a debug line.
+            LOG.debug("refused a login to {}: {}", session.getPeer().getChannel().localAddress(), e.getMessage());
+            session.getPeer().getChannel().close();
+            return;
+        }
         session.getPeer().getChannel().attr(SESSION).set(session);
-        session.setPacketHandler(new LoginHandler(session, this.requireXbox, this.loginTimeout, this.packs, this.onLogin));
+        session.setPacketHandler(new LoginHandler(session, this.requireXbox, this.loginTimeout, packs, this.onLogin));
     }
 }

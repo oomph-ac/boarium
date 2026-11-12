@@ -119,7 +119,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
             boar_mitigations: true
             # How many of Boar's flags a second, for each player and check, boarium logs to its console. 0 logs every flag.
             boar_alert_limit: 1
-            # Unencrypted resource-only .mcpack/.zip files, loaded in filename order before listening.
+            # Unencrypted resource-only .mcpack/.zip files, loaded in filename order. An ordinary directory loads before listening; a directory symlink publishes generations.
             resource_packs:
               directory: ""
               required: false

@@ -105,6 +105,115 @@ class MainTest {
         }
     }
 
+    // Both public routes share one process and one Boar, but retain their own backend, identity and pack policy.
+    @Test
+    void servesTwoRoutesInOneProcess(@TempDir Path dir) throws Exception {
+        this.servesTwoRoutes(dir, false);
+    }
+
+    @Test
+    void isolatesMissingPacksAtStartupAndRecovers(@TempDir Path dir) throws Exception {
+        this.servesTwoRoutes(dir, true);
+    }
+
+    // Exercise ordinary startup and a route whose pack publication arrives after the process binds.
+    private void servesTwoRoutes(Path dir, boolean delayedPacks) throws Exception {
+        EventLoopGroup group = new NioEventLoopGroup(2);
+        FakeSpectrumServer practice = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        FakeSpectrumServer hcf = new FakeSpectrumServer(group, Bedrock_v1001.CODEC);
+        Process process = null;
+        try {
+            Path first = routeConfig(dir.resolve("practice"), practice.address(), false);
+            Path second = routeConfig(dir.resolve("hcf"), hcf.address(), true);
+            if (delayedPacks) {
+                Files.move(second.resolveSibling("packs"), second.resolveSibling("generation"));
+                Files.createSymbolicLink(second.resolveSibling("packs"), Path.of("missing"));
+            }
+            process = this.launch(dir, "", first, second);
+            Matcher p = this.awaitMatch(NETHERNET);
+            this.awaitLine("started, sending players to " + practice.address());
+            Matcher h = this.awaitMatch(NETHERNET);
+            this.awaitLine("started, sending players to " + hcf.address());
+            assertEquals(1, this.output.stream().filter(line -> line.contains("Boar started with its config")).count());
+            TestClient a = new TestClient("Practice", Bedrock_v1001.CODEC, 1001);
+            TestClient b = new TestClient("HCF", Bedrock_v1001.CODEC, 1001);
+            a.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(p.group(1))));
+            var pa = a.await(org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket.class);
+            a.await(StartGamePacket.class);
+            if (delayedPacks) {
+                // Before the HCF route has a generation, ResourcePackCatalog.get throws in ClientInitializer.initSession, which refuses the login.
+                TestClient early = new TestClient("Early", Bedrock_v1001.CODEC, 1001);
+                early.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(h.group(1))));
+                assertThrows(java.util.concurrent.ExecutionException.class, () -> early.loginDone.get(20, TimeUnit.SECONDS));
+                assertTrue(this.output.stream().noneMatch(line -> line.contains("Failed to initialize a channel")), String.join("\n", this.output));
+                Path next = Files.createSymbolicLink(second.resolveSibling("next"), Path.of("generation"));
+                Files.move(next, second.resolveSibling("packs"), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                this.awaitLine("resource packs published for " + second.resolveSibling("packs"));
+            }
+            b.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(h.group(1))));
+            var pb = b.await(org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket.class);
+            org.junit.jupiter.api.Assertions.assertFalse(pa.isForcedToAccept());
+            assertTrue(pb.isForcedToAccept());
+            assertEquals(1, pa.getResourcePackInfos().size());
+            assertEquals(1, pb.getResourcePackInfos().size());
+            org.junit.jupiter.api.Assertions.assertNotEquals(pa.getResourcePackInfos().getFirst().getPackId(), pb.getResourcePackInfos().getFirst().getPackId());
+            b.await(StartGamePacket.class);
+            assertTrue(practice.request.isDone());
+            assertTrue(hcf.request.isDone());
+            assertTrue(Files.exists(first.resolveSibling("nethernet/identity.pem")));
+            assertTrue(Files.exists(second.resolveSibling("nethernet/identity.pem")));
+            process.toHandle().destroy();
+            assertTrue(process.waitFor(20, TimeUnit.SECONDS));
+        } finally {
+            if (process != null) process.destroyForcibly();
+            practice.close(); hcf.close();
+            group.shutdownGracefully(0, 0, TimeUnit.SECONDS).syncUninterruptibly();
+        }
+    }
+
+    // Create a distinct original fixture and route config, without redistributing game content.
+    private static Path routeConfig(Path dir, String backend, boolean required) throws Exception {
+        Files.createDirectories(dir.resolve("packs"));
+        try (var zip = new java.util.zip.ZipOutputStream(Files.newOutputStream(dir.resolve("packs/fixture.zip")))) {
+            zip.putNextEntry(new java.util.zip.ZipEntry("manifest.json"));
+            zip.write(("{\"header\":{\"uuid\":\"" + java.util.UUID.randomUUID() + "\",\"version\":[1,0,0]},\"modules\":[{\"type\":\"resources\"}]}").getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+        }
+        return Files.writeString(dir.resolve("config.yml"), "listen: 127.0.0.1:0\nserver: " + backend
+                + "\nxbox_auth: false\nresource_packs:\n  directory: packs\n  required: " + required + "\n  include_exempted: false\n");
+    }
+
+    // Boar's settings mean nothing while it is off on every route, so they need not agree then.
+    @Test
+    void letsRoutesDifferOnBoarSettingsWhileBoarIsOff(@TempDir Path dir) throws Exception {
+        Path first = routeConfig(dir.resolve("practice"), "127.0.0.1:1", false);
+        Path second = routeConfig(dir.resolve("hcf"), "127.0.0.1:1", true);
+        Files.writeString(first, "boar_enabled: false\nboar_mitigations: false\nboar_alert_limit: 3\n", java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(second, "boar_enabled: false\nboar_mitigations: true\n", java.nio.file.StandardOpenOption.APPEND);
+        Process process = this.launch(dir, "", first, second);
+        try {
+            this.awaitLine("route config: " + first.toAbsolutePath());
+            this.awaitLine("route config: " + second.toAbsolutePath());
+            assertTrue(this.output.stream().noneMatch(line -> line.contains("must agree")), String.join("\n", this.output));
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    @Test
+    void rejectsConflictingBoarSettingsBeforeBinding(@TempDir Path dir) throws Exception {
+        Path a = Files.writeString(dir.resolve("a.yml"), "boar_mitigations: false\n");
+        Path b = Files.writeString(dir.resolve("b.yml"), "boar_mitigations: true\n");
+        Process process = this.launch(dir, "", a, b);
+        try {
+            assertTrue(process.waitFor(10, TimeUnit.SECONDS));
+            this.reader.join(5000);
+            assertEquals(1, process.exitValue());
+            this.awaitLine("routes in one JVM must agree");
+            assertTrue(this.output.stream().noneMatch(line -> line.contains("NetherNet signaling on")));
+        } finally { process.destroyForcibly(); }
+    }
+
     @Test
     void stopsWhenBoarCannotStart(@TempDir Path dir) throws Exception {
         Path folder = Files.writeString(dir.resolve("boar"), "");
@@ -322,7 +431,15 @@ class MainTest {
     private Process start(Path dir, String server, String javaOpts, String extraConfig) throws Exception {
         Path config = dir.resolve("config.yml");
         Files.writeString(config, "listen: 127.0.0.1:0\nserver: " + server + "\nxbox_auth: false\n" + extraConfig);
-        ProcessBuilder builder = new ProcessBuilder(Path.of(System.getProperty("boarium.install"), "bin", "boarium").toString(), config.toString())
+        return this.launch(dir, javaOpts, config);
+    }
+
+    // Start the installed binary with all route paths in one JVM and collect its output.
+    private Process launch(Path dir, String javaOpts, Path... configs) throws Exception {
+        var command = new java.util.ArrayList<String>();
+        command.add(Path.of(System.getProperty("boarium.install"), "bin", "boarium").toString());
+        for (Path config : configs) command.add(config.toString());
+        ProcessBuilder builder = new ProcessBuilder(command)
                 .directory(dir.toFile())
                 .redirectErrorStream(true);
         builder.environment().put("JAVA_HOME", System.getProperty("java.home"));

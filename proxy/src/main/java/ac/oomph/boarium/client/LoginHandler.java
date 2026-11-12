@@ -84,7 +84,7 @@ final class LoginHandler implements BedrockPacketHandler {
         this(session, requireXbox, timeout, ResourcePacks.EMPTY, onLogin);
     }
 
-    // The catalogue was validated at startup and is shared without per-login archive copies.
+    // The catalogue is the generation that was valid when this login began, shared without per-login archive copies.
     LoginHandler(BedrockServerSession session, boolean requireXbox, Duration timeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
         if (timeout.toMillis() < 1) {
             throw new IllegalArgumentException("login timeout must be at least 1 ms, got " + timeout);

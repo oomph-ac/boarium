@@ -3,6 +3,7 @@ package ac.oomph.boarium;
 import ac.oomph.boarium.client.ClientDisconnect;
 import ac.oomph.boarium.client.ClientListener;
 import ac.oomph.boarium.client.ClientLogin;
+import ac.oomph.boarium.client.ResourcePackCatalog;
 import ac.oomph.boarium.protocol.BedrockVersions;
 import ac.oomph.boarium.session.Processor;
 import ac.oomph.boarium.session.Session;
@@ -50,6 +51,7 @@ public final class Boarium implements AutoCloseable {
     private final BoariumConfig config;
     private final EventLoopGroup group;
     private final ClientListener listener;
+    private final ResourcePackCatalog packs;
     private final Set<Session> sessions = ConcurrentHashMap.newKeySet();
     private final Set<ClientLogin> joining = ConcurrentHashMap.newKeySet();
     private final ScheduledFuture<?> pongs;
@@ -71,7 +73,13 @@ public final class Boarium implements AutoCloseable {
                 ? new ClientListener.NetherNetSettings(new InetSocketAddress(listen.getAddress(), port(config.netherNet().signalingPort(), picked)), port(config.netherNet().port(), picked), netherNetTls, netherNetIdentity,
                         config.netherNet().advertiseAddresses(), stunServers(config.netherNet(), listen.getAddress()))
                 : null;
-        this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, ac.oomph.boarium.client.ResourcePacks.load(config.resourcePacks()), login -> this.join(login, transport, settings));
+        this.packs = new ResourcePackCatalog(config.resourcePacks());
+        try {
+            this.listener = ClientListener.bind(group, rakNet, netherNet, this.pong(), config.xboxAuth(), CLIENT_LOGIN_TIMEOUT, this.packs, login -> this.join(login, transport, settings));
+        } catch (Throwable t) {
+            this.packs.close();
+            throw t;
+        }
         this.pongs = group.scheduleAtFixedRate(() -> this.listener.pong(this.pong()), PONG_INTERVAL.toMillis(), PONG_INTERVAL.toMillis(), TimeUnit.MILLISECONDS);
     }
 
@@ -175,6 +183,7 @@ public final class Boarium implements AutoCloseable {
             return;
         }
         this.pongs.cancel(false);
+        this.packs.close();
         List<ChannelFuture> clientsClosed = new ArrayList<>();
         List<ClientLogin> players = new ArrayList<>(this.joining);
         this.sessions.forEach(session -> players.add(session.client()));

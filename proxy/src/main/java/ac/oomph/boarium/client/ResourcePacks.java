@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.UUID;
 import java.util.zip.ZipFile;
 
-/** A bounded, immutable startup snapshot shared by all logins; chunk replies never read the filesystem. */
+/** A bounded, immutable generation snapshot pinned by each login; chunk replies never read the filesystem. */
 public final class ResourcePacks {
     static final int CHUNK_SIZE = 128 * 1024;
     private static final int MAX_BYTES = 256 * 1024 * 1024;
@@ -215,7 +215,7 @@ public final class ResourcePacks {
             return new ResourcePacksInfoPacket.Entry(this.id, this.version, this.bytes.length, "", "", "", false, this.raytracing, false, "");
         }
 
-        // The count is bounded by the startup archive limit.
+        // The count is bounded by the 256 MiB limit on a generation.
         int chunkCount() {
             return (this.bytes.length + CHUNK_SIZE - 1) / CHUNK_SIZE;
         }

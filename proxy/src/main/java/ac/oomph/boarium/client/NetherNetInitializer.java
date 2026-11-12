@@ -36,6 +36,7 @@ import org.cloudburstmc.protocol.bedrock.netty.initializer.BedrockChannelInitial
 
 import java.time.Duration;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 /**
  * Builds a client's pipeline over NetherNet: the RakNet one with NetherNet's framing, and compression and packet header set as for RakNet protocol 11.
@@ -46,8 +47,12 @@ final class NetherNetInitializer extends ClientInitializer {
         this(requireXbox, loginTimeout, ResourcePacks.EMPTY, onLogin);
     }
 
-    // Pass the same startup snapshot to each login, without file I/O on the event loop.
+    // Pin one immutable snapshot for each login, without file I/O on the event loop.
     NetherNetInitializer(boolean requireXbox, Duration loginTimeout, ResourcePacks packs, Consumer<ClientLogin> onLogin) {
+        this(requireXbox, loginTimeout, () -> packs, onLogin);
+    }
+
+    NetherNetInitializer(boolean requireXbox, Duration loginTimeout, Supplier<ResourcePacks> packs, Consumer<ClientLogin> onLogin) {
         super(requireXbox, loginTimeout, packs, onLogin);
     }
 

@@ -76,6 +76,36 @@ resource_packs:
   include_exempted: true
 ```
 
-The default directory is empty, which offers no custom packs. `required` defaults to false. `include_exempted` defaults to true for the existing vanilla Education/Chemistry stack; turn it off when these packs override player textures. Packs load before listeners start, in filename order. Duplicate UUIDs, invalid manifests, unsupported module types and marketplace-encrypted packs fail startup. The catalogue is limited to 64 packs and 256 MiB of combined compressed data, kept in memory. Manifest JSON is limited to 1 MiB. A five-minute download deadline replaces the login deadline from the first nonempty SEND_PACKS request until the client reports HAVE_ALL_PACKS or REFUSED, when a fresh login deadline starts; cached-pack clients keep the ordinary login deadline. Duplicate chunk requests are ignored. Restart boarium to load changed archives; use new manifest versions when changing pack content.
+The default directory is empty, which offers no custom packs. `required` defaults to false. `include_exempted` defaults to true for the existing vanilla Education/Chemistry stack; turn it off when these packs override player textures. Packs load in filename order. Each route's catalogue is limited to 64 packs and 256 MiB of combined compressed data per generation, kept in memory; while a symlink swap is in progress, the route holds the old generation and the new one. Manifest JSON is limited to 1 MiB. Duplicate UUIDs, invalid manifests, unsupported module types and marketplace-encrypted packs make a generation invalid. A five-minute download deadline replaces the login deadline from the first nonempty SEND_PACKS request until the client reports HAVE_ALL_PACKS or REFUSED, when a fresh login deadline starts; cached-pack clients keep the ordinary login deadline. Duplicate chunk requests are ignored. Use new manifest versions when changing pack content.
+
+An ordinary directory loads once, before listeners start: if it is missing or invalid, boarium does not start, and changes inside it need a restart. A directory symlink can instead publish complete immutable generations atomically: boarium checks its resolved target every second and loads a changed target off packet threads for new logins, and active downloads keep their snapshot. A symlink whose target is missing or invalid, including at startup, rejects new logins on that route until a valid generation is published; boarium retries only when the target or the files in it change, and other routes stay available. Do not change files inside a published generation.
 
 Optional packs may be declined. Required packs must be accepted to join. Cached packs need no download. Unknown pack IDs, wrong versions and invalid chunk indices disconnect the client. Encrypted packs, behavior packs, scripts and CDN delivery are not supported. boarium does not fetch packs from Spectrum backends: export each backend's complete pack set, including generated custom-item assets, and deploy matching archives before starting the proxy. Servers reached by a transfer must be compatible with the same login pack stack.
+
+## Multiple routes in one process
+
+Pass multiple config paths to run several routes in one JVM:
+
+```
+boarium practice/config.yml hcf/config.yml
+```
+
+Each config uses the settings above and has its own listener ports, backend,
+MOTD, resource-pack catalogue and acceptance policy. Give routes distinct bind
+ports. A TLS edge can route public hostnames to these listener ports, preserving
+pack selection before login. Each config keeps its NetherNet identity in a
+`nethernet` directory next to it, so put each route's config in its own folder:
+two configs in one folder share `nethernet/identity.pem`. Backend transfers still
+require compatible login packs; routes do not renegotiate packs during an
+in-session transfer. Each route's pack catalogue has its own 64-pack and 256 MiB
+limits, per generation, and a route holds two generations during a symlink swap.
+
+Boar starts once using the first config's sibling `boar` directory. All route
+configs must agree on `boar_enabled`, and while Boar is on, on `boar_mitigations`
+and `boar_alert_limit`; conflicting settings fail before binding. A config, pack
+or listener failure at startup closes the routes already started and exits.
+NetherNet is the exception while RakNet is on: a route whose NetherNet cannot
+start, such as one whose port another route holds, logs it and keeps taking
+players over RakNet alone, as a single route does. Shutdown closes all routes at
+once. Atomic pack publication updates only that route's new logins and does not
+restart any listener.
