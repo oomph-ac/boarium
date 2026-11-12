@@ -58,6 +58,7 @@ On its first start, boarium writes a default `config.yml` at the given path, or 
 | `flag_webhook.url_env` | empty | The name of an environment variable that holds the URL instead, to keep it out of the file. Set `url` or `url_env`, not both. |
 | `flag_webhook.secret_env` | empty | The name of an environment variable whose value is sent as `Authorization: Bearer <value>`. Empty sends none. |
 | `flag_webhook.limit` | `2` | How many flags a minute, for each player and check, are posted. 0 posts every flag. |
+| `flag_webhook.format` | `json` | `json` posts the JSON below to an endpoint of your own; `discord` posts readable messages to a Discord channel's webhook URL. |
 
 boarium does not start when its config has a key it does not take, such as a misspelt one, and names that key.
 
@@ -107,6 +108,8 @@ Each post is a JSON object holding the flags that came while the last post was o
 `server` is the address, as the config names it, of the server the player was on, which tells routes apart. `xuid` is empty when Xbox Live did not sign the player in. `details` is the first line of what Boar found. `mitigations` says whether `boar_mitigations` lets Boar act on the player. `held_back` counts the flags of the same player and check that `limit` held back since the last one posted; those held back when a player leaves are not posted. `dropped` counts the flags lost since the last post because 1000 were already waiting.
 
 Posts go from a thread of their own, so a slow or unreachable endpoint never holds up a player. A post is tried 3 times, a second and then two seconds apart, when the endpoint cannot be reached or answers 429 or a server error; a 429's `Retry-After` is followed, up to a minute. Any other answer outside 2xx drops the post at once. boarium logs a warning for dropped posts at most once a minute, and never logs the URL or the secret. At shutdown, boarium waits up to 5 seconds for the flags still waiting. Redirects are not followed.
+
+With `format: discord`, `url` or `url_env` is a Discord channel's webhook URL (channel settings, Integrations, Webhooks, Copy Webhook URL), and each post is a message with one line a flag, such as `**Steve** failed Reach (A) x3 distance=4.5 on practice:19133 [mitigations off] (+2 more)`. Lines go out in as many messages as Discord's 2000-character limit needs. Filled-in values are escaped, so a player's name cannot change the formatting, and the message mentions no one. Discord's rate limits are waited out like any 429.
 
 Code running in boarium can also take Boar's flags by passing an `ac.oomph.boarium.flag.FlagSink` to `BoariumBoar.start`.
 

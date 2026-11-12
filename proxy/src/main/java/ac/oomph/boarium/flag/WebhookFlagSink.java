@@ -40,6 +40,7 @@ public final class WebhookFlagSink implements FlagSink, AutoCloseable {
 
     private final URI url;
     private final String secret;
+    private final Format format;
     private final Duration retryDelay;
     private final HttpClient http;
     private final BlockingQueue<Flag> queue = new ArrayBlockingQueue<>(QUEUE);
@@ -49,17 +50,26 @@ public final class WebhookFlagSink implements FlagSink, AutoCloseable {
     private long lastWarning = System.nanoTime() - WARNING_INTERVAL;
     private int unwarned;
 
+    /** What a post's body is. */
+    public enum Format {
+        /** {@code {"flags": [...], "dropped": N}}, for an endpoint of your own. */
+        JSON,
+        /** Discord's webhook message: one line per flag in {@code content}, in as many messages as Discord's 2000 characters need, mentioning no one. */
+        DISCORD
+    }
+
     /**
      * @param secret sent as {@code Authorization: Bearer <secret>}, or null for none
      */
-    public WebhookFlagSink(URI url, String secret) {
-        this(url, secret, Duration.ofSeconds(1));
+    public WebhookFlagSink(URI url, String secret, Format format) {
+        this(url, secret, format, Duration.ofSeconds(1));
     }
 
     // Tests shorten the wait between attempts.
-    WebhookFlagSink(URI url, String secret, Duration retryDelay) {
+    WebhookFlagSink(URI url, String secret, Format format, Duration retryDelay) {
         this.url = url;
         this.secret = secret;
+        this.format = format;
         this.retryDelay = retryDelay;
         this.http = HttpClient.newBuilder().connectTimeout(TIMEOUT).followRedirects(HttpClient.Redirect.NEVER).build();
         this.sender = Thread.ofVirtual().name("boarium-flag-webhook").start(this::run);
@@ -104,11 +114,21 @@ public final class WebhookFlagSink implements FlagSink, AutoCloseable {
     }
 
     private void post(List<Flag> batch, int dropped) throws InterruptedException {
+        if (this.format == Format.JSON) {
+            this.send(body(batch, dropped), batch.size() + dropped);
+            return;
+        }
+        for (DiscordMessage message : discordMessages(batch, dropped)) {
+            this.send(message.body(), message.flags());
+        }
+    }
+
+    private void send(String body, int flags) throws InterruptedException {
         HttpRequest.Builder request = HttpRequest.newBuilder(this.url)
                 .timeout(TIMEOUT)
                 .header("Content-Type", "application/json")
                 .header("User-Agent", "boarium")
-                .POST(HttpRequest.BodyPublishers.ofString(body(batch, dropped), StandardCharsets.UTF_8));
+                .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
         if (this.secret != null) {
             request.header("Authorization", "Bearer " + this.secret);
         }
@@ -135,7 +155,7 @@ public final class WebhookFlagSink implements FlagSink, AutoCloseable {
                 Thread.sleep(wait.toMillis());
             }
         }
-        this.warn(batch.size() + dropped, failure);
+        this.warn(flags, failure);
     }
 
     // At most one warning a minute, which counts the flags lost since the last one.
@@ -149,11 +169,13 @@ public final class WebhookFlagSink implements FlagSink, AutoCloseable {
         }
     }
 
+    // Discord's Retry-After can have a fraction of a second.
     private static java.util.Optional<Duration> retryAfter(HttpResponse<?> response) {
         return response.headers().firstValue("Retry-After").flatMap(value -> {
             try {
-                long seconds = Long.parseLong(value.trim());
-                return java.util.Optional.of(Duration.ofSeconds(Math.max(0, Math.min(seconds, MAX_RETRY_AFTER.toSeconds()))));
+                double seconds = Double.parseDouble(value.trim());
+                long millis = (long) Math.ceil(Math.max(0, Math.min(seconds, MAX_RETRY_AFTER.toSeconds())) * 1000);
+                return java.util.Optional.of(Duration.ofMillis(millis));
             } catch (NumberFormatException e) {
                 return java.util.Optional.empty();
             }
@@ -181,6 +203,77 @@ public final class WebhookFlagSink implements FlagSink, AutoCloseable {
         JsonObject body = new JsonObject();
         body.add("flags", flags);
         body.addProperty("dropped", dropped);
+        return body.toString();
+    }
+
+    static final int DISCORD_LIMIT = 2000;
+    // Discord's markdown, and the characters that start a quote, heading or list at the start of a line.
+    private static final java.util.regex.Pattern MARKDOWN = java.util.regex.Pattern.compile("([\\\\*_~`|>#\\-\\[\\]()<:])");
+
+    // A message's body, and how many flags it carries, which a failed post counts as lost.
+    record DiscordMessage(String body, int flags) {
+    }
+
+    // One line per flag, in messages of at most DISCORD_LIMIT characters. Filled-in values are escaped, so that a player's name cannot format the message or mention anyone.
+    static List<DiscordMessage> discordMessages(List<Flag> batch, int dropped) {
+        List<String> lines = new ArrayList<>();
+        List<Integer> counts = new ArrayList<>();
+        if (dropped > 0) {
+            lines.add("(" + dropped + " flags dropped while the webhook was slow)");
+            counts.add(dropped);
+        }
+        for (Flag flag : batch) {
+            StringBuilder line = new StringBuilder("**").append(escape(flag.player())).append("** failed ").append(escape(flag.check()));
+            if (!flag.type().isBlank()) {
+                line.append(" (").append(escape(flag.type())).append(')');
+            }
+            if (flag.experimental()) {
+                line.append(" (Experimental)");
+            }
+            line.append(" x").append(flag.vl());
+            if (!flag.details().isBlank()) {
+                line.append(' ').append(escape(flag.details()));
+            }
+            line.append(" on ").append(escape(flag.server())).append(flag.mitigations() ? " [mitigations on]" : " [mitigations off]");
+            if (flag.heldBack() > 0) {
+                line.append(" (+").append(flag.heldBack()).append(" more)");
+            }
+            String text = line.toString();
+            lines.add(text.length() > DISCORD_LIMIT ? text.substring(0, DISCORD_LIMIT - 1) + "…" : text);
+            counts.add(1);
+        }
+        List<DiscordMessage> messages = new ArrayList<>();
+        StringBuilder content = new StringBuilder();
+        int flags = 0;
+        for (int i = 0; i < lines.size(); i++) {
+            String line = lines.get(i);
+            if (!content.isEmpty() && content.length() + 1 + line.length() > DISCORD_LIMIT) {
+                messages.add(new DiscordMessage(discordBody(content.toString()), flags));
+                content.setLength(0);
+                flags = 0;
+            }
+            if (!content.isEmpty()) {
+                content.append('\n');
+            }
+            content.append(line);
+            flags += counts.get(i);
+        }
+        if (!content.isEmpty()) {
+            messages.add(new DiscordMessage(discordBody(content.toString()), flags));
+        }
+        return messages;
+    }
+
+    private static String escape(String text) {
+        return MARKDOWN.matcher(text.replaceAll("\\s+", " ")).replaceAll("\\\\$1");
+    }
+
+    private static String discordBody(String content) {
+        JsonObject body = new JsonObject();
+        body.addProperty("content", content);
+        JsonObject mentions = new JsonObject();
+        mentions.add("parse", new JsonArray());
+        body.add("allowed_mentions", mentions);
         return body.toString();
     }
 

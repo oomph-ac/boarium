@@ -127,9 +127,9 @@ class BoariumConfigTest {
     void readsTheFlagWebhookFromTheFileOrTheEnvironment() {
         assertNull(BoariumConfig.parse(new StringReader("")).flagWebhook());
         assertNull(flagWebhook(java.util.Map.of(), "url: \"\"", "limit: 5").flagWebhook());
-        assertEquals(new BoariumConfig.FlagWebhook(java.net.URI.create("https://api.example.com/flags"), null, 2),
+        assertEquals(new BoariumConfig.FlagWebhook(java.net.URI.create("https://api.example.com/flags"), null, 2, ac.oomph.boarium.flag.WebhookFlagSink.Format.JSON),
                 flagWebhook(java.util.Map.of(), "url: https://api.example.com/flags").flagWebhook());
-        assertEquals(new BoariumConfig.FlagWebhook(java.net.URI.create("http://api:8080/flags?token=abc"), "s3cret", 0),
+        assertEquals(new BoariumConfig.FlagWebhook(java.net.URI.create("http://api:8080/flags?token=abc"), "s3cret", 0, ac.oomph.boarium.flag.WebhookFlagSink.Format.JSON),
                 flagWebhook(java.util.Map.of("FLAG_URL", "http://api:8080/flags?token=abc", "FLAG_SECRET", "s3cret"), "url_env: FLAG_URL", "secret_env: FLAG_SECRET", "limit: 0").flagWebhook());
     }
 
@@ -146,8 +146,10 @@ class BoariumConfigTest {
         assertEquals("flag_webhook.secret_env names the environment variable MISSING, which is not set or is empty", flagWebhookError(env, "url: https://a.example.com", "secret_env: MISSING"));
         assertEquals("flag_webhook.secret_env needs flag_webhook.url or flag_webhook.url_env", flagWebhookError(env, "secret_env: FLAG_URL"));
         assertEquals("flag_webhook.limit must be a whole number from 0 to 2147483647, got -1", flagWebhookError(env, "url: https://a.example.com", "limit: -1"));
-        assertEquals("unknown key in flag_webhook: limt (did you mean limit?); flag_webhook takes: url, url_env, secret_env, limit", flagWebhookError(env, "limt: 1"));
-        assertEquals("unknown key in flag_webhook: secret; flag_webhook takes: url, url_env, secret_env, limit", flagWebhookError(env, "secret: x"));
+        assertEquals(ac.oomph.boarium.flag.WebhookFlagSink.Format.DISCORD, flagWebhook(env, "url: https://discord.com/api/webhooks/1/x", "format: discord").flagWebhook().format());
+        assertEquals("flag_webhook.format must be json or discord, got the text \"slack\"", flagWebhookError(env, "url: https://a.example.com", "format: slack"));
+        assertEquals("unknown key in flag_webhook: limt (did you mean limit?); flag_webhook takes: url, url_env, secret_env, limit, format", flagWebhookError(env, "limt: 1"));
+        assertEquals("unknown key in flag_webhook: secret; flag_webhook takes: url, url_env, secret_env, limit, format", flagWebhookError(env, "secret: x"));
 
         BoariumConfig config = flagWebhook(java.util.Map.of("SECRET", "hunter2"), "url: https://hooks.example.com/token-abc", "secret_env: SECRET");
         assertFalse(config.toString().contains("token-abc") || config.toString().contains("hunter2"), config.toString());

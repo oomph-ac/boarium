@@ -71,7 +71,7 @@ class WebhookFlagSinkTest {
     }
 
     private WebhookFlagSink sink(String secret) {
-        this.sink = new WebhookFlagSink(this.url(), secret, Duration.ofMillis(10));
+        this.sink = new WebhookFlagSink(this.url(), secret, WebhookFlagSink.Format.JSON, Duration.ofMillis(10));
         return this.sink;
     }
 
@@ -201,11 +201,50 @@ class WebhookFlagSinkTest {
 
     @Test
     void keepsTheUrlOutOfToString() {
-        WebhookFlagSink sink = new WebhookFlagSink(URI.create("https://hooks.example.com/token-abc"), null);
+        WebhookFlagSink sink = new WebhookFlagSink(URI.create("https://hooks.example.com/token-abc"), null, WebhookFlagSink.Format.JSON);
         try {
             assertEquals("WebhookFlagSink[https://hooks.example.com/…]", sink.toString());
         } finally {
             sink.close();
         }
+    }
+
+    // A Discord webhook takes a message in content; values are escaped so that a name cannot format it or mention anyone.
+    @Test
+    void writesDiscordMessagesWithEscapedValuesAndNoMentions() {
+        Flag flag = new Flag(Instant.EPOCH, "practice:19133", "__Evil*_@everyone", "", UUID.randomUUID(), "Reach", "A", true, 3, "distance=4.5 > 3", true, 2);
+        var messages = WebhookFlagSink.discordMessages(java.util.List.of(flag), 4);
+        assertEquals(1, messages.size());
+        assertEquals(5, messages.getFirst().flags());
+        JsonObject body = new JsonParser().parse(messages.getFirst().body()).getAsJsonObject();
+        assertEquals(0, body.getAsJsonObject("allowed_mentions").getAsJsonArray("parse").size());
+        assertEquals("(4 flags dropped while the webhook was slow)\n**\\_\\_Evil\\*\\_@everyone** failed Reach (A) (Experimental) x3 distance=4.5 \\> 3 on practice\\:19133 [mitigations on] (+2 more)",
+                body.get("content").getAsString());
+    }
+
+    @Test
+    void splitsDiscordMessagesAtTheirLimit() {
+        var batch = new java.util.ArrayList<Flag>();
+        for (int i = 0; i < WebhookFlagSink.BATCH; i++) {
+            batch.add(flag("Steve", i));
+        }
+        var messages = WebhookFlagSink.discordMessages(batch, 0);
+        assertTrue(messages.size() > 1);
+        int flags = 0;
+        for (var message : messages) {
+            String content = new JsonParser().parse(message.body()).getAsJsonObject().get("content").getAsString();
+            assertTrue(content.length() <= WebhookFlagSink.DISCORD_LIMIT, String.valueOf(content.length()));
+            assertEquals(content.lines().count(), message.flags());
+            flags += message.flags();
+        }
+        assertEquals(WebhookFlagSink.BATCH, flags);
+    }
+
+    @Test
+    void postsDiscordMessagesToTheWebhook() throws Exception {
+        this.sink = new WebhookFlagSink(this.url(), null, WebhookFlagSink.Format.DISCORD, Duration.ofMillis(10));
+        this.sink.accept(flag("Steve", 1));
+        JsonObject body = this.await().body();
+        assertTrue(body.get("content").getAsString().startsWith("**Steve** failed Bad Packet (B) x1"), body.toString());
     }
 }

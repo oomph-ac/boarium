@@ -1,5 +1,6 @@
 package ac.oomph.boarium;
 
+import ac.oomph.boarium.flag.WebhookFlagSink;
 import ac.oomph.boarium.transport.Addresses;
 import org.cloudburstmc.netty.channel.nethernet.signaling.AdvertisedAddresses;
 import org.yaml.snakeyaml.LoaderOptions;
@@ -57,12 +58,13 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
      *
      * @param secret sent as {@code Authorization: Bearer <secret>}, or null for none
      * @param limit  how many flags a minute, for each player and check, are posted, or 0 for all
+     * @param format what a post holds: generic JSON, or a Discord webhook message
      */
-    public record FlagWebhook(URI url, String secret, int limit) {
+    public record FlagWebhook(URI url, String secret, int limit, WebhookFlagSink.Format format) {
         // The URL and the secret may both hold a token.
         @Override
         public String toString() {
-            return "FlagWebhook[url=" + this.url.getScheme() + "://" + this.url.getHost() + "/…, secret=" + (this.secret == null ? "none" : "…") + ", limit=" + this.limit + "]";
+            return "FlagWebhook[url=" + this.url.getScheme() + "://" + this.url.getHost() + "/…, secret=" + (this.secret == null ? "none" : "…") + ", limit=" + this.limit + ", format=" + this.format + "]";
         }
     }
 
@@ -161,13 +163,15 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
               secret_env: ""
               # How many flags a minute, for each player and check, are posted. 0 posts every flag.
               limit: 2
+              # json posts {"flags": [...]} for an endpoint of your own; discord posts readable messages to a Discord channel's webhook URL.
+              format: json
             """;
 
     // The keys each section of the file takes, by the section's name; "" is the top of the file.
     private static final Map<String, List<String>> SECTIONS = Map.of(
             "", List.of("listen", "raknet", "nethernet", "server", "fallback_server", "xbox_auth", "motd", "sub_motd", "max_players", "latency_interval", "shutdown_message", "boar_enabled", "boar_mitigations", "boar_alert_limit", "resource_packs", "flag_webhook"),
             "resource_packs", List.of("directory", "required", "include_exempted"),
-            "flag_webhook", List.of("url", "url_env", "secret_env", "limit"),
+            "flag_webhook", List.of("url", "url_env", "secret_env", "limit", "format"),
             "raknet", List.of("enabled", "port", "max_connections_per_address", "packet_limit", "rate_limiting"),
             "nethernet", List.of("enabled", "port", "signaling_port", "https", "advertise_addresses", "stun_discovery"),
             "nethernet.https", List.of("certificate", "private_key", "password"));
@@ -278,6 +282,12 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
         String urlEnv = values.get("url_env", String.class, "");
         String secretEnv = values.get("secret_env", String.class, "");
         int limit = values.integer("limit", 2, 0, Integer.MAX_VALUE);
+        String formatName = values.get("format", String.class, "json");
+        WebhookFlagSink.Format format = switch (formatName) {
+            case "json" -> WebhookFlagSink.Format.JSON;
+            case "discord" -> WebhookFlagSink.Format.DISCORD;
+            default -> throw new IllegalArgumentException(values.name("format") + " must be json or discord, got " + Section.describe(formatName));
+        };
         if (!url.isEmpty() && !urlEnv.isEmpty()) {
             throw new IllegalArgumentException(values.name("url") + " and " + values.name("url_env") + " are both set; set one");
         }
@@ -310,7 +320,7 @@ public record BoariumConfig(String listen, RakNet rakNet, NetherNet netherNet, S
                 throw new IllegalArgumentException(values.name("secret_env") + " names the environment variable " + secretEnv + ", which is not set or is empty");
             }
         }
-        return new FlagWebhook(uri, secret, limit);
+        return new FlagWebhook(uri, secret, limit, format);
     }
 
     // Resolve pack paths once so a working-directory change cannot select different assets.

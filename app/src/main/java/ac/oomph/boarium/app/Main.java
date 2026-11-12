@@ -126,9 +126,9 @@ public final class Main {
             LOG.warn("flag_webhook is set, but boar_enabled is false, so there are no flags to post");
             return null;
         }
-        LOG.info("posting Boar's flags to {}://{}, {}", settings.url().getScheme(), settings.url().getHost(),
+        LOG.info("posting Boar's flags as {} to {}://{}, {}", settings.format().name().toLowerCase(java.util.Locale.ROOT), settings.url().getScheme(), settings.url().getHost(),
                 settings.limit() == 0 ? "every flag" : "at most " + settings.limit() + " a minute for each player and check");
-        return new WebhookFlagSink(settings.url(), settings.secret());
+        return new WebhookFlagSink(settings.url(), settings.secret(), settings.format());
     }
 
     private static Function<ClientLogin, Processor> processors(BoariumConfig config, Path configPath, WebhookFlagSink webhook) throws IOException {
