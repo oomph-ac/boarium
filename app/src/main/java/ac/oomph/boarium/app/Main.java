@@ -42,16 +42,17 @@ public final class Main {
             BoariumConfig first = configs.getFirst();
             for (int i = 1; i < configs.size(); i++) {
                 BoariumConfig config = configs.get(i);
-                if (config.boarEnabled() != first.boarEnabled() || config.boarMitigations() != first.boarMitigations()
-                        || config.boarAlertLimit() != first.boarAlertLimit()) {
-                    throw new IllegalArgumentException(paths.get(i) + ": routes in one JVM must agree on boar_enabled, boar_mitigations and boar_alert_limit");
+                // Boar's other settings mean nothing while it is off on every route.
+                if (config.boarEnabled() != first.boarEnabled() || first.boarEnabled() && (config.boarMitigations() != first.boarMitigations()
+                        || config.boarAlertLimit() != first.boarAlertLimit())) {
+                    throw new IllegalArgumentException(paths.get(i) + ": routes in one JVM must agree on boar_enabled, and while Boar is on, on boar_mitigations and boar_alert_limit");
                 }
             }
             // Boar is a JVM singleton. All routes use the first config's data folder and processors.
             Function<ClientLogin, Processor> processors = processors(first, paths.getFirst());
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 LOG.info("shutting down");
-                routes.forEach(Boarium::close);
+                close(routes);
             }));
             for (int i = 0; i < configs.size(); i++) {
                 Path path = paths.get(i).toAbsolutePath();
@@ -62,14 +63,36 @@ public final class Main {
                 LOG.info("route config: {}", path);
             }
         } catch (Exception | Error e) {
-            routes.forEach(Boarium::close);
             Throwable reason = e instanceof ExceptionInInitializerError && e.getCause() != null ? e.getCause() : e;
             if (e instanceof Error) {
                 LOG.error("could not start: {}", reason.toString(), reason);
             } else {
                 LOG.error("could not start: {}", reason.toString());
             }
+            // The shutdown hook, added before the first route starts, closes the routes already started.
             System.exit(1);
+        }
+    }
+
+    // Closes the routes at once, so that none keeps taking logins while another waits for its players, and one that throws does not keep the rest open.
+    private static void close(List<Boarium> routes) {
+        List<Thread> closing = new ArrayList<>();
+        for (Boarium route : routes) {
+            closing.add(Thread.ofPlatform().name("boarium-close").start(() -> {
+                try {
+                    route.close();
+                } catch (Throwable t) {
+                    LOG.error("could not close a route", t);
+                }
+            }));
+        }
+        for (Thread thread : closing) {
+            try {
+                thread.join();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
         }
     }
 

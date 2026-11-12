@@ -141,6 +141,11 @@ class MainTest {
             var pa = a.await(org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket.class);
             a.await(StartGamePacket.class);
             if (delayedPacks) {
+                // Before the HCF route has a generation, ResourcePackCatalog.get throws in ClientInitializer.initSession, which refuses the login.
+                TestClient early = new TestClient("Early", Bedrock_v1001.CODEC, 1001);
+                early.joinByAddress(group, new InetSocketAddress("127.0.0.1", Integer.parseInt(h.group(1))));
+                assertThrows(java.util.concurrent.ExecutionException.class, () -> early.loginDone.get(20, TimeUnit.SECONDS));
+                assertTrue(this.output.stream().noneMatch(line -> line.contains("Failed to initialize a channel")), String.join("\n", this.output));
                 Path next = Files.createSymbolicLink(second.resolveSibling("next"), Path.of("generation"));
                 Files.move(next, second.resolveSibling("packs"), java.nio.file.StandardCopyOption.ATOMIC_MOVE, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 this.awaitLine("resource packs published for " + second.resolveSibling("packs"));
@@ -176,6 +181,23 @@ class MainTest {
         }
         return Files.writeString(dir.resolve("config.yml"), "listen: 127.0.0.1:0\nserver: " + backend
                 + "\nxbox_auth: false\nresource_packs:\n  directory: packs\n  required: " + required + "\n  include_exempted: false\n");
+    }
+
+    // Boar's settings mean nothing while it is off on every route, so they need not agree then.
+    @Test
+    void letsRoutesDifferOnBoarSettingsWhileBoarIsOff(@TempDir Path dir) throws Exception {
+        Path first = routeConfig(dir.resolve("practice"), "127.0.0.1:1", false);
+        Path second = routeConfig(dir.resolve("hcf"), "127.0.0.1:1", true);
+        Files.writeString(first, "boar_enabled: false\nboar_mitigations: false\nboar_alert_limit: 3\n", java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(second, "boar_enabled: false\nboar_mitigations: true\n", java.nio.file.StandardOpenOption.APPEND);
+        Process process = this.launch(dir, "", first, second);
+        try {
+            this.awaitLine("route config: " + first.toAbsolutePath());
+            this.awaitLine("route config: " + second.toAbsolutePath());
+            assertTrue(this.output.stream().noneMatch(line -> line.contains("must agree")), String.join("\n", this.output));
+        } finally {
+            process.destroyForcibly();
+        }
     }
 
     @Test

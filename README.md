@@ -93,12 +93,19 @@ boarium practice/config.yml hcf/config.yml
 Each config uses the settings above and has its own listener ports, backend,
 MOTD, resource-pack catalogue and acceptance policy. Give routes distinct bind
 ports. A TLS edge can route public hostnames to these listener ports, preserving
-pack selection before login. Each config keeps its NetherNet identity in its
-own sibling `nethernet` directory. Backend transfers still require compatible
-login packs; routes do not renegotiate packs during an in-session transfer.
+pack selection before login. Each config keeps its NetherNet identity in a
+`nethernet` directory next to it, so put each route's config in its own folder:
+two configs in one folder share `nethernet/identity.pem`. Backend transfers still
+require compatible login packs; routes do not renegotiate packs during an
+in-session transfer. Each route's pack catalogue has its own 64-pack and 256 MiB
+limits, per generation, and a route holds two generations during a symlink swap.
 
 Boar starts once using the first config's sibling `boar` directory. All route
-configs must agree on `boar_enabled`, `boar_mitigations` and `boar_alert_limit`;
-conflicting settings fail before binding. A listener/config startup failure closes routes
-already started and exits. Shutdown closes all routes. Atomic pack publication
-updates only that route's new logins and does not restart any listener.
+configs must agree on `boar_enabled`, and while Boar is on, on `boar_mitigations`
+and `boar_alert_limit`; conflicting settings fail before binding. A config, pack
+or listener failure at startup closes the routes already started and exits.
+NetherNet is the exception while RakNet is on: a route whose NetherNet cannot
+start, such as one whose port another route holds, logs it and keeps taking
+players over RakNet alone, as a single route does. Shutdown closes all routes at
+once. Atomic pack publication updates only that route's new logins and does not
+restart any listener.

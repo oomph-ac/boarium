@@ -215,7 +215,7 @@ public final class ResourcePacks {
             return new ResourcePacksInfoPacket.Entry(this.id, this.version, this.bytes.length, "", "", "", false, this.raytracing, false, "");
         }
 
-        // The count is bounded by the startup archive limit.
+        // The count is bounded by the 256 MiB limit on a generation.
         int chunkCount() {
             return (this.bytes.length + CHUNK_SIZE - 1) / CHUNK_SIZE;
         }
